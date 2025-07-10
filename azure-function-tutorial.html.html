@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Azure Function CI/CD Deployment via GitHub</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f7f9fc;
+      color: #1a1a1a;
+      margin: 2rem;
+      line-height: 1.6;
+    }
+
+    h1,
+    h2,
+    h3 {
+      color: #004578;
+    }
+
+    code,
+    pre {
+      background-color: #e7eaf0;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-family: monospace;
+      display: inline-block;
+    }
+
+    pre {
+      display: block;
+      white-space: pre-wrap;
+      overflow-x: auto;
+    }
+
+    .note {
+      background-color: #fff8e1;
+      border-left: 4px solid #fbc02d;
+      padding: 10px;
+      margin-top: 10px;
+      margin-bottom: 10px;
+    }
+
+    .critical {
+      background-color: #fdecea;
+      border-left: 4px solid #d32f2f;
+      padding: 10px;
+      margin-top: 10px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>🚀 Deploying Azure Function API Automatically with GitHub Actions</h1>
+
+  <p>This tutorial will walk you through fully automating the deployment of your Azure Function App using GitHub
+    Actions, including:</p>
+  <ul>
+    <li>Setting up the Azure Function App (with Flex Consumption Plan)</li>
+    <li>Connecting it to GitHub via Deployment Center</li>
+    <li>Fixing issues with dependencies and packaging</li>
+    <li>Protecting publish profile secrets</li>
+  </ul>
+
+  <hr />
+
+  <h2>1. 🎯 Create a Function App in Azure Portal</h2>
+
+  <ol>
+    <li>Go to <a href="https://portal.azure.com" target="_blank">Azure Portal</a></li>
+    <li>Click <strong>“Create a resource” → “Function App”</strong></li>
+    <li>Choose a name like <code>apirtx</code> (must be globally unique)</li>
+    <li>Select:
+      <ul>
+        <li><strong>Runtime:</strong> Python (e.g. 3.12)</li>
+        <li><strong>Plan type:</strong> <code>Flex Consumption</code></li>
+        <li><strong>Zone Redundancy:</strong> Optional (for higher availability)</li>
+      </ul>
+    </li>
+    <li>Click “Create” and wait for the app to be provisioned</li>
+  </ol>
+
+  <hr />
+
+  <h2>2. ⚙️ Enable GitHub Deployment with Basic Auth</h2>
+
+  <ol>
+    <li>Navigate to your Function App in Azure</li>
+    <li>Go to <strong>Configuration → General Settings</strong></li>
+    <li>Set <code>SCM Basic Auth Publishing = On</code> and Save</li>
+    <li>Then go to <strong>Deployment Center</strong></li>
+    <li>Select <strong>GitHub</strong>, authorize your repo access</li>
+    <li>Choose your repository and branch</li>
+    <li>Azure will generate a <code>.github/workflows/azure-functions.yml</code> file</li>
+  </ol>
+
+  <div class="note">
+    This connects your GitHub repo to Azure via GitHub Actions (CI/CD).
+  </div>
+
+  <hr />
+
+  <h2>3. 🛠️ Fix the Generated Workflow File</h2>
+
+  <p>The default GitHub Actions workflow has issues. You <strong>must edit it manually</strong> to support Python
+    dependencies and folder structure.</p>
+
+  <pre><code># File: .github/workflows/main_apirtx.yml
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies directly to .python_packages
+        run: |
+          mkdir -p .python_packages/lib/python3.12/site-packages
+          pip install -r requirements.txt --target=.python_packages/lib/python3.12/site-packages
+
+      - name: Arrange function files into folder
+        run: |
+          mkdir -p api/create_vm
+          mv api/create_vm/__init__.py api/create_vm/function.json api/create_vm/
+
+      - name: Zip artifact for deployment
+        run: zip -r release.zip . -x "venv/*"
+
+      - name: Deploy to Azure Functions
+        uses: Azure/functions-action@v1
+        id: deploy-to-function
+        with:
+          app-name: 'createvm'
+          slot-name: 'Production'
+          package: '.'
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_3C1A0BD75F8E4905A4480CC8D4DA1FEC }}
+          sku: 'flexconsumption'
+</code></pre>
+
+  <div class="critical">
+    <strong>Important:</strong><br />
+    <code>publish-profile</code> must match the secret Azure provides for deployment. Do <u>not</u> modify the key name
+    unless you update it in GitHub > Secrets too.
+  </div>
+
+  <hr />
+
+  <h2>4. 📦 Your Project Structure</h2>
+
+  <pre><code>rtxapi/
+├── .github/
+│   └── workflows/
+│       └── main_apirtx.yml            # GitHub Actions workflow
+├── prod/
+│   ├── create_vm/
+│   │   ├── __init__.py          # Function logic
+│   │   └── function.json        # HTTP trigger
+│   └── destroy_vm/
+│       ├── __init__.py
+│       └── function.json
+├── .python_packages/            # Populated at runtime
+│   └── lib/python3.12/site-packages/
+├── requirements.txt             # All dependencies listed here
+├── host.json                    # Runtime configuration
+└── local.settings.json          # Local dev only
+</code></pre>
+
+  <hr />
+
+  <h2>5. 🔐 Protect Your Publish Profile</h2>
+
+  <p>The publish profile secret is a sensitive key used by Azure to authenticate and deploy code from GitHub Actions.
+    Example:</p>
+
+  <pre><code>publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_3C1A0BD75F8E4905A4480CC8D4DA1FEC }}</code></pre>
+
+  <p>Do <strong>NOT</strong> expose, rename, or invalidate this secret unless regenerating the Azure publish profile.
+  </p>
+
+  <h3>How to Set It:</h3>
+  <ol>
+    <li>Go to Azure Function App → “Get Publish Profile” → Download</li>
+    <li>Go to GitHub Repo → Settings → Secrets and Variables → Actions</li>
+    <li>Add New Repository Secret → Name it (e.g. <code>AZUREAPPSERVICE_PUBLISHPROFILE_...</code>)</li>
+    <li>Paste the contents of the downloaded file</li>
+  </ol>
+
+  <div class="note">
+    ✅ Once connected, any push to your GitHub repo will trigger a new deployment.
+  </div>
+
+  <hr />
+
+  <h2>🎉 Done! What's Next?</h2>
+  <ul>
+    <li>Test by pushing new code to GitHub</li>
+    <li>Use tools like <code>curl</code> or Postman to hit your Function URL</li>
+    <li>Monitor logs via Azure Portal → Functions → Logs</li>
+  </ul>
+
+  <h2>🙋 Tips</h2>
+  <ul>
+    <li>Enable branch protection to prevent accidental changes to the workflow</li>
+    <li>Keep secrets private — rotate publish profiles when needed</li>
+    <li>Consider using <code>az login</code> or Azure CLI-based auth for advanced workflows</li>
+  </ul>
+  <h2>6. 🔧 Adding Environment Variables</h2>
+  <p>To securely store sensitive keys, tokens, or configs:</p>
+  <ol>
+    <li>Go to Azure Portal → Your Function App</li>
+    <li>Navigate to <strong>Configuration</strong> → <strong>Application settings</strong></li>
+    <li>Click <strong>+ New application setting</strong></li>
+    <li>Add key-value pairs like:
+      <ul>
+        <li><code>OPENAI_API_KEY = sk-xxxxxxx</code></li>
+        <li><code>ENVIRONMENT = production</code></li>
+      </ul>
+    </li>
+    <li>Click Save → Azure will restart the Function App</li>
+  </ol>
+
+  <p>In Python, use:</p>
+  <pre><code>import os
+    api_key = os.getenv("OPENAI_API_KEY")
+    </code></pre>
+
+  <hr />
+
+  <h2>7. 🌐 Setting Up a Custom Domain</h2>
+  <ol>
+    <li>Go to Azure Portal → Your Function App</li>
+    <li>Click <strong>Custom domains</strong> in the left panel</li>
+    <li>Click <strong>+ Add custom domain</strong></li>
+    <li>Verify domain ownership (Azure will guide you to add a CNAME or TXT record via your DNS provider)</li>
+    <li>Once verified, assign the domain like: <code>api.mydomain.com</code></li>
+    <li>Azure automatically issues an SSL cert (via App Service Managed Certificate)</li>
+  </ol>
+  <h2>8. 💻 Using VSCode to Upload Your Azure Function Folder to GitHub</h2>
+
+  <p>Follow these steps to push your Azure Function app code with the correct folder structure to GitHub using VSCode:
+  </p>
+
+  <ol>
+    <li>Open VSCode and open your project folder (e.g., <code>rtxapi/</code>).</li>
+    <li>Make sure your function code is organized like this inside the <code>api/</code> folder:</li>
+  </ol>
+
+  <pre><code>prod/
+    └── create_vm/
+        ├── __init__.py  &lt;-- Python function entrypoint
+        └── function.json &lt;-- Azure function bindings config
+    </code></pre>
+
+  <p><strong>Important:</strong> The Python script must be named <code>__init__.py</code> for Azure Functions to
+    recognize
+    it as the function entrypoint.</p>
+
+  <p>Example <code>function.json</code> format:</p>
+
+  <pre><code>{
+      "scriptFile": "__init__.py",
+      "bindings": [
+        {
+          "authLevel": "function",
+          "type": "httpTrigger",
+          "direction": "in",
+          "name": "req",
+          "route": "deletevm",
+          "methods": ["get", "post"]
+        },
+        {
+          "type": "http",
+          "direction": "out",
+          "name": "$return"
+        }
+      ]
+    }
+    </code></pre>
+
+  <ol start="3">
+    <li>Initialize git if you haven’t already:
+      <pre><code>git init</code></pre>
+    </li>
+    <li>Stage all files:
+      <pre><code>git add .</code></pre>
+    </li>
+    <li>Commit your changes:
+      <pre><code>git commit -m "Initial commit of Azure Function API"</code></pre>
+    </li>
+    <li>Connect to your GitHub repository:
+      <pre><code>git remote add origin https://github.com/yourusername/yourrepo.git</code></pre>
+    </li>
+    <li>Push your branch (usually main or master):
+      <pre><code>git push -u origin main</code></pre>
+    </li>
+  </ol>
+
+  <p>Once pushed, the GitHub Actions workflow will automatically deploy your Azure Function app according to your YAML
+    configuration.</p>
+
+  <div class="note">
+    You can use VSCode’s <strong>Source Control</strong> tab for a UI experience to stage, commit, and push changes
+    instead of CLI commands.
+  </div>
+
+</body>
+
+</html>

@@ -1,0 +1,11 @@
+azure-identity>=1.12.0
+azure-mgmt-resource>=21.0.0
+azure-mgmt-network>=21.0.0
+azure-mgmt-compute>=27.0.0
+azure-mgmt-dns>=7.0.0
+azure-mgmt-storage>=20.0.0
+azure-storage-blob>=12.14.1
+dnspython>=2.3.0
+python-dotenv>=1.0.0
+msal>=1.12.0
+azure-functions
