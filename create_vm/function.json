@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "createvm",
+      "route": "create_vm",
       "methods": ["get", "post"]
     },
     {
