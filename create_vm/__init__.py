@@ -38,7 +38,11 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 def create_vm(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Python HTTP trigger function processed a request.')
     
-    return func.HttpResponse(
-        "Hello World CREATED",
-        status_code=200
-    )
+    method = req.method  # this will be 'GET', 'POST', etc.
+
+    if method == "GET":
+        return func.HttpResponse("Received a GET request", status_code=200)
+    elif method == "POST":
+        return func.HttpResponse("Received a POST request", status_code=200)
+    else:
+        return func.HttpResponse(f"Received a {method} request", status_code=200)
