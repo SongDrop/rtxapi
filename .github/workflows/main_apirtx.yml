@@ -36,8 +36,8 @@ jobs:
 
       - name: Install dependencies directly to .python_packages
         run: |
-          mkdir -p prod/.python_packages/lib/python3.12/site-packages
-          pip install -r requirements.txt --target=prod/.python_packages/lib/python3.12/site-packages
+          mkdir -p .python_packages/lib/python3.12/site-packages
+          pip install -r requirements.txt --target=.python_packages/lib/python3.12/site-packages
 
       # Optional: Add step to run tests here
 
