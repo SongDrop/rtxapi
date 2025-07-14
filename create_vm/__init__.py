@@ -7,7 +7,6 @@ if python_packages_path not in sys.path:
     sys.path.append(python_packages_path)
 import json
 import os
-import sys
 import time
 import logging
 from datetime import datetime, timedelta
