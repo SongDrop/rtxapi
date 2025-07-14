@@ -39,8 +39,8 @@ jobs:
 
       - name: Install dependencies directly to .python_packages
         run: |
-          mkdir -p .venv/lib/python3.12/site-packages
-          pip install -r requirements.txt --target=.venv/lib/python3.12/site-packages
+          mkdir -p .python_packages/lib/site-packages
+          pip install -r requirements.txt --target=.python_packages/lib/site-packages
 
       # Optional: Add step to run tests here
 
