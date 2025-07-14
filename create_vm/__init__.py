@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+# Add .python_packages to Python path
+python_packages_path = str(Path(__file__).parent.parent / ".python_packages" / "lib" / "site-packages")
+if python_packages_path not in sys.path:
+    sys.path.append(python_packages_path)
 import json
 import os
 import sys
