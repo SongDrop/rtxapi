@@ -45,7 +45,7 @@ jobs:
       # Optional: Add step to run tests here
 
       - name: Zip artifact for deployment
-        run: zip -r release.zip . -x "venv/*"
+        run: zip -r release.zip . -x "venv/*" -x ".python_packages/lib/site-packages/*.dist-info/*"
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
