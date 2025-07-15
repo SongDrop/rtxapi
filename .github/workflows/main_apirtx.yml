@@ -41,7 +41,7 @@ jobs:
       - name: Prepare Python dependencies
         run: |
           # Create the exact folder structure Azure Functions expects
-          mkdir -p .python_packages/lib/python3.10/site-packages
+          mkdir -p .python_packages/lib/site-packages
           cp -r venv/lib/python3.10/site-packages/* .python_packages/lib/site-packages/
 
       - name: Create deployment package
