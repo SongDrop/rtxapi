@@ -12,7 +12,7 @@ on:
 
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: '.' # set this to the path to your web app project, defaults to the repository root
-  PYTHON_VERSION: '3.12' # set this to the python version to use (supports 3.6, 3.7, 3.8)
+  PYTHON_VERSION: '3.10' # set this to the python version to use (supports 3.6, 3.7, 3.8)
 
 jobs:
   build:
@@ -33,9 +33,6 @@ jobs:
         run: |
           python -m venv venv
           source venv/bin/activate
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
 
       - name: Install dependencies directly to .python_packages
         run: |
