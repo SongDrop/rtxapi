@@ -40,17 +40,14 @@ logger = logging.getLogger(__name__)
 logger.info("Starting application initialization...")
 
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
-
-@app.route(route="create_vm")
-def create_vm(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Python HTTP trigger function processed a request.')
-    
-    method = req.method  # this will be 'GET', 'POST', etc.
-
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info('Processing create_vm request...')
+ 
+    method = req.method
     if method == "GET":
-        return func.HttpResponse("Received a GET request", status_code=200)
+        return func.HttpResponse("create_vm: Received a GET request", status_code=200)
     elif method == "POST":
-        return func.HttpResponse("Received a POST request", status_code=200)
+        return func.HttpResponse("create_vm: Received a POST request", status_code=200)
     else:
+        return func.HttpResponse(f"create_vm: Received a {method} request", status_code=200)
         return func.HttpResponse(f"Received a {method} request", status_code=200)
