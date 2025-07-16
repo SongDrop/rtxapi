@@ -1,10 +1,5 @@
 import sys
 from pathlib import Path
-
-# Add .python_packages to Python path
-python_packages_path = str(Path(__file__).parent.parent / ".python_packages" / "lib" / "site-packages")
-if python_packages_path not in sys.path:
-    sys.path.append(python_packages_path)
 import json
 import os
 import time
@@ -37,17 +32,21 @@ from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+# Configure logging first
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+logger.info("Starting application initialization...")
 
-@app.route(route="delete_vm")
-def delete_vm(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Python HTTP trigger function processed a request.')
-    
-    method = req.method  # this will be 'GET', 'POST', etc.
-
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info('Processing delete_vm request...')
+ 
+    method = req.method
     if method == "GET":
-        return func.HttpResponse("Received a GET request", status_code=200)
+        return func.HttpResponse("delete_vm: Received a GET request", status_code=200)
     elif method == "POST":
-        return func.HttpResponse("Received a POST request", status_code=200)
+        return func.HttpResponse("delete_vm: Received a POST request", status_code=200)
     else:
-        return func.HttpResponse(f"Received a {method} request", status_code=200)
+        return func.HttpResponse(f"delete_vm: Received a {method} request", status_code=200)
