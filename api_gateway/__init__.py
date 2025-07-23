@@ -27,7 +27,6 @@ API_NAME = os.getenv("API_NAME") #your api name
 ###this is on azure portal e.g yourapi-00000.uksouth-01.azurewebsites.net
 ###Or when you add your custom domain myapi.com or myapi.domain.com
 API_DEFAULT_DOMAIN = os.getenv("API_DEFAULT_DOMAIN") #your api name
-
  
 def get_function_keys(function_name):
     try:
@@ -53,19 +52,10 @@ def get_function_keys(function_name):
             os.environ.get('API_NAME'),
             function_name
         )
-
-        if keys:
-            # keys may be dict or have attribute keys depending on SDK version
-            if hasattr(keys, 'keys') and keys.keys:
-                return keys.keys
-            elif isinstance(keys, dict):
-                return keys
-            else:
-                logger.error("Unexpected keys structure")
-                return None
-        else:
-            logger.error(f"No keys found for function '{function_name}'.")
-            return None
+         
+        # keys.additional_properties is a dict of key names to values
+        function_keys = keys.additional_properties
+        return function_keys
 
     except Exception as e:
         logger.error(f"Exception fetching keys for function '{function_name}': {e}", exc_info=True)
