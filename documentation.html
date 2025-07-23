@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Deploying Python Azure Function Apps with GitHub Actions and API Gateway: A Detailed Guide</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 2rem auto;
+            line-height: 1.6;
+            color: #222;
+            padding: 0 1rem;
+        }
+
+        h1,
+        h2,
+        h3 {
+            color: #0078d4;
+        }
+
+        pre {
+            background: #f4f4f4;
+            padding: 1rem;
+            overflow-x: auto;
+            border-radius: 4px;
+        }
+
+        code {
+            font-family: Consolas, monospace;
+            background: #eee;
+            padding: 0.1em 0.3em;
+            border-radius: 3px;
+        }
+
+        a {
+            color: #0066cc;
+        }
+
+        ul {
+            margin-left: 1.2rem;
+        }
+
+        blockquote {
+            border-left: 4px solid #0078d4;
+            padding-left: 1rem;
+            color: #555;
+            font-style: italic;
+            background: #f9f9f9;
+        }
+
+        .note {
+            background: #fff4e5;
+            border-left: 4px solid #f0ad4e;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Deploying Python Azure Function Apps with GitHub Actions and API Gateway: A Detailed Guide</h1>
+
+    <p>
+        In this comprehensive article, we will cover the end-to-end process of deploying a Python API as an Azure
+        Function App using GitHub Actions workflows. This guide is based on practical, real-world experience overcoming
+        deployment challenges and is aimed at developers who want to automate their Azure Functions deployment via
+        GitHub, manage multiple function endpoints, and secure their API with token-based authentication.
+    </p>
+
+    <hr />
+
+    <h2>1. Introduction</h2>
+    <p>
+        Azure Functions provide an event-driven serverless compute platform that allows you to run code without managing
+        infrastructure. When combined with Python, it offers a powerful way to build APIs and integrations.
+    </p>
+    <p>
+        Deploying Python Azure Functions directly from GitHub repositories with GitHub Actions automates your CI/CD
+        pipeline and ensures your function app is always up to date.
+    </p>
+    <p>
+        This guide explains how to:
+    </p>
+    <ul>
+        <li>Create and configure an Azure Function App for Python.</li>
+        <li>Set up GitHub Actions workflow to deploy your function.</li>
+        <li>Prepare your Python project structure and dependencies.</li>
+        <li>Configure an API Gateway function to handle multiple functions with centralized authentication.</li>
+    </ul>
+
+    <hr />
+
+    <h2>2. Prerequisites</h2>
+    <ul>
+        <li>An <a href="https://portal.azure.com" target="_blank" rel="noopener">Azure Subscription</a></li>
+        <li>GitHub repository for your Python API (e.g., <code>myapi</code>)</li>
+        <li>Basic knowledge of Azure Functions, Python, and GitHub Actions</li>
+        <li>Visual Studio Code with Azure Functions and Python extensions installed (recommended)</li>
+        <li>Azure CLI installed locally (optional, for local testing and management)</li>
+    </ul>
+
+    <hr />
+
+    <h2>3. Step-by-Step Deployment Process</h2>
+
+    <h3>3.1 Create Your Azure Function App with Flexible (Linux) Plan</h3>
+    <p>
+        Start by creating a Python Function App in the Azure Portal:
+    </p>
+    <ol>
+        <li>Go to <strong>Azure Portal &rarr; Create a resource &rarr; Function App</strong>.</li>
+        <li>Choose your subscription and resource group.</li>
+        <li>Pick a unique function app name (e.g., <code>myapi</code>).</li>
+        <li>Select <strong>Publish</strong> as <em>Code</em>.</li>
+        <li>Runtime stack: <code>Python</code>, version: <code>3.10</code>.</li>
+        <li>Operating System: <code>Linux</code>.</li>
+        <li>Plan type: <code>Premium</code> or <code>Consumption</code> (Flexible plan recommended for more control).
+        </li>
+        <li>Complete the creation and wait for deployment.</li>
+    </ol>
+
+    <h3>3.2 Enable SCM Basic Auth Publishing Credentials</h3>
+    <p>
+        Once the function app is created, enable SCM (Source Control Management) Basic Auth credentials to allow GitHub
+        Actions to authenticate and deploy:
+    </p>
+    <ul>
+        <li>Navigate to your Function App in the Azure Portal.</li>
+        <li>Go to <strong>Configuration &rarr; Platform settings</strong>.</li>
+        <li>Enable the checkbox <strong>SCM Basic Auth Publishing Credentials</strong>.</li>
+        <li>Save your changes.</li>
+    </ul>
+
+    <h3>3.3 Configure Deployment Center to Connect GitHub</h3>
+    <p>
+        Set up continuous deployment with GitHub repository integration:
+    </p>
+    <ol>
+        <li>Go to <strong>Deployment Center</strong> in your Function App.</li>
+        <li>Switch to the <strong>Settings</strong> tab.</li>
+        <li>Under <strong>Source</strong>, select <strong>GitHub</strong>.</li>
+        <li>Authenticate with GitHub if prompted.</li>
+        <li>Select your repository (e.g., <code>myapi</code>), choose the <code>main</code> branch.</li>
+        <li>Set Runtime stack to Python 3.10.</li>
+        <li>Save the configuration.</li>
+    </ol>
+
+    <p>
+        This process automatically creates a GitHub Actions workflow file at
+        <code>myapi/.github/workflows/main_myapi.yml</code> to handle deployment.
+    </p>
+
+    <h3>3.4 Modify GitHub Actions Workflow for Python Dependencies</h3>
+    <p>
+        The default workflow usually lacks the correct Python environment setup for Azure Functions. You need to edit it
+        to:
+    </p>
+    <ul>
+        <li>Create and activate a Python virtual environment.</li>
+        <li>Install dependencies from <code>requirements.txt</code>.</li>
+        <li>Prepare the folder structure Azure Functions expects.</li>
+        <li>Create a deployment zip package.</li>
+    </ul>
+
+    <p>Insert the following snippet into your workflow before the deployment step (indentation matters in YAML):</p>
+
+    <pre><code>  - name: Create and start virtual environment
+    run: |
+      python -m venv venv
+      source venv/bin/activate
+      pip install --upgrade pip
+      pip install -r requirements.txt
+
+  # Optional: Add step to run tests here
+
+  - name: Prepare Python dependencies
+    run: |
+      # Create the exact folder structure Azure Functions expects
+      mkdir -p .python_packages/lib/site-packages
+      cp -r venv/lib/python3.10/site-packages/* .python_packages/lib/site-packages/
+
+  - name: Create deployment package
+    run: |
+      # Create a staging directory with correct structure
+      mkdir -p staging
+      
+      # Copy all project files except excluded directories
+      rsync -a --exclude='venv' --exclude='.git' --exclude='.python_packages' --exclude='staging' . staging/
+      
+      # Move python packages to correct location in staging
+      mv .python_packages staging/
+      
+      # Create zip with all contents in staging
+      cd staging && zip -r ../release.zip .
+      
+      # Clean up
+      cd .. && rm -rf staging .python_packages
+</code></pre>
+
+    <h3>3.5 Prepare Your Python API Project Structure</h3>
+
+    <h4>3.5.1 Clone Your Repository Locally</h4>
+    <p>
+        Open a terminal and clone your GitHub repo:
+    </p>
+    <pre><code>git clone https://github.com/yourusername/myapi.git
+cd myapi
+</code></pre>
+
+    <h4>3.5.2 Create <code>requirements.txt</code></h4>
+    <p>
+        Your dependencies should include Azure SDKs, Azure Functions, and other required libraries. Here is an example:
+    </p>
+
+    <pre><code>azure-identity
+azure-mgmt-resource
+azure-mgmt-network
+azure-mgmt-compute
+azure-mgmt-dns
+azure-mgmt-storage
+azure-storage-blob
+dnspython
+python-dotenv
+msal
+azure-functions
+cryptography==43.0.3
+requests
+</code></pre>
+
+    <h4>3.5.3 Create Your Function Folder and Files</h4>
+    <p>
+        Create a folder for your function, e.g., <code>create_vm</code>, containing:</p>
+
+    <ul>
+        <li><code>__init__.py</code>: Your Python function code.</li>
+        <li><code>function.json</code>: Function bindings and trigger definitions.</li>
+    </ul>
+
+    <h5>Example: <code>create_vm/__init__.py</code></h5>
+
+    <pre><code>import logging
+import azure.functions as func
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.info("Starting create_vm function...")
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info('Processing create_vm request...')
+    method = req.method
+
+    if method == "GET":
+        return func.HttpResponse("create_vm: Received a GET request", status_code=200)
+    elif method == "POST":
+        return func.HttpResponse("create_vm: Received a POST request", status_code=200)
+    else:
+        return func.HttpResponse(f"create_vm: Received a {method} request", status_code=200)
+</code></pre>
+
+    <h5>Example: <code>create_vm/function.json</code></h5>
+
+    <pre><code>{
+  "scriptFile": "__init__.py",
+  "bindings": [
+    {
+      "authLevel": "function",
+      "type": "httpTrigger",
+      "direction": "in",
+      "name": "req",
+      "route": "create_vm",
+      "methods": ["get", "post"]
+    },
+    {
+      "type": "http",
+      "direction": "out",
+      "name": "$return"
+    }
+  ]
+}
+</code></pre>
+
+    <p><em>Note:</em> The <code>"route"</code> must match your function folder name or your desired API endpoint.</p>
+
+    <h3>3.6 Commit and Push Your Changes</h3>
+    <p>
+        Stage and push your changes to GitHub:</p>
+
+    <pre><code>git add .
+git commit -m "Initialize Python function app with create_vm"
+git push
+</code></pre>
+
+    <p>
+        GitHub Actions will detect the changes, build the environment, install dependencies, package the app, and deploy
+        it to Azure automatically.
+    </p>
+
+    <h3>3.7 Access Your Function App</h3>
+    <p>
+        In the Azure Portal, navigate to your Function App, then under <strong>Functions &rarr; create_vm</strong>,
+        click <strong>Get function URL</strong>. It will provide a URL similar to:</p>
+
+    <pre><code>https://myapi-g9hzceaghhfcd8hn.uksouth-01.azurewebsites.net/create_vm?code=YOUR_FUNCTION_KEY
+</code></pre>
+
+    <p>
+        This URL includes a required <code>code</code> query parameter that authenticates requests. Your API will not
+        work without this token.
+    </p>
+
+    <h3>3.8 Optional: Add Custom Domain</h3>
+    <p>
+        You can map your own domain to the function app through <strong>Custom domains</strong> in the Azure Portal.
+        After mapping, your API URL will be:</p>
+
+    <pre><code>https://yourdomain.com/create_vm?code=YOUR_FUNCTION_KEY
+</code></pre>
+
+    <hr />
+
+    <h2>4. Building an API Gateway Function for Multiple Endpoints</h2>
+    <p>
+        When your app grows to have multiple functions like <code>create_vm</code>, <code>destroy_vm</code>,
+        <code>clone_vm</code>, etc., managing individual function keys and authentication can become tedious. A
+        recommended approach is to create an API Gateway Azure Function to act as a centralized entry point and manage
+        authentication centrally.
+    </p>
+
+    <h3>4.1 API Gateway Folder Structure</h3>
+    <p>
+        Create a folder named <code>api_gateway</code> with:</p>
+
+    <ul>
+        <li><code>__init__.py</code>: the gateway logic</li>
+        <li><code>function.json</code>: bindings and trigger</li>
+    </ul>
+
+    <h3>4.2 API Gateway Python Code (<code>api_gateway/__init__.py</code>)</h3>
+
+    <pre><code>import os
+import logging
+import azure.functions as func
+
+from azure.identity import DefaultAzureCredential
+from azure.mgmt.web import WebSiteManagementClient
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+SUBSCRIPTION_ID = os.getenv("AZURE_SUBSCRIPTION_ID")
+RESOURCE_GROUP = os.getenv("AZURE_RESOURCE_GROUP")
+FUNCTION_APP_NAME = os.getenv("FUNCTION_APP_NAME")
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logger.info("Processing request to generate full function URL with key")
+
+    function_name = req.params.get('function')  # query param ?function=create_vm
+    if not function_name:
+        return func.HttpResponse(
+            "Please provide a 'function' query parameter.",
+            status_code=400
+        )
+
+    try:
+        credential = DefaultAzureCredential()
+        client = WebSiteManagementClient(credential, SUBSCRIPTION_ID)
+
+        keys = client.web_apps.list_function_keys(RESOURCE_GROUP, FUNCTION_APP_NAME, function_name)
+        default_key = keys.keys.get("default")
+
+        if not default_key:
+            return func.HttpResponse(f"No default key found for function '{function_name}'", status_code=404)
+
+        base_url = f"https://{FUNCTION_APP_NAME}.azurewebsites.net/api/{function_name}"
+        full_url = f"{base_url}?code={default_key}"
+
+        # Optional: Add your custom authentication here to validate token param, etc.
+
+        return func.HttpResponse(full_url, status_code=200)
+
+    except Exception as e:
+        logger.error(f"Error fetching function key for '{function_name}': {e}")
+        return func.HttpResponse("Failed to get function key", status_code=500)
+</code></pre>
+
+    <h3>4.3 API Gateway Binding (<code>api_gateway/function.json</code>)</h3>
+
+    <pre><code>{
+  "scriptFile": "__init__.py",
+  "bindings": [
+    {
+        "authLevel": "function",
+        "type": "httpTrigger",
+        "direction": "in",
+        "name": "req",
+        "route": "sas_token",
+        "methods": ["get", "post"]
+    },
+    {
+      "type": "http",
+      "direction": "out",
+      "name": "$return"
+    }
+  ]
+}
+</code></pre>
+
+    <h3>4.4 How It Works</h3>
+    <ul>
+        <li>You call the gateway endpoint like this:<br />
+            <code>https://myapi-g9hzceaghhfcd8hn.uksouth-01.azurewebsites.net/api_gateway?code=GATEWAY_KEY&function=create_vm</code>
+        </li>
+        <li>The gateway queries Azure APIs to get the <code>create_vm</code> function's default key dynamically.</li>
+        <li>It returns the full URL with the correct code parameter.<br />
+            You can add additional token-based authentication in this gateway to secure your API centrally.</li>
+        <li>Clients then call the returned function URL without managing individual keys.</li>
+    </ul>
+
+    <hr />
+
+    <h2>5. Additional Tips and Best Practices</h2>
+
+    <h3>5.1 Secrets Management</h3>
+    <p>
+        Use Azure Key Vault or GitHub Secrets to store sensitive information like <code>AZURE_SUBSCRIPTION_ID</code>,
+        <code>RESOURCE_GROUP</code>, and client credentials securely. Avoid hardcoding secrets in your code or
+        workflows.
+    </p>
+
+    <h3>5.2 Local Development and Testing</h3>
+    <p>
+        Use <a href="https://learn.microsoft.com/azure/azure-functions/functions-run-local" target="_blank"
+            rel="noopener">Azure Functions Core Tools</a> to run and test your function app locally. Use `.env` files
+        with <code>python-dotenv</code> for environment variables.
+    </p>
+
+    <h3>5.3 Logging and Monitoring</h3>
+    <p>
+        Integrate Azure Application Insights for detailed telemetry and error tracking. Use structured logging in your
+        Python functions for better observability.
+    </p>
+
+    <h3>5.4 Scaling and Performance</h3>
+    <p>
+        Choose the appropriate hosting plan (Consumption, Premium, or Dedicated) based on your expected traffic and
+        performance needs. Pre-warm function instances to reduce cold start latency if required.
+    </p>
+
+    <h3>5.5 Security</h3>
+    <p>
+        - Always use function keys or other authentication mechanisms (OAuth, JWT, API Management) to secure your
+        endpoints.<br />
+        - Implement rate limiting or throttling in your API Gateway if necessary.<br />
+        - Regularly rotate function keys for improved security.
+    </p>
+
+    <hr />
+
+    <h2>6. Summary</h2>
+    <p>
+        This guide walked you through creating a Python Azure Function App deployed via GitHub Actions, including
+        preparing your environment, dependencies, and function structure. It also demonstrated how to build a
+        centralized API Gateway function to manage multiple function endpoints and authentication.
+    </p>
+    <p>
+        Following these steps lets you maintain a clean, automated deployment pipeline while managing complex APIs with
+        ease and security.
+    </p>
+
+    <hr />
+
+    <h2>7. References</h2>
+    <ul>
+        <li><a href="https://learn.microsoft.com/azure/azure-functions/" target="_blank" rel="noopener">Azure Functions
+                Documentation</a></li>
+        <li><a href="https://learn.microsoft.com/azure/azure-functions/functions-create-github-action" target="_blank"
+                rel="noopener">Deploy Azure Functions using GitHub Actions</a></li>
+        <li><a href="https://github.com/Azure/azure-sdk-for-python" target="_blank" rel="noopener">Azure SDK for Python
+                GitHub Repository</a></li>
+        <li><a href="https://learn.microsoft.com/azure/azure-functions/functions-bindings-http-webhook" target="_blank"
+                rel="noopener">Azure Functions HTTP and Webhook bindings</a></li>
+        <li><a href="https://learn.microsoft.com/azure/azure-functions/functions-develop-local" target="_blank"
+                rel="noopener">Develop and test Azure Functions locally</a></li>
+        <li><a href="https://learn.microsoft.com/azure/azure-functions/functions-monitoring" target="_blank"
+                rel="noopener">Monitoring Azure Functions with Application Insights</a></li>
+        <li><a href="https://learn.microsoft.com/azure/azure-functions/functions-security-authentication"
+                target="_blank" rel="noopener">Azure Functions security and authentication</a></li>
+        <li><a href="https://learn.microsoft.com/azure/azure-functions/functions-bindings-storage-blob" target="_blank"
+                rel="noopener">Azure Storage Blob bindings for Azure Functions</a></li>
+        <li><a href="https://learn.microsoft.com/azure/azure-functions/functions-bindings-dns" target="_blank"
+                rel="noopener">Azure DNS management with Azure Functions</a></li>
+        <li><a href="https://docs.github.com/actions" target="_blank" rel="noopener">GitHub Actions Documentation</a>
+        </li>
+    </ul>
+</body>
+
+</html>
