@@ -28,7 +28,12 @@ API_NAME = os.getenv("API_NAME") #your api name
 ###Or when you add your custom domain myapi.com or myapi.domain.com
 API_DEFAULT_DOMAIN = os.getenv("API_DEFAULT_DOMAIN") #your api name
 
-def get_function_default_key(function_name, key_to_return:str = "default"):
+if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME, API_DEFAULT_DOMAIN]):
+    logger.error("One or more required environment variables are missing.")
+    # Optionally raise Exception here or exit
+
+
+def get_function_key(function_name, key_to_return:str = "default"):
     try:
         credential = DefaultAzureCredential()
         client = WebSiteManagementClient(credential, SUBSCRIPTION_ID)
@@ -38,7 +43,7 @@ def get_function_default_key(function_name, key_to_return:str = "default"):
         default_key = keys.keys.get(key_to_return)
         return default_key
     except Exception as e:
-        logger.error(f"Error fetching function key: {e}")
+        logger.error(f"Exception fetching function key for '{function_name}': {e}")
         return None
 
 #This function acts as a api-gateway
@@ -61,22 +66,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400
         )
 
-    try:
-        credential = DefaultAzureCredential()
-        client = WebSiteManagementClient(credential, SUBSCRIPTION_ID)
-        #key_to_return = 'default' > you can create multiple keys as 
-        #well for each function app but we use default
-        #########
-        keys = client.web_apps.list_function_keys(function_name, key_to_return="default")
-        default_key = keys.keys.get("default")
-        if not default_key:
-            logger.error(f"Error fetching function key for '{function_name}': {e}")
-            return func.HttpResponse(f"No default key found for function '{function_name}'", status_code=500)
+    #key_to_return = 'default' > you can create multiple keys as 
+    #well for each function app but we use default
+    #########
+    default_key = get_function_key(function_name, key_to_return = "default")
+    if not default_key:
+        logger.error(f"No default key found for function '{function_name}'.")
+        return func.HttpResponse(
+            f"No default key found for function '{function_name}'.",
+            status_code=404
+        )
 
-        base_url = f"https://{API_DEFAULT_DOMAIN}/{function_name}"
-        full_url = f"{base_url}?code={default_key}"
-        return func.HttpResponse(full_url, status_code=200)
-
-    except Exception as e:
-        logger.error(f"Error fetching function key for '{function_name}': {e}")
-        return func.HttpResponse("Failed to get function key", status_code=500)
+    base_url = f"https://{API_DEFAULT_DOMAIN}/{function_name}"
+    full_url = f"{base_url}?code={default_key}"
+    return func.HttpResponse(full_url, status_code=200)
