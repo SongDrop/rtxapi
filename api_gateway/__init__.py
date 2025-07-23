@@ -108,21 +108,21 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             "One or more required environment variables are missing.",
             status_code=400
         )
-    # #key_to_return = 'default' > you can create multiple keys as 
-    # #well for each function app but we use default
-    # #########
-    # key_to_return = "default"
-    # default_key = get_function_key(function_name, key_to_return)
-    # if not default_key:
-    #     logger.error(f"No '{key_to_return}' key found for function '{function_name}'.")
-    #     return func.HttpResponse(
-    #         f"No'{key_to_return}' key found for function '{function_name}'.",
-    #         status_code=404
-    #     )
+    #key_to_return = 'default' > you can create multiple keys as 
+    #well for each function app but we use default
+    #########
+    key_to_return = "default"
+    default_key = get_function_key(function_name, key_to_return)
+    if not default_key:
+        logger.error(f"No '{key_to_return}' key found for function '{function_name}'.")
+        return func.HttpResponse(
+            f"No'{key_to_return}' key found for function '{function_name}'.",
+            status_code=404
+        )
 
-    # base_url = f"https://{API_DEFAULT_DOMAIN}/{function_name}"
-    # full_url = f"{base_url}?code={default_key}"
-    # return func.HttpResponse(full_url, status_code=200)
+    base_url = f"https://{API_DEFAULT_DOMAIN}/{function_name}"
+    full_url = f"{base_url}?code={default_key}"
+    return func.HttpResponse(full_url, status_code=200)
 
     method = req.method
     if method == "GET":
