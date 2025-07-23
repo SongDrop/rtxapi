@@ -24,6 +24,9 @@ SUBSCRIPTION_ID = os.getenv("AZURE_SUBSCRIPTION_ID")
 API_RESOURCE_GROUP = os.getenv("API_RESOURCE_GROUP") #group your api is saved
 ##your api name
 API_NAME = os.getenv("API_NAME") #your api name
+###this is on azure portal e.g yourapi-s91zceaghhfcd8hn.uksouth-01.azurewebsites.net
+###Or when you add your custom domain myapi.com or myapi.domain.com
+API_DEFAULT_DOMAIN = os.getenv("API_DEFAULT_DOMAIN") #your api name
 
 def get_function_default_key(function_name, key_to_return:str = "default"):
     try:
@@ -70,7 +73,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             logger.error(f"Error fetching function key for '{function_name}': {e}")
             return func.HttpResponse(f"No default key found for function '{function_name}'", status_code=500)
 
-        base_url = f"https://{API_NAME}.azurewebsites.net/{function_name}"
+        base_url = f"https://{API_DEFAULT_DOMAIN}/{function_name}"
         full_url = f"{base_url}?code={default_key}"
         return func.HttpResponse(full_url, status_code=200)
 
