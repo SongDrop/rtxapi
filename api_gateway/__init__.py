@@ -56,20 +56,25 @@ API_DEFAULT_DOMAIN = os.getenv("API_DEFAULT_DOMAIN") #your api name
 def main(req: func.HttpRequest) -> func.HttpResponse:
     logger.info("Processing request to generate full function URL with key")
 
-    # Get the function_name from query parameters, fallback to env var if not provided
-    # function_name = req.params.get('function_name') or ''
-    # if not function_name:
-    #     return func.HttpResponse(
-    #         "Please provide a function_name query parameter",
-    #         status_code=400
-    #     )
+    try:
+        req_body = req.get_json()
+    except ValueError:
+        req_body = {}
 
-    # if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME, API_DEFAULT_DOMAIN]):
-    #     logger.error("One or more required environment variables are missing.")
-    #     return func.HttpResponse(
-    #         "One or more required environment variables are missing.",
-    #         status_code=400
-    #     )
+    # Get parameters from JSON body or query parameters
+    resource_group = req_body.get('function_name') or req.params.get('function_name')
+    if not function_name:
+        return func.HttpResponse(
+            "Please provide a function_name query parameter",
+            status_code=400
+        )
+
+    if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME, API_DEFAULT_DOMAIN]):
+        logger.error("One or more required environment variables are missing.")
+        return func.HttpResponse(
+            "One or more required environment variables are missing.",
+            status_code=400
+        )
     # #key_to_return = 'default' > you can create multiple keys as 
     # #well for each function app but we use default
     # #########
