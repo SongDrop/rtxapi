@@ -10,4 +10,4 @@ python-dotenv
 msal
 azure-functions
 cryptography==43.0.3
-
+requests
