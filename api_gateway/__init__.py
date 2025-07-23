@@ -29,20 +29,53 @@ API_NAME = os.getenv("API_NAME") #your api name
 API_DEFAULT_DOMAIN = os.getenv("API_DEFAULT_DOMAIN") #your api name
 
 
-# def get_function_key(function_name, key_to_return: str = "default"):
-#     try:
-#         credential = DefaultAzureCredential()
-#         client = WebSiteManagementClient(credential, SUBSCRIPTION_ID)
-#         keys = client.web_apps.list_function_keys(API_RESOURCE_GROUP, API_NAME, function_name)
-#         if keys and hasattr(keys, 'keys') and keys.keys:
-#             default_key = keys.keys.get(key_to_return)
-#             return default_key
-#         else:
-#             logger.error(f"No keys found for function '{function_name}'.")
-#             return None
-#     except Exception as e:
-#         logger.error(f"Exception fetching function key for '{function_name}': {e}")
-#         return None
+from azure.identity import ClientSecretCredential
+from azure.mgmt.web import WebSiteManagementClient
+import os
+import json
+import logging
+import azure.functions as func
+
+logger = logging.getLogger(__name__)
+
+def get_function_key(function_name, key_to_return: str = "default"):
+    try:
+        # Authenticate using ClientSecretCredential
+        try:
+            credentials = ClientSecretCredential(
+                client_id=os.environ['AZURE_APP_CLIENT_ID'],
+                client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
+                tenant_id=os.environ['AZURE_APP_TENANT_ID']
+            )
+        except KeyError as e:
+            err = f"Missing environment variable: {e}"
+            logger.error(err)
+            # Returning None instead of HttpResponse here; 
+            # HttpResponse should be returned from Azure Function main handler, not helper function
+            return None
+
+        subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID')
+        if not subscription_id:
+            logger.error("AZURE_SUBSCRIPTION_ID environment variable is not set.")
+            return None
+
+        client = WebSiteManagementClient(credentials, subscription_id)
+        keys = client.web_apps.list_function_keys(os.environ.get('API_RESOURCE_GROUP'), os.environ.get('API_NAME'), function_name)
+        
+        if keys and hasattr(keys, 'keys') and keys.keys:
+            default_key = keys.keys.get(key_to_return)
+            if default_key:
+                return default_key
+            else:
+                logger.error(f"Key '{key_to_return}' not found for function '{function_name}'.")
+                return None
+        else:
+            logger.error(f"No keys found for function '{function_name}'.")
+            return None
+
+    except Exception as e:
+        logger.error(f"Exception fetching function key for '{function_name}': {e}", exc_info=True)
+        return None
 
 #This function acts as a api-gateway
 #https://myapi-{azure_id}.uksouth-01.azurewebsites.net/api_gateway?code={code}&function_name={the_other_function}
@@ -69,12 +102,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400
         )
 
-    if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME, API_DEFAULT_DOMAIN]):
-        logger.error("One or more required environment variables are missing.")
-        return func.HttpResponse(
-            "One or more required environment variables are missing.",
-            status_code=400
-        )
+    # if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME, API_DEFAULT_DOMAIN]):
+    #     logger.error("One or more required environment variables are missing.")
+    #     return func.HttpResponse(
+    #         "One or more required environment variables are missing.",
+    #         status_code=400
+    #     )
     # #key_to_return = 'default' > you can create multiple keys as 
     # #well for each function app but we use default
     # #########
