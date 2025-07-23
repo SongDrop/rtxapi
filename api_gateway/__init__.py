@@ -102,12 +102,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400
         )
 
-    # if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME, API_DEFAULT_DOMAIN]):
-    #     logger.error("One or more required environment variables are missing.")
-    #     return func.HttpResponse(
-    #         "One or more required environment variables are missing.",
-    #         status_code=400
-    #     )
+    if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME, API_DEFAULT_DOMAIN]):
+        logger.error("One or more required environment variables are missing.")
+        return func.HttpResponse(
+            "One or more required environment variables are missing.",
+            status_code=400
+        )
     # #key_to_return = 'default' > you can create multiple keys as 
     # #well for each function app but we use default
     # #########
