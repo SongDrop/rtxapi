@@ -28,10 +28,6 @@ API_NAME = os.getenv("API_NAME") #your api name
 ###Or when you add your custom domain myapi.com or myapi.domain.com
 API_DEFAULT_DOMAIN = os.getenv("API_DEFAULT_DOMAIN") #your api name
 
-if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME, API_DEFAULT_DOMAIN]):
-    logger.error("One or more required environment variables are missing.")
-    # Optionally raise Exception here or exit
-
 
 def get_function_key(function_name, key_to_return:str = "default"):
     try:
@@ -66,6 +62,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400
         )
 
+    if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME, API_DEFAULT_DOMAIN]):
+        logger.error("One or more required environment variables are missing.")
+        return func.HttpResponse(
+            ""One or more required environment variables are missing.",
+            status_code=400
+        )
     #key_to_return = 'default' > you can create multiple keys as 
     #well for each function app but we use default
     #########
