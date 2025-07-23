@@ -24,7 +24,7 @@ SUBSCRIPTION_ID = os.getenv("AZURE_SUBSCRIPTION_ID")
 API_RESOURCE_GROUP = os.getenv("API_RESOURCE_GROUP") #group your api is saved
 ##your api name
 API_NAME = os.getenv("API_NAME") #your api name
-###this is on azure portal e.g yourapi-s91zceaghhfcd8hn.uksouth-01.azurewebsites.net
+###this is on azure portal e.g yourapi-00000.uksouth-01.azurewebsites.net
 ###Or when you add your custom domain myapi.com or myapi.domain.com
 API_DEFAULT_DOMAIN = os.getenv("API_DEFAULT_DOMAIN") #your api name
 
