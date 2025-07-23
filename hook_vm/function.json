@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "clone_vm",
+      "route": "hook_vm",
       "methods": ["get", "post"]
     },
     {
