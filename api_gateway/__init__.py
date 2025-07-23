@@ -36,7 +36,9 @@ def get_function_key(function_name, key_to_return:str = "default"):
 
         # List function keys
         keys = client.web_apps.list_function_keys(API_RESOURCE_GROUP, API_NAME, function_name)
-        default_key = keys.keys.get(key_to_return)
+        default_key = None
+        if keys and hasattr(keys, 'keys') and keys.keys:
+            default_key = keys.keys.get(key_to_return)
         return default_key
     except Exception as e:
         logger.error(f"Exception fetching function key for '{function_name}': {e}")
@@ -65,7 +67,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME, API_DEFAULT_DOMAIN]):
         logger.error("One or more required environment variables are missing.")
         return func.HttpResponse(
-            ""One or more required environment variables are missing.",
+            "One or more required environment variables are missing.",
             status_code=400
         )
     #key_to_return = 'default' > you can create multiple keys as 
