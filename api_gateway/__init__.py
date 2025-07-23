@@ -95,7 +95,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         req_body = {}
 
     # Get parameters from JSON body or query parameters
-    resource_group = req_body.get('function_name') or req.params.get('function_name')
+    function_name = req_body.get('function_name') or req.params.get('function_name')
     if not function_name:
         return func.HttpResponse(
             "Please provide a function_name query parameter",
