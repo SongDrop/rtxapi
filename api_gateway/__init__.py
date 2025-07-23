@@ -28,16 +28,7 @@ API_NAME = os.getenv("API_NAME") #your api name
 ###Or when you add your custom domain myapi.com or myapi.domain.com
 API_DEFAULT_DOMAIN = os.getenv("API_DEFAULT_DOMAIN") #your api name
 
-
-from azure.identity import ClientSecretCredential
-from azure.mgmt.web import WebSiteManagementClient
-import os
-import json
-import logging
-import azure.functions as func
-
-logger = logging.getLogger(__name__)
-
+ 
 def get_function_keys(function_name):
     try:
         # Authenticate
