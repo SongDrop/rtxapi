@@ -4,6 +4,7 @@ azure-mgmt-network
 azure-mgmt-compute
 azure-mgmt-dns
 azure-mgmt-storage
+azure-mgmt-web
 azure-storage-blob
 dnspython
 python-dotenv

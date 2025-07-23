@@ -23,7 +23,7 @@ from azure.mgmt.compute.models import (
     VirtualMachine, HardwareProfile, StorageProfile,
     OSProfile, NetworkProfile, NetworkInterfaceReference,
     VirtualMachineExtension, WindowsConfiguration,SecurityProfile
-)
+)   
 from azure.mgmt.dns import DnsManagementClient
 from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
