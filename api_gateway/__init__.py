@@ -73,11 +73,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     #key_to_return = 'default' > you can create multiple keys as 
     #well for each function app but we use default
     #########
-    default_key = get_function_key(function_name, key_to_return = "default")
+    key_to_return = "default"
+    default_key = get_function_key(function_name, key_to_return)
     if not default_key:
-        logger.error(f"No default key found for function '{function_name}'.")
+        logger.error(f"No '{key_to_return}' key found for function '{function_name}'.")
         return func.HttpResponse(
-            f"No default key found for function '{function_name}'.",
+            f"No'{key_to_return}' key found for function '{function_name}'.",
             status_code=404
         )
 
