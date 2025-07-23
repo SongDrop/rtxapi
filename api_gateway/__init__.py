@@ -29,17 +29,17 @@ API_NAME = os.getenv("API_NAME") #your api name
 API_DEFAULT_DOMAIN = os.getenv("API_DEFAULT_DOMAIN") #your api name
 
 
-def get_function_key(function_name, key_to_return:str = "default"):
+def get_function_key(function_name, key_to_return: str = "default"):
     try:
         credential = DefaultAzureCredential()
         client = WebSiteManagementClient(credential, SUBSCRIPTION_ID)
-
-        # List function keys
         keys = client.web_apps.list_function_keys(API_RESOURCE_GROUP, API_NAME, function_name)
-        default_key = None
         if keys and hasattr(keys, 'keys') and keys.keys:
             default_key = keys.keys.get(key_to_return)
-        return default_key
+            return default_key
+        else:
+            logger.error(f"No keys found for function '{function_name}'.")
+            return None
     except Exception as e:
         logger.error(f"Exception fetching function key for '{function_name}': {e}")
         return None
