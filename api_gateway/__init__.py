@@ -21,9 +21,9 @@ logger.info("Starting application initialization...")
 ##Azure subscription id
 SUBSCRIPTION_ID = os.getenv("AZURE_SUBSCRIPTION_ID")
 ##Resource group where your api function is
-RESOURCE_GROUP = os.getenv("AZURE_RESOURCE_GROUP")
+API_RESOURCE_GROUP = os.getenv("API_RESOURCE_GROUP") #group your api is saved
 ##your api name
-API_FUNCTION_APP_NAME = os.getenv("API_FUNCTION_APP_NAME")
+API_NAME = os.getenv("API_NAME") #your api name
 
 def get_function_default_key(function_name, key_to_return:str = "default"):
     try:
@@ -31,7 +31,7 @@ def get_function_default_key(function_name, key_to_return:str = "default"):
         client = WebSiteManagementClient(credential, SUBSCRIPTION_ID)
 
         # List function keys
-        keys = client.web_apps.list_function_keys(RESOURCE_GROUP, API_FUNCTION_APP_NAME, function_name)
+        keys = client.web_apps.list_function_keys(API_RESOURCE_GROUP, API_NAME, function_name)
         default_key = keys.keys.get(key_to_return)
         return default_key
     except Exception as e:
@@ -70,7 +70,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             logger.error(f"Error fetching function key for '{function_name}': {e}")
             return func.HttpResponse(f"No default key found for function '{function_name}'", status_code=500)
 
-        base_url = f"https://{API_FUNCTION_APP_NAME}.azurewebsites.net/{function_name}"
+        base_url = f"https://{API_NAME}.azurewebsites.net/{function_name}"
         full_url = f"{base_url}?code={default_key}"
         return func.HttpResponse(full_url, status_code=200)
 
