@@ -42,7 +42,7 @@ def get_function_default_key(function_name, key_to_return:str = "default"):
         return None
 
 #This function acts as a api-gateway
-#https://myapi-2kso12.uksouth-01.azurewebsites.net/api_gateway?code=5e99A6wYRJZf2m_VloSCNlaVFGq00arDjI16MgdAhAQYAzFuEMjEIQ==&function_name={the_other_function}
+#https://myapi-2kso12.uksouth-01.azurewebsites.net/api_gateway?code={code}&function_name={the_other_function}
 #you call this function with the other function name such as 'create_vm' in request and it will return back
 #https://myapi-2kso12.uksouth-01.azurewebsites.net/create_vm?code={default_sas_token}
 #here we are essentially giving back the correct api function link with the SAS token added
