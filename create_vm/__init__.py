@@ -45,24 +45,14 @@ logger.info("Starting application initialization...")
 
 #WINDOWS-10 IMAGE
 image_reference={
-            'publisher': 'MicrosoftWindowsDesktop',
-            'offer': 'Windows-10',
-            'sku': 'win10-22h2-pro-g2',
-            'version': 'latest'
-        }
+    'publisher': 'MicrosoftWindowsDesktop',
+    'offer': 'Windows-10',
+    'sku': 'win10-22h2-pro-g2',
+    'version': 'latest'
+}
 
 # Ports to open for application [without this app can't run on domain]
 PORTS_TO_OPEN = [22,80,443,3389,5000,8000,47984,47989,47990,47998,47999,48000,48010,4531, 3475]
-
-# GALLERY IMAGE
-GALLERY_IMAGE_RESOURCE_GROUP = 'nvidiaRTX'
-GALLERY_NAME = 'rtx2udk'
-GALLERY_IMAGE_NAME = 'idtech4rtx'
-GALLERY_IMAGE_VERSION = '1.0.2'
-OS_DISK_SSD_GB = '256'
-WINDOWS_IMAGE_PASSWORD = 'idtechDevKitRTX1!'
-RECIPIENT_EMAILS = 'gabzlabs420@gmail.com'
-DUMBDROP_PIN = '1234'
 
 # Console colors for logs
 class bcolors:
