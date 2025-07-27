@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import time
+import re
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv()  # This loads environment variables from a .env file in the current directory
@@ -14,7 +15,7 @@ import dns.resolver
 from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import ClientSecretCredential
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
-
+import logging
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.network.models import NetworkSecurityGroup, SecurityRule, NetworkInterface
@@ -629,7 +630,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             url = f"https://cdn.sdappnet.cloud/rtx/rtxidtech.html?url={public_ip}"
      
             result = {
-                "message": "Your VM is ready to use"
+                "message": "Your VM is ready to use",
                 "vm_name": vm_name,
                 "url": url,
             }
@@ -710,23 +711,23 @@ async def upload_blob_and_generate_sas(blob_service_client, container_name, blob
     print_success(f"SAS URL generated for blob '{blob_name}'.")
     return blob_url_with_sas
 
-    def get_compatible_vm_sizes():
-        return [
-            'Standard_NV4as_v4',
-            'Standard_NV6ads_A10_v5',
-            'Standard_NV8as_v4',
-            'Standard_NV12ads_A10_v5',
-            'Standard_NV12s_v3',
-            'Standard_NV16as_v4',
-            'Standard_NV18ads_A10_v5',
-            'Standard_NV32as_v4',
-            'Standard_NV36adms_A10_v5',
-            'Standard_NV36ads_A10_v5'
-        ]
+def get_compatible_vm_sizes():
+    return [
+        'Standard_NV4as_v4',
+        'Standard_NV6ads_A10_v5',
+        'Standard_NV8as_v4',
+        'Standard_NV12ads_A10_v5',
+        'Standard_NV12s_v3',
+        'Standard_NV16as_v4',
+        'Standard_NV18ads_A10_v5',
+        'Standard_NV32as_v4',
+        'Standard_NV36adms_A10_v5',
+        'Standard_NV36ads_A10_v5'
+    ]
 
-    def check_vm_size_compatibility(vm_size):
-        # List of VM sizes that support Gen 2 Hypervisor with proper 'Standard_' prefix
-        return vm_size in get_compatible_vm_sizes()
+def check_vm_size_compatibility(vm_size):
+    # List of VM sizes that support Gen 2 Hypervisor with proper 'Standard_' prefix
+    return vm_size in get_compatible_vm_sizes()
 
 def check_ns_delegation_with_retries(dns_client, resource_group, domain, retries=5, delay=10):
     for attempt in range(1, retries + 1):
