@@ -47,11 +47,14 @@ def get_function_keys(function_name):
 
 
         # keys is a dict-like object, get keys as dict
-        if keys and hasattr(keys, 'additional_properties'):
-            function_keys = keys.additional_properties
-        elif keys:
-            # fallback if keys is already a dict-like object
-            function_keys = dict(keys)
+        function_keys = {}
+        if keys:
+            if hasattr(keys, 'additional_properties'):
+                function_keys = keys.additional_properties
+            else:
+                function_keys = dict(keys)
+
+        logger.info(f"Retrieved keys: {list(function_keys.keys())}")
         return function_keys
 
     except Exception as e:
