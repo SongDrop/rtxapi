@@ -9,6 +9,8 @@ from azure.identity import ClientSecretCredential
 from azure.mgmt.web import WebSiteManagementClient
 import azure.functions as func
 
+#https://medium.com/@ssbmqtjt/how-to-connect-an-azure-function-with-an-azure-key-vault-azure-portal-and-python-bd5140178a7
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -29,15 +31,6 @@ AZURE_APP_CLIENT_ID = os.getenv("AZURE_APP_CLIENT_ID")
 AZURE_APP_CLIENT_SECRET = os.getenv("AZURE_APP_CLIENT_SECRET")
 
 def get_function_keys(function_name):
-    # Validate required environment variables for auth
-    if not all([AZURE_APP_CLIENT_ID, AZURE_APP_CLIENT_SECRET, AZURE_TENANT_ID]):
-        logger.error("Azure service principal environment variables not set.")
-        return None
-
-    if not all([SUBSCRIPTION_ID, API_RESOURCE_GROUP, API_NAME]):
-        logger.error("Azure subscription or resource info environment variables not set.")
-        return None
-
     try:
         credentials = ClientSecretCredential(
             client_id=AZURE_APP_CLIENT_ID,
@@ -52,10 +45,12 @@ def get_function_keys(function_name):
             function_name
         )
 
+
         # keys is a dict-like object, get keys as dict
-        function_keys = {}
-        if keys:
-            # In some SDK versions keys is a dict of key_name -> key_value
+        if keys and hasattr(keys, 'additional_properties'):
+            function_keys = keys.additional_properties
+        elif keys:
+            # fallback if keys is already a dict-like object
             function_keys = dict(keys)
         return function_keys
 
