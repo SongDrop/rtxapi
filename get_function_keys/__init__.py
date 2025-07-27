@@ -71,8 +71,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     # Accept function_name from query params or JSON body
     function_name = req_body.get('function_name') or req.params.get('function_name')
-    key_name = req_body.get('key_name') or req.params.get('key_name') or 'default'  # default key if not provided
-    
     if not function_name:
         return func.HttpResponse(
             "Please provide a function_name parameter",
@@ -98,16 +96,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=404
         )
 
-    # Extract the single key requested
-    key_value = keys.get(key_name)
-    if not key_value:
-        return func.HttpResponse(
-            f"Key '{key_name}' not found for function '{function_name}'.",
-            status_code=404
-        )
-    
     return func.HttpResponse(
-        json.dumps(key_value),
+        json.dumps(keys),
         mimetype='application/json',
         status_code=200
     )
