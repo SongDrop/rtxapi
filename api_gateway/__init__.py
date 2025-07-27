@@ -19,16 +19,18 @@ logger.info("Starting application initialization...")
 
 # Environment variables
 SUBSCRIPTION_ID = os.getenv("AZURE_SUBSCRIPTION_ID")
+AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID")
+##
 API_RESOURCE_GROUP = os.getenv("API_RESOURCE_GROUP")
 API_NAME = os.getenv("API_NAME")
 API_DEFAULT_DOMAIN = os.getenv("API_DEFAULT_DOMAIN")
-AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID")
-AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET")
-AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID")
+###
+AZURE_APP_CLIENT_ID = os.getenv("AZURE_APP_CLIENT_ID")
+AZURE_APP_CLIENT_SECRET = os.getenv("AZURE_APP_CLIENT_SECRET")
 
 def get_function_keys(function_name):
     # Validate required environment variables for auth
-    if not all([AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID]):
+    if not all([AZURE_APP_CLIENT_ID, AZURE_APP_CLIENT_SECRET, AZURE_TENANT_ID]):
         logger.error("Azure service principal environment variables not set.")
         return None
 
@@ -38,8 +40,8 @@ def get_function_keys(function_name):
 
     try:
         credentials = ClientSecretCredential(
-            client_id=AZURE_CLIENT_ID,
-            client_secret=AZURE_CLIENT_SECRET,
+            client_id=AZURE_APP_CLIENT_ID,
+            client_secret=AZURE_APP_CLIENT_SECRET,
             tenant_id=AZURE_TENANT_ID
         )
         client = WebSiteManagementClient(credentials, SUBSCRIPTION_ID)
@@ -79,7 +81,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     # Check environment variables upfront
     missing_vars = []
-    for var in ["AZURE_SUBSCRIPTION_ID", "API_RESOURCE_GROUP", "API_NAME", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"]:
+    for var in ["AZURE_SUBSCRIPTION_ID", "API_RESOURCE_GROUP", "API_NAME", "AZURE_APP_CLIENT_ID", "AZURE_APP_CLIENT_SECRET", "AZURE_TENANT_ID"]:
         if not os.getenv(var):
             missing_vars.append(var)
     if missing_vars:
