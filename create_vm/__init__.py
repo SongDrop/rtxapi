@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-import sys
+import syss
 import time
 import re
 from datetime import datetime, timedelta
