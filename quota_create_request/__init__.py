@@ -13,17 +13,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         try:
             req_body = req.get_json()
         except ValueError:
-            return func.HttpResponse(
-                json.dumps({"error": "Invalid JSON body"}),
-                status_code=400,
-                mimetype="application/json"
-            )
+            req_body = {}
 
+        #Get paramenters
         # Requested CPU cores limit
-        cpu_limit = req_body.get("cpu_limit")
+        cpu_limit = req_body.get('cpu_limit') or req.params.get('cpu_limit')
         # Example: "Standard_Dv2_Family", "Standard_B_Family", etc.
-        vm_family = req_body.get("vm_family")
-        
+        vm_family = req_body.get('vm_family') or req.params.get('vm_family')
+
         # Required parameters
         subscription_id = os.getenv("AZURE_SUBSCRIPTION_ID")
         if not subscription_id:
