@@ -67,7 +67,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 "os_type": image_def.os_type.value if hasattr(image_def.os_type, 'value') else image_def.os_type,
                 # publisher, offer, sku are not attributes of image definition; remove them here
                 "hyper_v_generation": image_def.hyper_v_generation,
-                "security_type": image_def.security_profile.security_type if image_def.security_profile else None,
+                # "security_type": image_def.security_profile.security_type if image_def.security_profile else None,
                 "versions": versions_info
             })
 
