@@ -58,6 +58,10 @@ PORTS_TO_OPEN = [
     443,    # HTTPS
     8000,   # Optional app port (if used)
     3000,   # Optional app port (if used)
+    8889,
+    8890,
+    7088,
+    8088
 ]
 
 # Console colors for logs
