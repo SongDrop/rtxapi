@@ -62,10 +62,18 @@
                 ))
                 versions_info = [{"name": v.name, "location": v.location} for v in versions]
 
- 
                 if versions_info:
-                    # Determine latest version by sorting version strings
-                    latest_version = max(versions_info, key=lambda x: version_key(x["name"]))["name"]
+                    # Filter out versions with missing or invalid names
+                    valid_versions = [v for v in versions_info if isinstance(v.get("name"), str) and v["name"].strip() != ""]
+                    if valid_versions:
+                        try:
+                            latest_version = max(valid_versions, key=lambda x: version_key(x["name"]))["name"]
+                        except Exception as e:
+                            logger.warning(f"Failed to parse version strings for image {image_def.name}: {e}")
+                            # fallback to lexicographical max if parsing fails
+                            latest_version = max(valid_versions, key=lambda x: x["name"])["name"]
+                    else:
+                        latest_version = None
                 else:
                     latest_version = None
 
