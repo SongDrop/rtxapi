@@ -20,6 +20,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         cpu_limit = req_body.get('cpu_limit') or req.params.get('cpu_limit')
         # Example: "Standard_Dv2_Family", "Standard_B_Family", etc.
         vm_family = req_body.get('vm_family') or req.params.get('vm_family')
+        # Example: "Standard_Dv2_Family", "Standard_B_Family", etc.
+        location = req_body.get('location') or req.params.get('location') or 'uksouth'
+        # Example: "Standard_Dv2_Family", "Standard_B_Family", etc.
+        quota_desc = req_body.get('quota_desc') or req.params.get('v') or 'Increase quota on Azure'
 
         # Required parameters
         subscription_id = os.getenv("AZURE_SUBSCRIPTION_ID")
