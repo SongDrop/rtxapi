@@ -72,11 +72,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             usage_list = compute_client.usage.list(location)
             quotas = []
             for usage in usage_list:
+                name = usage.name.value if hasattr(usage.name, 'value') else usage.name
+                unit = usage.unit.value if hasattr(usage.unit, 'value') else usage.unit
                 quotas.append({
-                    "name": usage.name.value,
+                    "name": name,
                     "current_value": usage.current_value,
                     "limit": usage.limit,
-                    "unit": usage.unit.value if usage.unit else None
+                    "unit": unit
                 })
 
             result = {
