@@ -64,7 +64,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
             result.append({
                 "image_definition_name": image_def.name,
-                "os_type": image_def.os_type.value if image_def.os_type else None,
+                "os_type": image_def.os_type.value if hasattr(image_def.os_type, 'value') else image_def.os_type,
                 "publisher": image_def.publisher,
                 "offer": image_def.offer,
                 "sku": image_def.sku,
