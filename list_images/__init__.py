@@ -50,7 +50,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         compute_client = ComputeManagementClient(credentials, subscription_id)
 
         # List all gallery images (image definitions) in the gallery
-        image_definitions = list(compute_client.gallery_images.list(gallery_resource_group, gallery_name))
+        image_definitions = list(compute_client.gallery_images.list_by_gallery(gallery_resource_group, gallery_name))
 
         result = []
         for image_def in image_definitions:
