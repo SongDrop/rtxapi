@@ -5,19 +5,16 @@
     "id": "Microsoft.Azure.Functions.ExtensionBundle",
     "version": "[3.15.0, 4.0.0)"
   },
-  "extensions": {
-    "http": {
-      "routePrefix": "",
-      "maxOutstandingRequests": 200,
-      "maxConcurrentRequests": 100,
-      "dynamicThrottlesEnabled": true,
-      "hsts": {
-        "isEnabled": true,
-        "maxAge": "10"
-      },
-      "customHeaders": {
-        "X-Content-Type-Options": "nosniff"
-      }
+  "applicationInsights": {
+    "sampling": {
+      "isEnabled": true,
+      "maxTelemetryItemsPerSecond": 5
     }
+  },
+  "http": {
+    "routePrefix": "",
+    "maxOutstandingRequests": 20,
+    "maxConcurrentRequests": 10,
+    "dynamicThrottlesEnabled": false
   }
 }
