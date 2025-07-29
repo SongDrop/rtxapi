@@ -30,9 +30,9 @@ from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
 
-import generate_setup  # Your PowerShell setup generator module
-import html_email
-import html_email_send
+import . from generate_setup  # Your PowerShell setup generator module
+import . from html_email
+import . from html_email_send
 
 # Configure logging first
 logging.basicConfig(
