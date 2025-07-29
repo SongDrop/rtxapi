@@ -29,11 +29,10 @@ from azure.mgmt.dns import DnsManagementClient
 from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-import generate_setup  # Your PowerShell setup generator module
-import html_email
-import html_email_send
+from . import generate_setup  # Your PowerShell setup generator module
+from . import html_email
+from . import html_email_send
 
 # Configure logging first
 logging.basicConfig(
