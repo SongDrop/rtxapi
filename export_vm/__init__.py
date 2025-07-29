@@ -30,7 +30,12 @@ from azure.mgmt.dns import DnsManagementClient
 from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
-
+# Use relative imports to load local modules from the same function folder.
+# This ensures Python finds these files (generate_setup.py, html_email.py, html_email_send.py)
+# in the current package instead of searching in global site-packages,
+# which prevents ModuleNotFoundError in Azure Functions environment.
+from . import generate_export_setup
+ 
 # Configure logging first
 logging.basicConfig(
     level=logging.INFO,

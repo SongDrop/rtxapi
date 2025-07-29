@@ -31,9 +31,13 @@ from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
 
-import generate_setup  # Your PowerShell setup generator module
-import html_email
-import html_email_send
+# Use relative imports to load local modules from the same function folder.
+# This ensures Python finds these files (generate_setup.py, html_email.py, html_email_send.py)
+# in the current package instead of searching in global site-packages,
+# which prevents ModuleNotFoundError in Azure Functions environment.
+from . import generate_setup  # Your PowerShell setup generator module
+from . import html_email
+from . import html_email_send
 
 # Configure logging first
 logging.basicConfig(
