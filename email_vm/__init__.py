@@ -31,8 +31,8 @@ from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
 
-import html_email
-import html_email_send
+from . import html_email
+from . import html_email_send
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
