@@ -13,3 +13,4 @@ azure-functions
 cryptography==43.0.3
 requests
 pyperclip
+packaging
