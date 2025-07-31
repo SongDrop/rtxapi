@@ -248,14 +248,14 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         PC_HOST = "" 
         PIN_URL = "" 
         VOLUME_DIR = "/opt/ubuntu"
-        ps_script = generate_setup.generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, PC_HOST, PIN_URL, VOLUME_DIR)
+        sh_script = generate_setup.generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, PC_HOST, PIN_URL, VOLUME_DIR)
 
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
         container_name = 'vm-startup-scripts'
         blob_name = f"{vm_name}-setup.sh"
 
         # Uploading generated script to storage
-        blob_url_with_sas = await upload_blob_and_generate_sas(blob_service_client, container_name, blob_name, ps_script, sas_expiry_hours=2)
+        blob_url_with_sas = await upload_blob_and_generate_sas(blob_service_client, container_name, blob_name, sh_script, sas_expiry_hours=2)
 
         print_success(f"Uploaded setup script to Blob Storage: {blob_url_with_sas}")
 

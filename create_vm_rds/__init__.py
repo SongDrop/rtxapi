@@ -96,6 +96,19 @@ def print_warn(msg):
 def print_error(msg):
     logging.info(f"{bcolors.FAIL}[ERROR]{bcolors.ENDC} {msg}")
 
+async def get_vm_public_ip_with_retry(network_client, compute_client, resource_group, vm_name, retries=5, delay=5):
+    for attempt in range(retries):
+        try:
+            ip = await get_vm_public_ip(network_client, compute_client, resource_group, vm_name)
+            if ip:
+                return ip
+            else:
+                print_warn(f"Attempt {attempt+1}: Public IP not assigned yet. Retrying in {delay}s...")
+        except Exception as e:
+            print_warn(f"Attempt {attempt+1}: Error getting public IP: {e}")
+        await asyncio.sleep(delay)
+    return None
+
 async def get_vm_public_ip(network_client, compute_client, resource_group_name, vm_name):
     # Get the VM object
     vm = compute_client.virtual_machines.get(resource_group_name, vm_name)
@@ -270,7 +283,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         AZURE_STORAGE_URL = storage_config["AZURE_STORAGE_URL"]
         
 
-        public_ip = await get_vm_public_ip(network_client, compute_client, resource_group, vm_name)
+        public_ip = await get_vm_public_ip_with_retry(network_client, compute_client, resource_group, vm_name)
         if public_ip:
             print(f"Public IP of VM {vm_name} is: {public_ip}")
         else:
@@ -286,14 +299,14 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         VM_IP = public_ip
         PIN_URL = f"https://{public_ip}:49990"
         VOLUME_DIR = "/opt/moonlight-embed"
-        ps_script = generate_setup.generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR)
+        sh_script = generate_setup.generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR)
 
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
         container_name = 'vm-startup-scripts'
         blob_name = f"{vm_name}-setup.sh"
 
         # Uploading generated script to storage
-        blob_url_with_sas = await upload_blob_and_generate_sas(blob_service_client, container_name, blob_name, ps_script, sas_expiry_hours=2)
+        blob_url_with_sas = await upload_blob_and_generate_sas(blob_service_client, container_name, blob_name, sh_script, sas_expiry_hours=2)
 
         print_success(f"Uploaded setup script to Blob Storage: {blob_url_with_sas}")
 
