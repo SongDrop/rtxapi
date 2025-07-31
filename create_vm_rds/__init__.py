@@ -127,7 +127,6 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         OS_DISK_SSD_GB = int(req_body.get('os_disk_ssd_gb') or req.params.get('os_disk_ssd_gb') or 256)
         RECIPIENT_EMAILS = req_body.get('recipient_emails') or req.params.get('recipient_emails')
-        DUMBDROP_PIN = req_body.get('dumbdrop_pin') or req.params.get('dumbdrop_pin') or '1234'
         #windows user is always 'source' to keep it simple
         hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
 
@@ -240,13 +239,21 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         AZURE_STORAGE_URL = storage_config["AZURE_STORAGE_URL"]
         
         # Autoinstall script generation
-        print_info("Generating PowerShell setup script...")
+        print_info("Generating Bash setup script...")
         ssl_email = os.environ.get('SENDER_EMAIL')
-        ps_script = generate_setup.generate_setup(vm_name, fqdn,ssl_email, DUMBDROP_PIN, WINDOWS_IMAGE_PASSWORD)
+        DOMAIN_NAME = "" 
+        ADMIN_EMAIL = "" 
+        ADMIN_PASSWORD = "" 
+        FRONTEND_PORT = "" 
+        BACKEND_PORT = "" 
+        PC_HOST = "" 
+        PIN_URL = "" 
+        VOLUME_DIR = "/opt/ubuntu"
+        ps_script = generate_setup.generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, PC_HOST, PIN_URL, VOLUME_DIR)
 
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
         container_name = 'vm-startup-scripts'
-        blob_name = f"{vm_name}-setup.ps1"
+        blob_name = f"{vm_name}-setup.sh"
 
         # Uploading generated script to storage
         blob_url_with_sas = await upload_blob_and_generate_sas(blob_service_client, container_name, blob_name, ps_script, sas_expiry_hours=2)

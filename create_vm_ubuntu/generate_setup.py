@@ -1,5 +1,5 @@
-def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, PC_HOST, PIN_URL, VOLUME_DIR="/opt/moonlight-embed"):
-    SERVICE_USER = "moonlightembedded"
+def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, PC_HOST, PIN_URL, VOLUME_DIR="/opt/ubuntu"):
+    SERVICE_USER = "ubuntu"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
 
@@ -49,145 +49,7 @@ echo "[2/10] Setting up installation directory..."
 mkdir -p "${{INSTALL_DIR}}"
 mkdir -p "${{LOG_DIR}}"
 cd "${{INSTALL_DIR}}"
-
-# Clone or update Moonlight Embed repo
-if [ ! -d ".git" ]; then
-    echo "Cloning Moonlight Embed repo..."
-    git clone https://github.com/your/moonlight-embed.git .
-else
-    echo "Pulling latest changes..."
-    git pull
-fi
-
-echo "[3/10] Creating Dockerfile..."
-
-cat > "${{INSTALL_DIR}}/Dockerfile" <<EOF
-FROM node:20-slim
-
-WORKDIR /app
-
-COPY . .
-
-RUN npm install
-RUN npm run build
-
-EXPOSE {BACKEND_PORT} {FRONTEND_PORT} 8889 8890  # Include ports for WebRTC signaling
-
-CMD ["npm", "start"]
-EOF
-
-echo "[4/10] Building Docker image..."
-docker build -t ${{DOCKER_IMAGE_NAME}} "${{INSTALL_DIR}}"
-
-echo "[5/10] Stopping existing container if any..."
-docker stop ${{DOCKER_CONTAINER_NAME}} || true
-docker rm ${{DOCKER_CONTAINER_NAME}} || true
-
-echo "[6/10] Starting Docker container..."
-docker run -d --name ${{DOCKER_CONTAINER_NAME}} \\
-    -p {BACKEND_PORT}:{BACKEND_PORT} \\
-    -p {FRONTEND_PORT}:{FRONTEND_PORT} \\
-    -p 8889:8889 \\
-    -p 8890:8890 \\
-    ${{DOCKER_IMAGE_NAME}}
-
-echo "[7/10] Setting up systemd service for Moonlight Embed container..."
-
-cat > /etc/systemd/system/moonlight-embed.service <<EOF
-[Unit]
-Description=Moonlight Embed Docker Container
-After=docker.service
-Requires=docker.service
-
-[Service]
-Restart=always
-ExecStart=/usr/bin/docker start -a {{}DOCKER_CONTAINER_NAME}
-ExecStop=/usr/bin/docker stop -t 10 {{}DOCKER_CONTAINER_NAME}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable moonlight-embed.service
-systemctl start moonlight-embed.service
-
-echo "[8/10] Installing and building Janus Gateway and dependencies..."
-
-# Clone and install libnice (recommended latest)
-if [ ! -d "/tmp/libnice" ]; then
-    git clone https://gitlab.freedesktop.org/libnice/libnice /tmp/libnice
-    cd /tmp/libnice
-    ./autogen.sh
-    ./configure --prefix=/usr
-    make && make install
-fi
-
-# Install libsrtp (v2.2.0)
-if [ ! -d "/tmp/libsrtp-2.2.0" ]; then
-    cd /tmp
-    wget https://github.com/cisco/libsrtp/archive/v2.2.0.tar.gz
-    tar xfv v2.2.0.tar.gz
-    cd libsrtp-2.2.0
-    ./configure --prefix=/usr --enable-openssl
-    make shared_library && make install
-fi
-
-# Install usrsctp
-if [ ! -d "/tmp/usrsctp" ]; then
-    cd /tmp
-    git clone https://github.com/sctplab/usrsctp
-    cd usrsctp
-    ./bootstrap
-    ./configure --prefix=/usr
-    make && make install
-fi
-
-# Install libwebsockets
-if [ ! -d "/tmp/libwebsockets" ]; then
-    cd /tmp
-    git clone https://github.com/warmcat/libwebsockets.git
-    cd libwebsockets
-    git checkout v2.4-stable
-    mkdir build
-    cd build
-    cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS="-fpic" ..
-    make && make install
-fi
-
-# Clone Janus Gateway and build
-if [ ! -d "{JANUS_INSTALL_DIR}" ]; then
-    git clone https://github.com/meetecho/janus-gateway.git /tmp/janus-gateway
-    cd /tmp/janus-gateway
-    sh autogen.sh
-    ./configure --prefix={JANUS_INSTALL_DIR}
-    make
-    make install
-    make configs
-fi
-
-echo "[9/10] Setting up systemd service for Janus Gateway..."
-
-cat > /etc/systemd/system/janus.service <<EOF
-[Unit]
-Description=Janus WebRTC Server
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart={JANUS_INSTALL_DIR}/bin/janus
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable janus.service
-systemctl start janus.service
-
+ 
 echo "[10/10] Configuring firewall..."
 
 ufw allow 22/tcp
@@ -195,11 +57,6 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 ufw allow {FRONTEND_PORT}/tcp
 ufw allow {BACKEND_PORT}/tcp
-ufw allow 8889/tcp
-ufw allow 8890/tcp
-# Janus default ports, adjust if needed
-ufw allow 7088/tcp
-ufw allow 8088/tcp
 ufw --force enable
 
 echo "[11/11] Setting up SSL certificate..."
@@ -273,45 +130,6 @@ server {{
         proxy_buffering off;
         proxy_request_buffering off;
     }}
-
-    # WebRTC signaling ports proxy (adjust if your app uses different ports)
-    location /wssignaling/ {{
-        proxy_pass http://localhost:8889/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_buffering off;
-    }}
-
-    location /webrtc/ {{
-        proxy_pass http://localhost:8890/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_set_header Host $host;
-        proxy_buffering off;
-    }}
-
-    # Janus admin and streaming plugin ports (default HTTP and HTTPS ports)
-    location /janus/ {{
-        proxy_pass http://localhost:8088/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_buffering off;
-    }}
-
-    location /janusws/ {{
-        proxy_pass http://localhost:7088/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_buffering off;
-    }}
-
     client_max_body_size 1024M;
 }}
 EOF
@@ -321,26 +139,10 @@ ln -sf /etc/nginx/sites-available/moonlightembed /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
 
 echo "============================================"
-echo "✅ Moonlight Embed and Janus Gateway Setup Complete!"
+echo "✅ Setup Complete!"
 echo ""
 echo "🔗 Access your app at: https://{DOMAIN_NAME}"
 echo ""
-echo "⚙️ Service Status:"
-echo "   - Moonlight Embed Docker container: docker ps --filter name={DOCKER_CONTAINER_NAME}"
-echo "   - Janus Gateway service: systemctl status janus"
-echo "   - Nginx: systemctl status nginx"
-echo ""
-echo "📜 Logs:"
-echo "   - Moonlight Embed Docker logs: docker logs -f {DOCKER_CONTAINER_NAME}"
-echo "   - Janus logs: journalctl -u janus -f"
-echo "   - Nginx logs: journalctl -u nginx -f"
-echo ""
-echo "🔑 IMPORTANT:"
-echo " - Your PC host for streaming is set to: {PC_HOST}"
-echo " - To start streaming, visit the PIN URL to get or enter the PIN:"
-echo "   {PIN_URL}"
-echo " - Once PIN is entered, Moonlight Embed will connect to your PC for streaming."
-echo " - Janus Gateway is installed and running to handle WebRTC streaming."
 echo "============================================"
 '''
     return script_template
