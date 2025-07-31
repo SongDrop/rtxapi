@@ -1,10 +1,12 @@
 def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed"):
-    SERVICE_USER = "moonlightembedded"
+    SERVICE_USER = "moonlightembed"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
     script_template = f'''#!/bin/bash
 
 set -e
+
+export DEBIAN_FRONTEND=noninteractive
 
 # === User config ===
 DOMAIN_NAME="{DOMAIN_NAME}"
@@ -27,7 +29,7 @@ fi
 
 echo "[1/10] Updating system and installing dependencies..."
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y \\
+apt-get install -y --no-install-recommends \\
     curl git nginx certbot python3-certbot-nginx \\
     nodejs npm docker.io ufw build-essential cmake autoconf automake libtool pkg-config gengetopt \\
     libmicrohttpd-dev libjansson-dev libssl-dev libsrtp2-dev libsofia-sip-ua-dev libglib2.0-dev \\
@@ -49,8 +51,12 @@ mkdir -p "${{INSTALL_DIR}}"
 mkdir -p "${{LOG_DIR}}"
 cd "${{INSTALL_DIR}}"
 
-# Clone or update Moonlight Embed repo
+# Clean and clone repo if needed
 if [ ! -d ".git" ]; then
+    if [ "$(ls -A .)" ]; then
+        echo "Directory is not empty, cleaning up..."
+        rm -rf ./*
+    fi
     echo "Cloning Moonlight Embed repo..."
     git clone https://github.com/your/moonlight-embed.git .
 else
