@@ -2,7 +2,7 @@
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 # More info on Python, GitHub Actions, and Azure Functions: https://aka.ms/python-webapps-actions
 
-name: Build and deploy Python project to Azure Function App - apirtx
+name: Build and deploy Python project to Azure Function App - rtxapi
 
 on:
   push:
@@ -86,9 +86,7 @@ jobs:
         uses: Azure/functions-action@v1
         id: deploy-to-function
         with:
-          app-name: 'apirtx'
+          app-name: 'rtxapi'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_4A7F64CA05044E048F43839538CEBE66 }}
-          sku: 'flexconsumption'
-        
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_6C5438F3BC0341EBADDA38F4D81A2C6E }}
