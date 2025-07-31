@@ -425,8 +425,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         vm_parameters = VirtualMachine(
             location=location,
             hardware_profile=HardwareProfile(vm_size=vm_size),
-            storage_profile=StorageProfile(os_disk=os_disk, 
-                                        image_reference=image_reference),
+            storage_profile=StorageProfile(os_disk=os_disk, image_reference=image_reference),
             os_profile=os_profile,
             network_profile=NetworkProfile(network_interfaces=[NetworkInterfaceReference(id=nic.id)]),
             zones=None
