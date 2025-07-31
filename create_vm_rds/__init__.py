@@ -174,6 +174,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         #windows user is always 'source' to keep it simple
         hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
 
+
         ###Parameter checking to handle errors 
         if not vm_name:
             return func.HttpResponse(
@@ -289,6 +290,12 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         else:
             print_info(f"No public IP assigned to VM {vm_name}")
 
+
+        #vm_name helps identify the running Windows10 image however for this machine we will need to use
+        #vm_name + 'rds'
+        #
+        vm_name = vm_name + 'rds'
+    
         # Autoinstall script generation
         print_info("Generating Bash setup script...")
         DOMAIN_NAME = fqdn
