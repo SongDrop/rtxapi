@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "hook_vm",
+      "route": "default_azure_function",
       "methods": ["get", "post"]
     },
     {
