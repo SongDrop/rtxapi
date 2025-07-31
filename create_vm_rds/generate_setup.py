@@ -155,11 +155,11 @@ if [ ! -d "/tmp/libwebsockets" ]; then
 fi
 
 # Clone Janus Gateway and build
-if [ ! -d "$JANUS_INSTALL_DIR" ]; then
+if [ ! -d "${{JANUS_INSTALL_DIR}}" ]; then
     git clone https://github.com/meetecho/janus-gateway.git /tmp/janus-gateway
     cd /tmp/janus-gateway
     sh autogen.sh
-    ./configure --prefix="$JANUS_INSTALL_DIR"
+    ./configure --prefix="${{JANUS_INSTALL_DIR}}"
     make
     make install
     make configs
@@ -175,7 +175,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart={JANUS_INSTALL_DIR}/bin/janus
+ExecStart=${{JANUS_INSTALL_DIR}}/bin/janus
 Restart=on-failure
 RestartSec=5
 
