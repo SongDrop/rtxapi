@@ -2,7 +2,6 @@ def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACK
     SERVICE_USER = "moonlightembedded"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
-
     script_template = f'''#!/bin/bash
 
 set -e
@@ -101,8 +100,8 @@ Requires=docker.service
 
 [Service]
 Restart=always
-ExecStart=/usr/bin/docker start -a {DOCKER_CONTAINER_NAME}
-ExecStop=/usr/bin/docker stop -t 10 {DOCKER_CONTAINER_NAME}
+ExecStart=/usr/bin/docker start -a ${{DOCKER_CONTAINER_NAME}}
+ExecStop=/usr/bin/docker stop -t 10 ${{DOCKER_CONTAINER_NAME}}
 
 [Install]
 WantedBy=multi-user.target
@@ -326,12 +325,12 @@ echo ""
 echo "🔗 Access your app at: https://{DOMAIN_NAME}"
 echo ""
 echo "⚙️ Service Status:"
-echo "   - Moonlight Embed Docker container: docker ps --filter name={DOCKER_CONTAINER_NAME}"
+echo "   - Moonlight Embed Docker container: docker ps --filter name=${{DOCKER_CONTAINER_NAME}}"
 echo "   - Janus Gateway service: systemctl status janus"
 echo "   - Nginx: systemctl status nginx"
 echo ""
 echo "📜 Logs:"
-echo "   - Moonlight Embed Docker logs: docker logs -f {DOCKER_CONTAINER_NAME}"
+echo "   - Moonlight Embed Docker logs: docker logs -f ${{DOCKER_CONTAINER_NAME}}"
 echo "   - Janus logs: journalctl -u janus -f"
 echo "   - Nginx logs: journalctl -u nginx -f"
 echo ""
