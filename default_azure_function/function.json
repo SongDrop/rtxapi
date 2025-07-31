@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "create_vm_ubuntu",
+      "route": "hook_vm",
       "methods": ["get", "post"]
     },
     {
