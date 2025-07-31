@@ -284,7 +284,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         FRONTEND_PORT = 3000 
         BACKEND_PORT = 8000
         VM_IP = public_ip
-        PIN_URL = f"https://{public_ip}:4990"
+        PIN_URL = f"https://{public_ip}:49990"
         VOLUME_DIR = "/opt/moonlight-embed"
         ps_script = generate_setup.generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR)
 
@@ -575,20 +575,9 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             # Build the HTML content correctly using keyword arguments (assuming html.HTMLEmail is a function/class)
             html_content = html_email.HTMLEmail(
                 ip_address=public_ip,
-                background_image_url="https://modwiki.dhewm3.org/images/c/cd/Bump2spec_1_local.png",
-                title=f"{vm_name} - Idtech RemoteRTX",
-                main_heading=f"{vm_name} - Idtech RemoteRTX",
-                main_description="Your virtual machine is ready to play games.",
-                youtube_embed_src="https://youtu.be/PeVxO56lCBs",
-                image_left_src="",
-                image_right_src="",
-                logo_src="https://i.postimg.cc/BnsDT6sQ/mohradiant.png",
-                company_src="https://i.postimg.cc/25pxqcWZ/powered-by-idtech.png",
-                discord_widget_src="https://discord.com/widget?id=1363815250742480927&theme=dark",
-                windows_password='',
-                credentials_sunshine="Username: <strong>sunshine</strong><br>Password: <strong>sunshine</strong>",
-                form_description="Fill our form, so we can match your team with investors/publishers",
-                form_link="https://forms.gle/QgFZQhaehZLs9sySA"
+                link1="",
+                link2="",
+                link3=""
             )
 
             try:
