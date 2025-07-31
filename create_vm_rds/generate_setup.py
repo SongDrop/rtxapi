@@ -1,7 +1,15 @@
 def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed"):
     SERVICE_USER = "moonlightembed"
+    github_url = "https://github.com/moonlight-stream/moonlight-embedded.git"
+
+    libnice_git_url = "https://gitlab.freedesktop.org/libnice/libnice"
+    libsrtp_tar_url = "https://github.com/cisco/libsrtp/archive/v2.2.0.tar.gz"
+    usrsctp_git_url = "https://github.com/sctplab/usrsctp"
+    libwebsockets_git_url = "https://github.com/warmcat/libwebsockets.git"
+    janus_git_url = "https://github.com/meetecho/janus-gateway.git"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
+    
     script_template = f'''#!/bin/bash
 
 set -e
@@ -58,7 +66,7 @@ if [ ! -d ".git" ]; then
         rm -rf ./*
     fi
     echo "Cloning Moonlight Embed repo..."
-    git clone https://github.com/your/moonlight-embed.git .
+    git clone {github_url} .
 else
     echo "Pulling latest changes..."
     git pull
@@ -121,7 +129,7 @@ echo "[8/10] Installing and building Janus Gateway and dependencies..."
 
 # Clone and install libnice (recommended latest)
 if [ ! -d "/tmp/libnice" ]; then
-    git clone https://gitlab.freedesktop.org/libnice/libnice /tmp/libnice
+    git clone {libnice_git_url} /tmp/libnice
     cd /tmp/libnice
     ./autogen.sh
     ./configure --prefix=/usr
@@ -131,7 +139,7 @@ fi
 # Install libsrtp (v2.2.0)
 if [ ! -d "/tmp/libsrtp-2.2.0" ]; then
     cd /tmp
-    wget https://github.com/cisco/libsrtp/archive/v2.2.0.tar.gz
+    wget {libsrtp_tar_url}
     tar xfv v2.2.0.tar.gz
     cd libsrtp-2.2.0
     ./configure --prefix=/usr --enable-openssl
@@ -141,7 +149,7 @@ fi
 # Install usrsctp
 if [ ! -d "/tmp/usrsctp" ]; then
     cd /tmp
-    git clone https://github.com/sctplab/usrsctp
+    git clone {usrsctp_git_url}
     cd usrsctp
     ./bootstrap
     ./configure --prefix=/usr
@@ -151,7 +159,7 @@ fi
 # Install libwebsockets
 if [ ! -d "/tmp/libwebsockets" ]; then
     cd /tmp
-    git clone https://github.com/warmcat/libwebsockets.git
+    git clone {libwebsockets_git_url}
     cd libwebsockets
     git checkout v2.4-stable
     mkdir build
@@ -162,7 +170,7 @@ fi
 
 # Clone Janus Gateway and build
 if [ ! -d "${{JANUS_INSTALL_DIR}}" ]; then
-    git clone https://github.com/meetecho/janus-gateway.git /tmp/janus-gateway
+    git clone {janus_git_url} /tmp/janus-gateway
     cd /tmp/janus-gateway
     sh autogen.sh
     ./configure --prefix="${{JANUS_INSTALL_DIR}}"
