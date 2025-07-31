@@ -278,16 +278,15 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # Autoinstall script generation
         print_info("Generating Bash setup script...")
-        ssl_email = os.environ.get('SENDER_EMAIL')
         DOMAIN_NAME = fqdn
-        ADMIN_EMAIL = "admin@" 
+        ADMIN_EMAIL = f"admin@{domain}" 
         ADMIN_PASSWORD = "" 
         FRONTEND_PORT = 3000 
         BACKEND_PORT = 8000
-        PC_HOST = "" 
-        PIN_URL = "" 
+        VM_IP = public_ip
+        PIN_URL = f"https://{public_ip}:4990"
         VOLUME_DIR = "/opt/moonlight-embed"
-        ps_script = generate_setup.generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, PC_HOST, PIN_URL, VOLUME_DIR)
+        ps_script = generate_setup.generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR)
 
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
         container_name = 'vm-startup-scripts'

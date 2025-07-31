@@ -1,4 +1,4 @@
-def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, PC_HOST, PIN_URL, VOLUME_DIR="/opt/moonlight-embed"):
+def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed"):
     SERVICE_USER = "moonlightembedded"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
@@ -12,7 +12,7 @@ DOMAIN_NAME="{DOMAIN_NAME}"
 ADMIN_EMAIL="{ADMIN_EMAIL}"
 FRONTEND_PORT={FRONTEND_PORT}
 BACKEND_PORT={BACKEND_PORT}
-PC_HOST="{PC_HOST}"
+VM_IP="{VM_IP}"
 PIN_URL="{PIN_URL}"
 INSTALL_DIR="{VOLUME_DIR}"
 LOG_DIR="${{INSTALL_DIR}}/logs"
@@ -337,7 +337,8 @@ echo "   - Nginx logs: journalctl -u nginx -f"
 echo ""
 echo "🔑 IMPORTANT:"
 echo " - Your PC host for streaming is set to: {PC_HOST}"
-echo " - To start streaming, visit the PIN URL to get or enter the PIN:"
+echo " - To start streaming, visit the Enter the Public IP to get the PIN to connect:"
+echo "   {VM_IP}"
 echo "   {PIN_URL}"
 echo " - Once PIN is entered, Moonlight Embed will connect to your PC for streaming."
 echo " - Janus Gateway is installed and running to handle WebRTC streaming."

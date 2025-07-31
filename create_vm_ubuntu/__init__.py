@@ -240,7 +240,6 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         
         # Autoinstall script generation
         print_info("Generating Bash setup script...")
-        ssl_email = os.environ.get('SENDER_EMAIL')
         DOMAIN_NAME = "" 
         ADMIN_EMAIL = "" 
         ADMIN_PASSWORD = "" 
