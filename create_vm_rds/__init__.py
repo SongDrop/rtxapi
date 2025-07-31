@@ -96,7 +96,7 @@ def print_warn(msg):
 def print_error(msg):
     logging.info(f"{bcolors.FAIL}[ERROR]{bcolors.ENDC} {msg}")
 
-def get_vm_public_ip(network_client, compute_client, resource_group_name, vm_name):
+async def get_vm_public_ip(network_client, compute_client, resource_group_name, vm_name):
     # Get the VM object
     vm = compute_client.virtual_machines.get(resource_group_name, vm_name)
 
@@ -270,7 +270,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         AZURE_STORAGE_URL = storage_config["AZURE_STORAGE_URL"]
         
 
-        public_ip = get_vm_public_ip(network_client, compute_client, resource_group, vm_name)
+        public_ip = await get_vm_public_ip(network_client, compute_client, resource_group, vm_name)
         if public_ip:
             print(f"Public IP of VM {vm_name} is: {public_ip}")
         else:
