@@ -96,6 +96,37 @@ def print_warn(msg):
 def print_error(msg):
     logging.info(f"{bcolors.FAIL}[ERROR]{bcolors.ENDC} {msg}")
 
+def get_vm_public_ip(network_client, compute_client, resource_group_name, vm_name):
+    # Get the VM object
+    vm = compute_client.virtual_machines.get(resource_group_name, vm_name)
+
+    # The VM can have multiple NICs, get the first one for example
+    nic_reference = vm.network_profile.network_interfaces[0]  # NetworkInterfaceReference object
+    nic_id = nic_reference.id
+
+    # Extract NIC name and resource group from NIC id
+    # NIC id format: /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.Network/networkInterfaces/{nicName}
+    nic_name = nic_id.split('/')[-1]
+    nic_rg = nic_id.split('/')[4]
+
+    # Get the NIC object
+    nic = network_client.network_interfaces.get(nic_rg, nic_name)
+
+    # Get the public IP address resource ID attached to the NIC's primary IP configuration
+    ip_config = nic.ip_configurations[0]
+    public_ip_id = ip_config.public_ip_address.id if ip_config.public_ip_address else None
+
+    if not public_ip_id:
+        return None  # No public IP assigned
+
+    # Extract public IP name and resource group from ID
+    public_ip_name = public_ip_id.split('/')[-1]
+    public_ip_rg = public_ip_id.split('/')[4]
+
+    # Get the public IP address object
+    public_ip = network_client.public_ip_addresses.get(public_ip_rg, public_ip_name)
+
+    return public_ip.ip_address
 
 async def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Processing create_vm request...')
@@ -238,17 +269,24 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         AZURE_STORAGE_ACCOUNT_KEY = storage_config["AZURE_STORAGE_KEY"]
         AZURE_STORAGE_URL = storage_config["AZURE_STORAGE_URL"]
         
+
+        public_ip = get_vm_public_ip(network_client, compute_client, resource_group, vm_name)
+        if public_ip:
+            print(f"Public IP of VM {vm_name} is: {public_ip}")
+        else:
+            print(f"No public IP assigned to VM {vm_name}")
+
         # Autoinstall script generation
         print_info("Generating Bash setup script...")
         ssl_email = os.environ.get('SENDER_EMAIL')
-        DOMAIN_NAME = "" 
-        ADMIN_EMAIL = "" 
+        DOMAIN_NAME = fqdn
+        ADMIN_EMAIL = "admin@" 
         ADMIN_PASSWORD = "" 
-        FRONTEND_PORT = "" 
-        BACKEND_PORT = "" 
+        FRONTEND_PORT = 3000 
+        BACKEND_PORT = 8000
         PC_HOST = "" 
         PIN_URL = "" 
-        VOLUME_DIR = "/opt/ubuntu"
+        VOLUME_DIR = "/opt/moonlight-embed"
         ps_script = generate_setup.generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, PC_HOST, PIN_URL, VOLUME_DIR)
 
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
