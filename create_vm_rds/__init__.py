@@ -357,10 +357,20 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         # Add NSG rules for required ports
         print_info(f"Updating NSG '{nsg_name}' with required port rules.")
         existing_rules = {rule.name for rule in nsg.security_rules} if nsg.security_rules else set()
-        priority = 100
+        # Collect existing priorities for inbound rules
+        existing_priorities = {rule.priority for rule in nsg.security_rules if rule.direction == 'Inbound'} if nsg.security_rules else set()
+        # Start priority from max existing + 1 or 100 if none exist
+        priority = max(existing_priorities) + 1 if existing_priorities else 100
+
         for port in PORTS_TO_OPEN:
-            rule_name = f'AllowAnyCustom{port}Inbound' 
+            rule_name = f'AllowAnyCustom{port}Inbound'
             if rule_name not in existing_rules:
+                # Find next available unique priority
+                while priority in existing_priorities or priority < 100 or priority > 4096:
+                    priority += 1
+                    if priority > 4096:
+                        raise ValueError("Exceeded max NSG priority limit of 4096")
+
                 rule = SecurityRule(
                     name=rule_name,
                     access='Allow',
@@ -373,10 +383,11 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                     source_port_range='*'
                 )
                 nsg.security_rules.append(rule)
+                existing_priorities.add(priority)
                 priority += 1
+
         network_client.network_security_groups.begin_create_or_update(resource_group, nsg_name, nsg).result()
         print_success(f"Updated NSG '{nsg_name}' with required port rules.")
-
         # Create NIC
         print_info(f"Creating Network Interface '{vm_name}-nic'.")
         nic_params = NetworkInterface(
