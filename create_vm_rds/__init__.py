@@ -285,9 +285,9 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         public_ip = await get_vm_public_ip_with_retry(network_client, compute_client, resource_group, vm_name)
         if public_ip:
-            print(f"Public IP of VM {vm_name} is: {public_ip}")
+            print_info(f"Public IP of VM {vm_name} is: {public_ip}")
         else:
-            print(f"No public IP assigned to VM {vm_name}")
+            print_info(f"No public IP assigned to VM {vm_name}")
 
         # Autoinstall script generation
         print_info("Generating Bash setup script...")
@@ -472,7 +472,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         # Wait for DNS Zone to be ready before extension
         print_info("Waiting 5 seconds for DNS Zone to initialize...")
         time.sleep(5)
-        a_records = [f'pin.{subdomain}',f'drop.{subdomain}',f'web.{subdomain}']
+        a_records = [f'rds.{subdomain}']
         if not check_ns_delegation_with_retries(dns_client, resource_group, domain):
             print_error("Stopping provisioning due to incorrect NS delegation.")
             await cleanup_resources_on_failure(

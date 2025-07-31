@@ -101,8 +101,8 @@ Requires=docker.service
 
 [Service]
 Restart=always
-ExecStart=/usr/bin/docker start -a {{}DOCKER_CONTAINER_NAME}
-ExecStop=/usr/bin/docker stop -t 10 {{}DOCKER_CONTAINER_NAME}
+ExecStart=/usr/bin/docker start -a {DOCKER_CONTAINER_NAME}
+ExecStop=/usr/bin/docker stop -t 10 {DOCKER_CONTAINER_NAME}
 
 [Install]
 WantedBy=multi-user.target
@@ -156,11 +156,11 @@ if [ ! -d "/tmp/libwebsockets" ]; then
 fi
 
 # Clone Janus Gateway and build
-if [ ! -d "{JANUS_INSTALL_DIR}" ]; then
+if [ ! -d "$JANUS_INSTALL_DIR" ]; then
     git clone https://github.com/meetecho/janus-gateway.git /tmp/janus-gateway
     cd /tmp/janus-gateway
     sh autogen.sh
-    ./configure --prefix={JANUS_INSTALL_DIR}
+    ./configure --prefix="$JANUS_INSTALL_DIR"
     make
     make install
     make configs
@@ -336,10 +336,10 @@ echo "   - Janus logs: journalctl -u janus -f"
 echo "   - Nginx logs: journalctl -u nginx -f"
 echo ""
 echo "🔑 IMPORTANT:"
-echo " - Your PC host for streaming is set to: {PC_HOST}"
+echo " - Your PC host for streaming is set to: {DOMAIN_NAME}"
 echo " - To start streaming, visit the Enter the Public IP to get the PIN to connect:"
-echo "   {VM_IP}"
-echo "   {PIN_URL}"
+echo "{VM_IP}"
+echo "{PIN_URL}"
 echo " - Once PIN is entered, Moonlight Embed will connect to your PC for streaming."
 echo " - Janus Gateway is installed and running to handle WebRTC streaming."
 echo "============================================"
