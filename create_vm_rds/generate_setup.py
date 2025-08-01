@@ -1,20 +1,22 @@
-def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embedded"):
+def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed"):
     SERVICE_USER = "moonlightembed"
-    MOONLIGHT_EMBEDDED_DIR = "/opt/moonlight-embedded"
-
     github_url = "https://github.com/moonlight-stream/moonlight-embedded.git"
-    libnice_url = "https://gitlab.freedesktop.org/libnice/libnice"
-    libsrtp_url = "https://github.com/cisco/libsrtp/archive/v2.2.0.tar.gz"
-    usrsctp_url = "https://github.com/sctplab/usrsctp"
-    libwebsockets_url = "https://github.com/warmcat/libwebsockets.git"
-    janus_url = "https://github.com/meetecho/janus-gateway.git"
-    letsencrypt_options_url = "https://raw.githubusercontent.com/.../options"
-    ssl_dhparams_url = "https://raw.githubusercontent.com/.../ssl-dhparams.pem"
 
-    script = f"""#!/bin/bash
+    libnice_git_url = "https://gitlab.freedesktop.org/libnice/libnice"
+    libsrtp_tar_url = "https://github.com/cisco/libsrtp/archive/v2.2.0.tar.gz"
+    usrsctp_git_url = "https://github.com/sctplab/usrsctp"
+    libwebsockets_git_url = "https://github.com/warmcat/libwebsockets.git"
+    janus_git_url = "https://github.com/meetecho/janus-gateway.git"
+    letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
+    ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
+
+    script_template = f'''#!/bin/bash
+
 set -e
+
 export DEBIAN_FRONTEND=noninteractive
 
+# === User config ===
 DOMAIN_NAME="{DOMAIN_NAME}"
 ADMIN_EMAIL="{ADMIN_EMAIL}"
 FRONTEND_PORT={FRONTEND_PORT}
@@ -26,71 +28,94 @@ LOG_DIR="${{INSTALL_DIR}}/logs"
 DOCKER_IMAGE_NAME="moonlight-embed-app"
 DOCKER_CONTAINER_NAME="moonlight-embed-container"
 JANUS_INSTALL_DIR="/opt/janus"
-MOONLIGHT_EMBEDDED_DIR="{MOONLIGHT_EMBEDDED_DIR}"
 
-# Validate domain format
+# === Validate domain format ===
 if ! [[ "${{DOMAIN_NAME}}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
     echo "ERROR: Invalid domain format"
     exit 1
 fi
 
-echo "[1/11] Updating and installing dependencies..."
+echo "[1/10] Updating system and installing dependencies..."
 apt-get update
-apt-get install -y --no-install-recommends curl git nginx certbot python3-certbot-nginx \
-    nodejs npm docker.io ufw build-essential cmake git pkg-config autoconf automake libtool \
-    libpulse-dev libasound2-dev libx11-dev libxext-dev libgl1-mesa-dev \
-    libavahi-client-dev libavahi-common-dev libudev-dev libsdl2-dev libdrm-dev libwayland-dev \
-    libavcodec-dev libavdevice-dev libavfilter-dev libavformat-dev libavutil-dev \
-    libswresample-dev libswscale-dev wget
+apt-get install -y --no-install-recommends \\
+    curl git nginx certbot python3-certbot-nginx \\
+    nodejs npm docker.io ufw build-essential cmake autoconf automake libtool pkg-config gengetopt \\
+    libmicrohttpd-dev libjansson-dev libssl-dev libsrtp2-dev libsofia-sip-ua-dev libglib2.0-dev \\
+    libopus-dev libogg-dev libcurl4-openssl-dev liblua5.3-dev libconfig-dev libnanomsg-dev
 
-# Install Node.js 20 if not present
-if ! command -v node > /dev/null || [[ "$(node -v)" != v20* ]]; then
+# Install Node.js 20 if not available or wrong version
+if ! command -v node &> /dev/null || [[ "$(node -v)" != v20* ]]; then
+    echo "Installing Node.js 20..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
 fi
 
+# Enable and start Docker service
 systemctl start docker || true
 systemctl enable docker || true
 
-echo "[2/11] Setting up frontend app..."
-mkdir -p "$INSTALL_DIR" "$LOG_DIR"
-cd "$INSTALL_DIR"
+echo "[2/10] Setting up installation directory..."
+mkdir -p "${{INSTALL_DIR}}"
+mkdir -p "${{LOG_DIR}}"
+cd "${{INSTALL_DIR}}"
 
+# Clean and clone repo if needed
 if [ ! -d ".git" ]; then
     if [ "$(ls -A .)" ]; then
-        echo "Directory not empty, cleaning..."
+        echo "Directory is not empty, cleaning up..."
         rm -rf ./*
     fi
-    git clone "{github_url}" .
+    echo "Cloning Moonlight Embed repo..."
+    git clone {github_url} .
 else
+    echo "Pulling latest changes..."
     git pull
 fi
 
-cat > Dockerfile << EOF
-FROM node:slim
+echo "[3/10] Creating Dockerfile..."
+
+cat > "${{INSTALL_DIR}}/Dockerfile" <<EOF
+FROM node:20-slim
+
 WORKDIR /app
+
 COPY . .
+
 RUN npm install
 RUN npm run build
-EXPOSE {BACKEND_PORT} {FRONTEND_PORT} 8889 8890
+
+EXPOSE {BACKEND_PORT} {FRONTEND_PORT} 8889 8890  # Include ports for WebRTC signaling
+
 CMD ["npm", "start"]
 EOF
 
-docker build -t $DOCKER_IMAGE_NAME .
-docker stop $DOCKER_CONTAINER_NAME || true
-docker rm $DOCKER_CONTAINER_NAME || true
-docker run -d -p {FRONTEND_PORT}:{FRONTEND_PORT} -p {BACKEND_PORT}:{BACKEND_PORT} -p 8889:8889 -p 8890:8890 --name $DOCKER_CONTAINER_NAME $DOCKER_IMAGE_NAME
+echo "[4/10] Building Docker image..."
+docker build -t ${{DOCKER_IMAGE_NAME}} "${{INSTALL_DIR}}"
 
-cat > /etc/systemd/system/moonlight-embed.service << EOF
+echo "[5/10] Stopping existing container if any..."
+docker stop ${{DOCKER_CONTAINER_NAME}} || true
+docker rm ${{DOCKER_CONTAINER_NAME}} || true
+
+echo "[6/10] Starting Docker container..."
+docker run -d --name ${{DOCKER_CONTAINER_NAME}} \\
+    -p {BACKEND_PORT}:{BACKEND_PORT} \\
+    -p {FRONTEND_PORT}:{FRONTEND_PORT} \\
+    -p 8889:8889 \\
+    -p 8890:8890 \\
+    ${{DOCKER_IMAGE_NAME}}
+
+echo "[7/10] Setting up systemd service for Moonlight Embed container..."
+
+cat > /etc/systemd/system/moonlight-embed.service <<EOF
 [Unit]
-Description=moonlight-embed container
+Description=Moonlight Embed Docker Container
 After=docker.service
 Requires=docker.service
 
 [Service]
 Restart=always
-ExecStart=/usr/bin/docker start -a $DOCKER_CONTAINER_NAME
-ExecStop=/usr/bin/docker stop -t 10 $DOCKER_CONTAINER_NAME
+ExecStart=/usr/bin/docker start -a ${{DOCKER_CONTAINER_NAME}}
+ExecStop=/usr/bin/docker stop -t 10 ${{DOCKER_CONTAINER_NAME}}
 
 [Install]
 WantedBy=multi-user.target
@@ -100,77 +125,82 @@ systemctl daemon-reload
 systemctl enable moonlight-embed.service
 systemctl start moonlight-embed.service
 
-echo "[3/11] Building native Moonlight Embedded..."
-if [ ! -d "$MOONLIGHT_EMBEDDED_DIR" ]; then
-    git clone "{github_url}" "$MOONLIGHT_EMBEDDED_DIR"
+echo "[5/11] Cloning Moonlight Embedded native repo..."
+if [ ! -d "${MOONLIGHT_EMBEDDED_DIR}" ]; then
+    git clone ${github_url} ${MOONLIGHT_EMBEDDED_DIR}
 fi
 
-cd "$MOONLIGHT_EMBEDDED_DIR"
+echo "[6/11] Building Moonlight Embedded native app..."
+cd ${MOONLIGHT_EMBEDDED_DIR}
 mkdir -p build
 cd build
-cmake ..
-make -j$(nproc)
-make install
+cmake .. && make -j$(nproc) && make install
 
-echo "[4/11] Installing libnice..."
-if [ ! -d /tmp/libnice ]; then
-    git clone "{libnice_url}" /tmp/libnice
+echo "[8/10] Installing and building Janus Gateway and dependencies..."
+
+# Clone and install libnice (recommended latest)
+if [ ! -d "/tmp/libnice" ]; then
+    git clone {libnice_git_url} /tmp/libnice
     cd /tmp/libnice
     ./autogen.sh
     ./configure --prefix=/usr
     make && make install
 fi
 
-echo "[5/11] Installing libsrtp..."
-if [ ! -d /tmp/libsrtp-2.2.0 ]; then
+# Install libsrtp (v2.2.0)
+if [ ! -d "/tmp/libsrtp-2.2.0" ]; then
     cd /tmp
-    wget "{libsrtp_url}"
-    tar xvf v2.2.0.tar.gz
+    wget {libsrtp_tar_url}
+    tar xfv v2.2.0.tar.gz
     cd libsrtp-2.2.0
     ./configure --prefix=/usr --enable-openssl
-    make && make install
+    make shared_library && make install
 fi
 
-echo "[6/11] Installing usrsctp..."
-if [ ! -d /tmp/usrsctp ]; then
+# Install usrsctp
+if [ ! -d "/tmp/usrsctp" ]; then
     cd /tmp
-    git clone "{usrsctp_url}"
+    git clone {usrsctp_git_url}
     cd usrsctp
     ./bootstrap
     ./configure --prefix=/usr
     make && make install
 fi
 
-echo "[7/11] Installing libwebsockets..."
-if [ ! -d /tmp/libwebsockets ]; then
+# Install libwebsockets
+if [ ! -d "/tmp/libwebsockets" ]; then
     cd /tmp
-    git clone "{libwebsockets_url}"
+    git clone {libwebsockets_git_url}
     cd libwebsockets
     git checkout v2.4-stable
-    mkdir build && cd build
-    cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_C_FLAGS="-fPIC" ..
+    mkdir build
+    cd build
+    cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS="-fpic" ..
     make && make install
 fi
 
-echo "[8/11] Building Janus Gateway..."
-if [ ! -d "$JANUS_INSTALL_DIR" ]; then
-    git clone "{janus_url}" /tmp/janus-gateway
+# Clone Janus Gateway and build
+if [ ! -d "${{JANUS_INSTALL_DIR}}" ]; then
+    git clone {janus_git_url} /tmp/janus-gateway
     cd /tmp/janus-gateway
-    ./autogen.sh
-    ./configure --prefix="$JANUS_INSTALL_DIR"
-    make && make install
+    sh autogen.sh
+    ./configure --prefix="${{JANUS_INSTALL_DIR}}"
+    make
+    make install
     make configs
 fi
 
-cat > /etc/systemd/system/janus.service << EOF
+echo "[9/10] Setting up systemd service for Janus Gateway..."
+
+cat > /etc/systemd/system/janus.service <<EOF
 [Unit]
-Description=Janus Gateway
+Description=Janus WebRTC Server
 After=network.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=$JANUS_INSTALL_DIR/bin/janus
+ExecStart=${{JANUS_INSTALL_DIR}}/bin/janus
 Restart=on-failure
 RestartSec=5
 
@@ -182,7 +212,7 @@ systemctl daemon-reload
 systemctl enable janus.service
 systemctl start janus.service
 
-echo "[9/11] Configuring firewall..."
+echo "[10/10] Configuring firewall..."
 
 ufw allow 22/tcp
 ufw allow 80/tcp
@@ -191,19 +221,20 @@ ufw allow {FRONTEND_PORT}/tcp
 ufw allow {BACKEND_PORT}/tcp
 ufw allow 8889/tcp
 ufw allow 8890/tcp
-ufw allow 7080/tcp
-ufw allow 8080/tcp
+# Janus default ports, adjust if needed
+ufw allow 7088/tcp
+ufw allow 8088/tcp
 ufw --force enable
 
-echo "[10/11] Setting up SSL certificates..."
+echo "[11/11] Setting up SSL certificate..."
 
 mkdir -p /etc/letsencrypt
-curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
-curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
+curl -s {letsencrypt_options_url} > /etc/letsencrypt/options-ssl-nginx.conf
+curl -s {ssl_dhparams_url} > /etc/letsencrypt/ssl-dhparams.pem
 
-certbot --nginx -d "$DOMAIN_NAME" --staging --agree-tos --email "$ADMIN_EMAIL" --no-eff-email --redirect
+certbot --nginx -d "${{DOMAIN_NAME}}" --staging --agree-tos --email "${{ADMIN_EMAIL}}" --redirect --no-eff-email
 
-echo "[11/11] Configuring nginx..."
+echo "Configuring nginx..."
 
 rm -f /etc/nginx/sites-enabled/default
 
