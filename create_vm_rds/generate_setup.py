@@ -1,5 +1,4 @@
 def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed"):
-    SERVICE_USER = "moonlightembed"
     github_url = "https://github.com/moonlight-stream/moonlight-embedded.git"
     
     # Define the Moonlight Embedded directory path
@@ -39,25 +38,67 @@ if ! [[ "${{DOMAIN_NAME}}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
     exit 1
 fi
 
-echo "[1/8] Updating system and installing dependencies..."
+echo "[1/10] Updating system and installing base dependencies..."
 apt-get update
 apt-get install -y --no-install-recommends \\
     curl git nginx certbot python3-certbot-nginx \\
     docker.io ufw build-essential cmake autoconf automake libtool pkg-config \\
-    libmicrohttpd-dev libjansson-dev libssl-dev libsrtp2-dev libsofia-sip-ua-dev \\
+    libmicrohttpd-dev libjansson-dev libssl-dev libsofia-sip-ua-dev \\
     libglib2.0-dev libopus-dev libogg-dev libcurl4-openssl-dev libconfig-dev \\
     libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
 
-# Enable and start Docker service
-systemctl start docker || true
-systemctl enable docker || true
+echo "[2/10] Installing libsrtp..."
+# Install libsrtp from source
+cd /tmp
+wget {libsrtp_tar_url} -O libsrtp.tar.gz
+tar xzf libsrtp.tar.gz
+cd libsrtp-2.2.0
+./configure --prefix=/usr --enable-openssl
+make shared_library && make install
+ldconfig
+cd -
 
-echo "[2/8] Setting up installation directory..."
+echo "[3/10] Installing usrsctp..."
+# Install usrsctp from source
+cd /tmp
+git clone {usrsctp_git_url}
+cd usrsctp
+./bootstrap
+./configure --prefix=/usr
+make && make install
+ldconfig
+cd -
+
+echo "[4/10] Installing libwebsockets..."
+# Install libwebsockets from source
+cd /tmp
+git clone {libwebsockets_git_url}
+cd libwebsockets
+git checkout v4.3-stable
+mkdir build
+cd build
+cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS="-fpic" ..
+make && make install
+ldconfig
+cd -
+
+echo "[5/10] Installing libnice..."
+# Install libnice from source
+cd /tmp
+git clone {libnice_git_url}
+cd libnice
+./autogen.sh
+./configure --prefix=/usr
+make && make install
+ldconfig
+cd -
+
+echo "[6/10] Setting up installation directory..."
 mkdir -p "${{INSTALL_DIR}}"
 mkdir -p "${{LOG_DIR}}"
 cd "${{INSTALL_DIR}}"
 
-echo "[3/8] Installing Moonlight Embedded..."
+echo "[7/10] Installing Moonlight Embedded..."
 mkdir -p "${{MOONLIGHT_EMBEDDED_DIR}}"
 if [ ! -d "${{MOONLIGHT_EMBEDDED_DIR}}/.git" ]; then
     git clone {github_url} "${{MOONLIGHT_EMBEDDED_DIR}}"
@@ -69,19 +110,7 @@ mkdir -p build
 cd build
 cmake .. && make -j$(nproc) && make install
 
-echo "[4/8] Installing Janus Gateway and dependencies..."
-
-# Install libnice
-if [ ! -d "/tmp/libnice" ]; then
-    git clone {libnice_git_url} /tmp/libnice
-    cd /tmp/libnice
-    ./autogen.sh
-    ./configure --prefix=/usr
-    make && make install
-    cd -
-fi
-
-# Install Janus
+echo "[8/10] Installing Janus Gateway..."
 if [ ! -d "${{JANUS_INSTALL_DIR}}" ]; then
     git clone {janus_git_url} /tmp/janus-gateway
     cd /tmp/janus-gateway
@@ -111,7 +140,7 @@ streaming: {{
 EOF
 fi
 
-echo "[5/8] Setting up systemd services..."
+echo "[9/10] Setting up systemd services..."
 
 # Janus service
 cat > /etc/systemd/system/janus.service <<EOF
@@ -151,24 +180,22 @@ systemctl daemon-reload
 systemctl enable janus.service moonlight-stream.service
 systemctl start janus.service moonlight-stream.service
 
-echo "[6/8] Configuring firewall..."
+echo "[10/10] Configuring firewall and SSL..."
 ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
-ufw allow 5004:5005/udp  # Moonlight streaming ports
-ufw allow 7088/tcp       # Janus WebSockets
-ufw allow 8088/tcp       # Janus HTTP
-ufw allow 10000-10200/udp # WebRTC ports
+ufw allow 5004:5005/udp
+ufw allow 7088/tcp
+ufw allow 8088/tcp
+ufw allow 10000-10200/udp
 ufw --force enable
 
-echo "[7/8] Setting up SSL certificate..."
 mkdir -p /etc/letsencrypt
 curl -s {letsencrypt_options_url} > /etc/letsencrypt/options-ssl-nginx.conf
 curl -s {ssl_dhparams_url} > /etc/letsencrypt/ssl-dhparams.pem
 
 certbot --nginx -d "${{DOMAIN_NAME}}" --staging --agree-tos --email "${{ADMIN_EMAIL}}" --redirect --no-eff-email
 
-echo "[8/8] Configuring nginx..."
 rm -f /etc/nginx/sites-enabled/default
 
 cat > /etc/nginx/sites-available/moonlightembed <<EOF
@@ -206,26 +233,40 @@ EOF
 ln -sf /etc/nginx/sites-available/moonlightembed /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
 
-echo "============================================"
-echo "✅ Moonlight to Browser Streaming Setup Complete!"
-echo ""
-echo "To access the stream:"
-echo "1. Open https://{DOMAIN_NAME}/janus/streaming/test.html"
-echo "2. Use these settings:"
-echo "   - Video: H.264"
-echo "   - Audio: Opus"
-echo "   - Port: 5004"
-echo "   - Secret: moonlightstream"
-echo ""
-echo "⚙️ Service Status:"
-echo "   - Janus Gateway: systemctl status janus.service"
-echo "   - Moonlight Stream: systemctl status moonlight-stream.service"
-echo ""
-echo "🔑 IMPORTANT:"
-echo "1. On your Windows 10 machine:"
-echo "   - Install Sunshine from https://github.com/LizardByte/Sunshine"
-echo "   - Configure Sunshine with the same PIN shown at {PIN_URL}"
-echo "2. The stream will be available at the Janus test page"
-echo "============================================"
+print_success("============================================================")
+print_success("✅ Moonlight to Browser Streaming Setup Complete!")
+print_success("============================================================")
+print_success("")
+print_success("🌐 Connection Information:")
+print_success("------------------------------------------------------------")
+print_success(f"🔗 Moonlight PIN Service: https://pin.{DOMAIN_NAME}")
+print_success(f"📁 File Drop Service: https://drop.{DOMAIN_NAME}")
+print_success(f"🔑 PIN: {ADMIN_PASSWORD}")
+print_success("------------------------------------------------------------")
+print_success("")
+print_success("🎥 Streaming Access:")
+print_success("------------------------------------------------------------")
+print_success("1. Open https://{DOMAIN_NAME}/janus/streaming/test.html")
+print_success("2. Use these settings:")
+print_success("   - Video: H.264")
+print_success("   - Audio: Opus")
+print_success("   - Port: 5004")
+print_success("   - Secret: moonlightstream")
+print_success("------------------------------------------------------------")
+print_success("")
+print_success("⚙️ Service Status Commands:")
+print_success("------------------------------------------------------------")
+print_success("Janus Gateway: systemctl status janus.service")
+print_success("Moonlight Stream: systemctl status moonlight-stream.service")
+print_success("Nginx: systemctl status nginx")
+print_success("------------------------------------------------------------")
+print_success("")
+print_success("🔧 IMPORTANT Setup Notes:")
+print_success("------------------------------------------------------------")
+print_success("1. On your Windows 10 machine:")
+print_success("   - Install Sunshine from https://github.com/LizardByte/Sunshine")
+print_success(f"   - Use PIN: {ADMIN_PASSWORD} when pairing")
+print_success("2. The stream will be available at the Janus test page")
+print_success("============================================================")
 '''
     return script_template
