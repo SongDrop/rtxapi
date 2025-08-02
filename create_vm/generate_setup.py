@@ -3,6 +3,11 @@ def generate_setup(PC_NAME: str, DOMAIN_NAME: str, SSL_EMAIL: str, PIN_CODE: str
     safe_domain = DOMAIN_NAME.replace('"', '`"')
     safe_pin = PIN_CODE.replace('"', '`"')
     safe_password = NEW_PASSWORD.replace('"', '`"') if NEW_PASSWORD and NEW_PASSWORD.strip() != "" else None
+    #
+    superf4_url = "https://github.com/SongDrop/SuperF4/releases/download/1.0/SuperF4.zip"
+    vc_redist_url = "https://github.com/SongDrop/dumbdropwindows/releases/download/windows/VC_redist.x64.exe"
+    reset_sunshine_url = "https://github.com/SongDrop/resetsunshine/releases/download/v1.0/resetsunshine.exe"
+    dumbdrop_url = "https://github.com/SongDrop/dumbdropwindows/releases/download/windows/DumbDrop.exe"
 
     password_change_script = ""
     if safe_password:
@@ -61,7 +66,7 @@ $DomainName = "{safe_domain}"
 
 # Install VC++ Redistributable
 try {{
-    $vcRedistUrl = "https://github.com/SongDrop/dumbdropwindows/releases/download/windows/VC_redist.x64.exe"
+    $vcRedistUrl = "{vc_redist_url}"
     $vcRedistPath = "$env:TEMP\\VC_redist.x64.exe"
     Write-Host "Downloading VC_redist.x64.exe..."
     Invoke-WebRequest -Uri $vcRedistUrl -OutFile $vcRedistPath -UseBasicParsing
@@ -82,7 +87,7 @@ try {{
 
 # Download and install resetsunshine
 try {{
-    $sunshineUrl = "https://github.com/SongDrop/resetsunshine/releases/download/v1.0/resetsunshine.exe"
+    $sunshineUrl = "{reset_sunshine_url}"
     $sunshineInstallDir = "C:\\Program Files\\Sunshine"
     $sunshineExePath = Join-Path -Path $sunshineInstallDir -ChildPath "resetsunshine.exe"
 
@@ -104,7 +109,7 @@ try {{
 
 # Download and install DumbDrop
 try {{
-    $dumbdropUrl = "https://github.com/SongDrop/dumbdropwindows/releases/download/windows/DumbDrop.exe"
+    $dumbdropUrl = "{dumbdrop_url}"
     $dumbdropInstallDir = "C:\\Program Files\\DumbDrop"
     $dumbdropExePath = Join-Path -Path $dumbdropInstallDir -ChildPath "DumbDrop.exe"
     
@@ -139,6 +144,56 @@ try {{
 
 }} catch {{
     Write-Warning "DumbDrop installation failed: $_"
+}}
+
+# Download and install SuperF4
+try {{
+    $superf4Url = "{superf4_url}"
+    $superf4InstallDir = "C:\Program Files\SuperF4"
+    $superf4ZipPath = "$env:TEMP\SuperF4.zip"
+    $superf4ExePath = Join-Path -Path $superf4InstallDir -ChildPath "SuperF4.exe"
+    $superf4IniPath = Join-Path -Path $superf4InstallDir -ChildPath "SuperF4.ini"
+    
+    Write-Host "Downloading SuperF4 ZIP package..."
+    Invoke-WebRequest -Uri $superf4Url -OutFile $superf4ZipPath -UseBasicParsing
+    
+    # Create installation directory if it doesn't exist
+    if (-not (Test-Path -Path $superf4InstallDir)) {{
+        New-Item -Path $superf4InstallDir -ItemType Directory -Force | Out-Null
+    }}
+    
+    # Extract ZIP contents
+    Write-Host "Extracting SuperF4 files..."
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($superf4ZipPath, $superf4InstallDir)
+    
+    # Verify both files were extracted
+    if (-not (Test-Path -Path $superf4ExePath)) {{
+        throw "SuperF4.exe not found in the extracted files"
+    }}
+    if (-not (Test-Path -Path $superf4IniPath)) {{
+        Write-Warning "SuperF4.init not found in the extracted files (this might be expected)"
+    }}
+    
+    # Create desktop shortcut
+    $WScriptShell = New-Object -ComObject WScript.Shell
+    $Shortcut = $WScriptShell.CreateShortcut("$env:Public\Desktop\SuperF4.lnk")
+    $Shortcut.TargetPath = $superf4ExePath
+    $Shortcut.WorkingDirectory = $superf4InstallDir
+    $Shortcut.Save()
+    Write-Host "SuperF4 shortcut created on Desktop."
+    
+    # Schedule SuperF4 to run at startup
+    $taskAction = New-ScheduledTaskAction -Execute $superf4ExePath
+    $taskTrigger = New-ScheduledTaskTrigger -AtLogOn
+    Register-ScheduledTask -TaskName "SuperF4" -Action $taskAction -Trigger $taskTrigger -RunLevel Highest -Force
+    Write-Host "SuperF4 will start automatically at login."
+    
+    # Clean up temporary files
+    Remove-Item -Path $superf4ZipPath -Force -ErrorAction SilentlyContinue
+
+}}catch {{
+    Write-Warning "SuperF4 installation failed: $_"
 }}
 
 $needRestart = $false
