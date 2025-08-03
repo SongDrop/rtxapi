@@ -1683,16 +1683,52 @@ async def cleanup_temp_storage_on_success(resource_group, storage_client, storag
 
 
 # Create at module level
-session = aiohttp.ClientSession()
-async def post_status_update(hook_url: str, status_data: dict) -> dict:
+session = None
+
+async def get_session():
+    global session
+    if session is None or session.closed:
+        session = aiohttp.ClientSession()
+    return session
+
+async def close_session():
+    global session
+    if session and not session.closed:
+        await session.close()
+
+async def post_status_update(hook_url: str, status_data: dict, session: aiohttp.ClientSession = None) -> dict:
     if not hook_url:
         return {"success": True, "status_url": ""}
+
+    close_after = False
+    if session is None:
+        session = await get_session()
+        close_after = True
+
     try:
-        async with session.post(hook_url, json=status_data, timeout=aiohttp.ClientTimeout(total=60)) as response:
+        async with session.post(
+            hook_url,
+            json=status_data,
+            timeout=aiohttp.ClientTimeout(total=60)
+        ) as response:
             if response.status == 200:
                 data = await response.json()
-                return {"success": True, "status_url": data.get("status_url", ""), "response": data}
-            else:
-                return {"success": False, "error": f"HTTP {response.status}", "status_url": ""}
+                return {
+                    "success": True,
+                    "status_url": data.get("status_url", ""),
+                    "response": data
+                }
+            return {
+                "success": False,
+                "error": f"HTTP {response.status}",
+                "status_url": ""
+            }
     except Exception as e:
-        return {"success": False, "error": str(e), "status_url": ""}
+        return {
+            "success": False,
+            "error": str(e),
+            "status_url": ""
+        }
+    finally:
+        if close_after:
+            await session.close()
