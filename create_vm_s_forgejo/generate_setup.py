@@ -227,7 +227,6 @@ server {{
 }}
 EOF
 
-
 ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
 
