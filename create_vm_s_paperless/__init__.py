@@ -444,8 +444,8 @@ async def provision_vm_background(
     sh_script = generate_setup.generate_setup(
         fqdn, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT
     )
-    a_records = []  # Initialize empty list for DNS records
-    
+    record_name = subdomain.rstrip('.') if subdomain else '@'
+    a_records = [record_name]
     # Upload script to blob storage
     await post_status_update(
         hook_url=hook_url,
@@ -1117,7 +1117,8 @@ async def provision_vm_background(
             return
 
         # Create DNS A records
-        a_records = [f'rds.{subdomain}']
+        record_name = subdomain.rstrip('.') if subdomain else '@' 
+        a_records = [record_name]
         
         await post_status_update(
             hook_url=hook_url,
