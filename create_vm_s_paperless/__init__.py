@@ -1755,42 +1755,48 @@ async def cleanup_temp_storage_on_success(resource_group, storage_client, storag
 
 
 async def post_status_update(hook_url: str, status_data: dict) -> dict:
-    """Modified with better timeout handling and retries"""
+    """Handle status updates with proper response parsing"""
     if not hook_url:
-        return {"success": True, "status_url": ""}
+        print_info("No hook_url provided, skipping status update")
+        return {
+            "success": True,
+            "status_url": "",
+            "response": {"status_url": ""}
+        }
     
-    retry_count = 0
-    max_retries = 3
-    base_timeout = 30  # Start with 30 seconds
+    print_info(f"Posting status for VM {status_data.get('vm_name')}")
     
-    while retry_count < max_retries:
-        try:
-            response = requests.post(
-                hook_url,
-                json=status_data,
-                timeout=(base_timeout * (retry_count + 1))  # Exponential timeout
-            )
-            
-            if response.status_code == 200:
-                return {
-                    "success": True,
-                    "status_url": response.json().get("status_url", ""),
-                    "response": response.json()
-                }
-            else:
-                error_msg = f"HTTP {response.status_code}"
-                
-        except requests.exceptions.Timeout:
-            error_msg = f"Timeout after {base_timeout * (retry_count + 1)}s"
-        except Exception as e:
-            error_msg = str(e)
-            
-        retry_count += 1
-        if retry_count < max_retries:
-            await asyncio.sleep(5 * retry_count)  # Backoff
-            
-    return {
-        "success": False,
-        "error": f"Failed after {max_retries} attempts: {error_msg}",
-        "status_url": ""
-    }
+    try:
+        response = requests.post(
+            hook_url,
+            json=status_data,
+            timeout=100
+        )
+        
+        if response.status_code != 200:
+            error_msg = f"Status update failed: HTTP {response.status_code}"
+            print_error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "status_url": ""
+            }
+        
+        response_data = response.json()
+        status_url = response_data.get("status_url", "")
+        
+        print_success(f"Status update successful, status_url: {status_url}")
+        return {
+            "success": True,
+            "status_url": status_url,
+            "response": response_data
+        }
+        
+    except Exception as e:
+        error_msg = f"Post error: {str(e)}"
+        print_error(error_msg)
+        return {
+            "success": False,
+            "error": error_msg,
+            "status_url": ""
+        }
