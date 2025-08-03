@@ -31,7 +31,7 @@ from azure.mgmt.dns import DnsManagementClient
 from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
-
+import aiohttp
 # Use relative imports to load local modules from the same function folder.
 # This ensures Python finds these files (generate_setup.py, html_email.py, html_email_send.py)
 # in the current package instead of searching in global site-packages,
@@ -97,50 +97,6 @@ def print_warn(msg):
 def print_error(msg):
     logging.info(f"{bcolors.FAIL}[ERROR]{bcolors.ENDC} {msg}")
 
-async def get_vm_public_ip_with_retry(network_client, compute_client, resource_group, vm_name, retries=5, delay=5):
-    for attempt in range(retries):
-        try:
-            ip = await get_vm_public_ip(network_client, compute_client, resource_group, vm_name)
-            if ip:
-                return ip
-            else:
-                print_warn(f"Attempt {attempt+1}: Public IP not assigned yet. Retrying in {delay}s...")
-        except Exception as e:
-            print_warn(f"Attempt {attempt+1}: Error getting public IP: {e}")
-        await asyncio.sleep(delay)
-    return None
-
-async def get_vm_public_ip(network_client, compute_client, resource_group_name, vm_name):
-    # Get the VM object
-    vm = compute_client.virtual_machines.get(resource_group_name, vm_name)
-
-    # The VM can have multiple NICs, get the first one for example
-    nic_reference = vm.network_profile.network_interfaces[0]  # NetworkInterfaceReference object
-    nic_id = nic_reference.id
-
-    # Extract NIC name and resource group from NIC id
-    # NIC id format: /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.Network/networkInterfaces/{nicName}
-    nic_name = nic_id.split('/')[-1]
-    nic_rg = nic_id.split('/')[4]
-
-    # Get the NIC object
-    nic = network_client.network_interfaces.get(nic_rg, nic_name)
-
-    # Get the public IP address resource ID attached to the NIC's primary IP configuration
-    ip_config = nic.ip_configurations[0]
-    public_ip_id = ip_config.public_ip_address.id if ip_config.public_ip_address else None
-
-    if not public_ip_id:
-        return None  # No public IP assigned
-
-    # Extract public IP name and resource group from ID
-    public_ip_name = public_ip_id.split('/')[-1]
-    public_ip_rg = public_ip_id.split('/')[4]
-
-    # Get the public IP address object
-    public_ip = network_client.public_ip_addresses.get(public_ip_rg, public_ip_name)
-
-    return public_ip.ip_address
 
 async def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Processing create_vm request...')
@@ -174,6 +130,11 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         RECIPIENT_EMAILS = req_body.get('recipient_emails') or req.params.get('recipient_emails')
         #windows user is always 'source' to keep it simple
         hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
+
+        ADMIN_EMAIL = f"admin@{domain}"
+        ADMIN_PASSWORD = "MyPass1234!"
+        FRONTEND_PORT = 3000
+        BACKEND_PORT = 8000
 
         ###Parameter checking to handle errors 
         if not vm_name:
@@ -271,14 +232,14 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # Start the long-running operation in the background
         # Using asyncio.create_task to run it in parallel
-        # asyncio.create_task(
-        #     provision_vm_background(
-        #         username, password, vm_name, resource_group, 
-        #         domain, subdomain, fqdn, location, vm_size,
-        #         storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
-        #         hook_url, status_url
-        #     )
-        # )
+        asyncio.create_task(
+            provision_vm_background(
+                username, password, vm_name, resource_group, 
+                domain, subdomain, fqdn, location, vm_size,
+                storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
+                hook_url, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT
+            )
+        )
 
         # Return immediate response with status URL
         return func.HttpResponse(
@@ -305,7 +266,7 @@ async def provision_vm_background(
     username, password, vm_name, resource_group, 
     domain, subdomain, fqdn, location, vm_size,
     storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
-    hook_url, status_url
+    hook_url, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT
 ):
     # Initial status update - Starting provisioning
     await post_status_update(
@@ -413,25 +374,6 @@ async def provision_vm_background(
         }
     )
     
-    public_ip = await get_vm_public_ip_with_retry(network_client, compute_client, resource_group, vm_name)
-    if not public_ip:
-        error_msg = f"No public IP assigned to VM {vm_name}"
-        print_error(error_msg)
-        await post_status_update(
-            hook_url=hook_url,
-            status_data={
-                "vm_name": vm_name,
-                "status": "failed",
-                "resource_group": resource_group,
-                "location": location,
-                "details": {
-                    "step": "network_configuration_failed",
-                    "error": error_msg,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            }
-        )
-        return
 
     # Create storage account
     await post_status_update(
@@ -499,23 +441,14 @@ async def provision_vm_background(
         }
     )
 
-    DOMAIN_NAME = fqdn
-    ADMIN_EMAIL = f"admin@{domain}" 
-    ADMIN_PASSWORD = "" 
-    FRONTEND_PORT = 3000 
-    BACKEND_PORT = 8000
-    VM_IP = public_ip
-    PIN_URL = f"https://{public_ip}:49990"
-    VOLUME_DIR = "/opt/moonlight-embed"
-    WEBHOOK_URL = hook_url
+     # Autoinstall script generation
+    print_info("Generating installation setup script...")
+    # Generate Auto-setup setup script
+    sh_script = generate_setup.generate_setup(
+        fqdn, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT
+    )
     a_records = []  # Initialize empty list for DNS records
     
-    sh_script = generate_setup.generate_setup(
-        DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, 
-        FRONTEND_PORT, BACKEND_PORT, VM_IP, 
-        PIN_URL, VOLUME_DIR, WEBHOOK_URL
-    )
-
     # Upload script to blob storage
     await post_status_update(
         hook_url=hook_url,
@@ -1482,9 +1415,6 @@ async def provision_vm_background(
             }
         )
 
-    # Final success status
-    url = f"https://cdn.sdappnet.cloud/rtx/rtxidtech.html?url={public_ip}"
-    
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -1496,7 +1426,7 @@ async def provision_vm_background(
                 "step": "completed",
                 "message": "VM provisioning completed successfully",
                 "public_ip": public_ip,
-                "url": url,
+                "url": fqdn,
                 "timestamp": datetime.utcnow().isoformat()
             }
         }
@@ -1754,35 +1684,32 @@ async def cleanup_temp_storage_on_success(resource_group, storage_client, storag
     print_success("Temp storage cleanup completed.")
 
 
-def post_status_update(hook_url: str, status_data: dict) -> dict:
+async def post_status_update(hook_url: str, status_data: dict) -> dict:
+    """Proper async version"""
     if not hook_url:
         return {"success": True, "status_url": ""}
     
     try:
-        response = requests.post(
-            hook_url,
-            json=status_data,
-            timeout=60  # 60 seconds total timeout
-        )
-        
-        if response.status_code == 200:
-            return {
-                "success": True,
-                "status_url": response.json().get("status_url", ""),
-                "response": response.json()
-            }
-        return {
-            "success": False,
-            "error": f"HTTP {response.status_code}",
-            "status_url": ""
-        }
-        
-    except requests.exceptions.Timeout:
-        return {
-            "success": False,
-            "error": "Timed out after 60 seconds",
-            "status_url": ""
-        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                hook_url,
+                json=status_data,
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        "success": True,
+                        "status_url": data.get("status_url", ""),
+                        "response": data
+                    }
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status}",
+                    "status_url": ""
+                }
+                
     except Exception as e:
         return {
             "success": False,

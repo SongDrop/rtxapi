@@ -227,10 +227,6 @@ server {{
 }}
 EOF
 
-echo "Setting global Nginx upload limit..."
-if ! grep -q "client_max_body_size" /etc/nginx/nginx.conf; then
-  sed -i '/http {{/a \    client_max_body_size 1024M;' /etc/nginx/nginx.conf
-fi
 
 ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
