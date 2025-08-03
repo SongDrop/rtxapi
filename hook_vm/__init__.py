@@ -137,8 +137,8 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         }
 
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
-        container_name = 'vm-setup-scripts'
-        blob_name = f"{vm_name}-setup.json"
+        container_name = 'vm-webhook-json'
+        blob_name = f"{vm_name}-webhook.json"
 
         # Uploading generated script to storage
         blob_url_with_sas = await upload_blob_and_generate_sas(blob_service_client, container_name, blob_name, json.dumps(status_data), sas_expiry_hours=2)
