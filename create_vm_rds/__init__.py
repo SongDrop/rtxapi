@@ -254,11 +254,12 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 }
             }
         )
-        status_url = hook_response["status_url"]
+        # Safely get status_url with fallback
+        status_url = hook_response.get("status_url", "")
 
         if not status_url:
             return func.HttpResponse(
-                json.dumps({"error": "Failed to create status endpoint"}),
+                json.dumps({"error": "Failed to create status webhook_url endpoint"}),
                 status_code=500,
                 mimetype="application/json"
             )
