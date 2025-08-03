@@ -484,21 +484,8 @@ async def provision_vm_background(
         return
 
     # Prepare VM name
-    original_vm_name = vm_name
     vm_name = vm_name + 'rds'
     
-    await post_status_update(
-        hook_url=hook_url,
-        status_data={
-            "vm_name": vm_name,
-            "status": "provisioning",
-            "details": {
-                "step": "vm_name_prepared",
-                "message": f"VM name prepared: {original_vm_name} -> {vm_name}"
-            }
-        }
-    )
-
     # Generate setup script
     await post_status_update(
         hook_url=hook_url,
@@ -1783,7 +1770,7 @@ async def post_status_update(hook_url: str, status_data: dict) -> dict:
         response = requests.post(
             hook_url,
             json=status_data,
-            timeout=10
+            timeout=100
         )
         
         if response.status_code != 200:
