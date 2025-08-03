@@ -1,17 +1,10 @@
 import asyncio
 import json
 import os
-import sys
 import time
-import re
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv()  # This loads environment variables from a .env file in the current directory
-import random
-import string
-import shutil
-import platform
-import requests
 import dns.resolver
 from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import ClientSecretCredential
@@ -24,7 +17,6 @@ from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.compute.models import (
     VirtualMachine, HardwareProfile, StorageProfile,
     OSProfile, NetworkProfile, NetworkInterfaceReference,
-    VirtualMachineExtension, WindowsConfiguration,SecurityProfile,
     LinuxConfiguration
 )   
 from azure.mgmt.dns import DnsManagementClient
@@ -1591,7 +1583,7 @@ def check_ns_delegation_with_retries(dns_client, resource_group, domain, retries
         if check_ns_delegation(dns_client, resource_group, domain):
             return True
         print_warn(f"\n⚠️ Retrying NS delegation check in {delay} seconds... (Attempt {attempt}/{retries})")
-        time.sleep(delay)
+        # time.sleep(delay)
     return False
 
 def check_ns_delegation(dns_client, resource_group, domain):
@@ -1760,12 +1752,10 @@ async def close_session():
 async def post_status_update(hook_url: str, status_data: dict, session: aiohttp.ClientSession = None) -> dict:
     if not hook_url:
         return {"success": True, "status_url": ""}
-
-    close_after = False
+    
     if session is None:
         session = await get_session()
-        close_after = True
-
+    
     try:
         async with session.post(
             hook_url,
@@ -1785,11 +1775,10 @@ async def post_status_update(hook_url: str, status_data: dict, session: aiohttp.
                 "status_url": ""
             }
     except Exception as e:
+        # Log error here for visibility
+        print(f"Error posting status update: {e}")
         return {
             "success": False,
             "error": str(e),
             "status_url": ""
         }
-    finally:
-        if close_after:
-            await session.close()
