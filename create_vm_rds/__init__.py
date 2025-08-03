@@ -271,14 +271,14 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # Start the long-running operation in the background
         # Using asyncio.create_task to run it in parallel
-        # asyncio.create_task(
-        #     provision_vm_background(
-        #         username, password, vm_name, resource_group, 
-        #         domain, subdomain, fqdn, location, vm_size,
-        #         storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
-        #         hook_url, status_url
-        #     )
-        # )
+        asyncio.create_task(
+            provision_vm_background(
+                username, password, vm_name, resource_group, 
+                domain, subdomain, fqdn, location, vm_size,
+                storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
+                hook_url, status_url
+            )
+        )
 
         # Return immediate response with status URL
         return func.HttpResponse(

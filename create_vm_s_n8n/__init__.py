@@ -424,9 +424,6 @@ async def provision_vm_background(
             }
         )
         return
-
-    # Prepare VM name
-    vm_name = vm_name + 'rds'
     
     # Generate setup script
     await post_status_update(
