@@ -147,7 +147,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         print_success(f"Updated json status to Blob Storage: {blob_url_with_sas}")
         print_success("-----------------------------------------------------")
 
-        if status == "failed" or status == "complete":
+        if status == "failed" or status == "completed":
             storage_client.storage_accounts.delete(resource_group, storage_account_name)
             print_success(f"Deleted storage account '{storage_account_name}'.")
 
