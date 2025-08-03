@@ -254,7 +254,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 }
             }
         )
-       # Handle hook response
+        # Handle hook response
         if not hook_response.get("success"):
             error_msg = hook_response.get("error", "Unknown error posting status")
             print_error(f"Initial status update failed: {error_msg}")
@@ -271,14 +271,14 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # Start the long-running operation in the background
         # Using asyncio.create_task to run it in parallel
-        asyncio.create_task(
-            provision_vm_background(
-                username, password, vm_name, resource_group, 
-                domain, subdomain, fqdn, location, vm_size,
-                storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
-                hook_url, status_url
-            )
-        )
+        # asyncio.create_task(
+        #     provision_vm_background(
+        #         username, password, vm_name, resource_group, 
+        #         domain, subdomain, fqdn, location, vm_size,
+        #         storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
+        #         hook_url, status_url
+        #     )
+        # )
 
         # Return immediate response with status URL
         return func.HttpResponse(
@@ -1754,43 +1754,38 @@ async def cleanup_temp_storage_on_success(resource_group, storage_client, storag
     print_success("Temp storage cleanup completed.")
 
 
-async def post_status_update(hook_url: str, status_data: dict) -> dict:
-    """Modified with better timeout handling and retries"""
+def post_status_update(hook_url: str, status_data: dict) -> dict:
     if not hook_url:
         return {"success": True, "status_url": ""}
     
-    retry_count = 0
-    max_retries = 3
-    base_timeout = 30  # Start with 30 seconds
-    
-    while retry_count < max_retries:
-        try:
-            response = requests.post(
-                hook_url,
-                json=status_data,
-                timeout=(base_timeout * (retry_count + 1))  # Exponential timeout
-            )
-            
-            if response.status_code == 200:
-                return {
-                    "success": True,
-                    "status_url": response.json().get("status_url", ""),
-                    "response": response.json()
-                }
-            else:
-                error_msg = f"HTTP {response.status_code}"
-                
-        except requests.exceptions.Timeout:
-            error_msg = f"Timeout after {base_timeout * (retry_count + 1)}s"
-        except Exception as e:
-            error_msg = str(e)
-            
-        retry_count += 1
-        if retry_count < max_retries:
-            await asyncio.sleep(5 * retry_count)  # Backoff
-            
-    return {
-        "success": False,
-        "error": f"Failed after {max_retries} attempts: {error_msg}",
-        "status_url": ""
-    }
+    try:
+        response = requests.post(
+            hook_url,
+            json=status_data,
+            timeout=60  # 60 seconds total timeout
+        )
+        
+        if response.status_code == 200:
+            return {
+                "success": True,
+                "status_url": response.json().get("status_url", ""),
+                "response": response.json()
+            }
+        return {
+            "success": False,
+            "error": f"HTTP {response.status_code}",
+            "status_url": ""
+        }
+        
+    except requests.exceptions.Timeout:
+        return {
+            "success": False,
+            "error": "Timed out after 60 seconds",
+            "status_url": ""
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "status_url": ""
+        }

@@ -50,7 +50,7 @@ def print_error(msg):
 
  
 async def main(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Processing create_vm request...')
+    logging.info('Processing hook_vm request...')
  
     try:
         try:
