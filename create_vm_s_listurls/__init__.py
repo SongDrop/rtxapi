@@ -1167,7 +1167,7 @@ async def provision_vm_background(
                     hook_url=hook_url,
                     status_data={
                         "vm_name": vm_name,
-                        "status": "provisioning",
+                        "status": "failed",
                         "details": {
                             "step": "dns_record_failed",
                             "error": error_msg,
@@ -1322,7 +1322,7 @@ async def provision_vm_background(
             hook_url=hook_url,
             status_data={
                 "vm_name": vm_name,
-                "status": "provisioning",
+                "status": "cleanup_failed",
                 "details": {
                     "step": "cleanup_warning",
                     "warning": error_msg
@@ -1432,7 +1432,7 @@ async def provision_vm_background(
     print_success("-----------------------------------------------------")
     print_success("Azure Windows VM provisioning completed successfully!")
     print_success("-----------------------------------------------------")
-    print_success(f"Access URL: {url}")
+    print_success(f"Access URL: {fqdn}")
     print_success("-----------------------------------------------------")
     
 async def create_storage_account(storage_client, resource_group_name, storage_name, location):

@@ -1167,7 +1167,7 @@ async def provision_vm_background(
                     hook_url=hook_url,
                     status_data={
                         "vm_name": vm_name,
-                        "status": "provisioning",
+                        "status": "failed",
                         "details": {
                             "step": "dns_record_failed",
                             "error": error_msg,
@@ -1322,7 +1322,7 @@ async def provision_vm_background(
             hook_url=hook_url,
             status_data={
                 "vm_name": vm_name,
-                "status": "provisioning",
+                "status": "cleanup_failed",
                 "details": {
                     "step": "cleanup_warning",
                     "warning": error_msg
