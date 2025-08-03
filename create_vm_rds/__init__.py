@@ -254,15 +254,20 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 }
             }
         )
-        # Safely get status_url with fallback
-        status_url = hook_response.get("status_url", "")
+       # Handle hook response
+        if not hook_response.get("success"):
+            error_msg = hook_response.get("error", "Unknown error posting status")
+            print_error(f"Initial status update failed: {error_msg}")
+            if not hook_url:
+                print_info("Proceeding without status updates (no hook_url provided)")
+            else:
+                return func.HttpResponse(
+                    json.dumps({"error": f"Status update failed: {error_msg}"}),
+                    status_code=500,
+                    mimetype="application/json"
+                )
 
-        if not status_url:
-            return func.HttpResponse(
-                json.dumps({"error": "Failed to create status webhook_url endpoint"}),
-                status_code=500,
-                mimetype="application/json"
-            )
+        status_url = hook_response.get("status_url", "")
 
         # Start the long-running operation in the background
         # Using asyncio.create_task to run it in parallel
@@ -1763,7 +1768,15 @@ async def cleanup_temp_storage_on_success(resource_group, storage_client, storag
 
 
 async def post_status_update(hook_url: str, status_data: dict) -> dict:
-    """Modified to use requests instead of aiohttp"""
+    """Handle status updates with proper response parsing"""
+    if not hook_url:
+        print_info("No hook_url provided, skipping status update")
+        return {
+            "success": True,
+            "status_url": "",
+            "response": {"status_url": ""}
+        }
+    
     print_info(f"Posting status for VM {status_data.get('vm_name')}")
     
     try:
@@ -1774,16 +1787,29 @@ async def post_status_update(hook_url: str, status_data: dict) -> dict:
         )
         
         if response.status_code != 200:
-            print_error(f"Status update failed: HTTP {response.status_code}")
-            return {"success": False, "error": f"HTTP {response.status_code}"}
+            error_msg = f"Status update failed: HTTP {response.status_code}"
+            print_error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "status_url": ""
+            }
         
-        print_success("Status update successful")
+        response_data = response.json()
+        status_url = response_data.get("status_url", "")
+        
+        print_success(f"Status update successful, status_url: {status_url}")
         return {
             "success": True,
-            "response": response.json()
+            "status_url": status_url,
+            "response": response_data
         }
         
     except Exception as e:
-        print_error(f"Post error: {str(e)}")
-        return {"success": False, "error": str(e)}
- 
+        error_msg = f"Post error: {str(e)}"
+        print_error(error_msg)
+        return {
+            "success": False,
+            "error": error_msg,
+            "status_url": ""
+        }
