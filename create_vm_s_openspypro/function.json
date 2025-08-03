@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "create_vm_rds",
+      "route": "create_vm_s_openspypro",
       "methods": ["get", "post"]
     },
     {
