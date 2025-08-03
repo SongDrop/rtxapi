@@ -61,8 +61,8 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         vm_name = req_body.get('vm_name') or req.params.get('vm_name')
         resource_group = req_body.get('resource_group') or req.params.get('resource_group')
         location = req_body.get('location') or req.params.get('location') #uksouth
-        status = req_body.get('status')
-        details = req_body.get("details", {})
+        status = req_body.get('status') or req.params.get('status')
+        details = req_body.get("details", {}) or req.params.get('details', {})
         storage_account_base = vm_name
  
         ###Parameter checking to handle errors 
