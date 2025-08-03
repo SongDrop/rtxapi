@@ -1,273 +1,204 @@
-def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed", WEBHOOK_URL=""):
-    github_url = "https://github.com/moonlight-stream/moonlight-embedded.git"
-    
-    # Define the Moonlight Embedded directory path
-    MOONLIGHT_EMBEDDED_DIR = f"{VOLUME_DIR}/moonlight-embedded"
-
-    libnice_git_url = "https://gitlab.freedesktop.org/libnice/libnice"
-    libsrtp_tar_url = "https://github.com/cisco/libsrtp/archive/v2.2.0.tar.gz"
-    usrsctp_git_url = "https://github.com/sctplab/usrsctp"
-    libwebsockets_git_url = "https://github.com/warmcat/libwebsockets.git"
-    janus_git_url = "https://github.com/meetecho/janus-gateway.git"
+def generate_setup(
+    DOMAIN_NAME,
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    PORT,
+    DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh"
+):
+    # ========== CONFIGURABLE URLs ==========
+    forgejo_git = "https://codeberg.org/forgejo/forgejo.git"
+    docker_compose_url = "https://github.com/docker/compose/releases/download/v2.38.1/docker-compose-linux-x86_64"
+    buildx_url = "https://github.com/docker/buildx/releases/download/v0.11.2/buildx-v0.11.2.linux-amd64"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
-
-    # Webhook notification function with proper JSON structure
-    webhook_notification = ""
-    if WEBHOOK_URL:
-        webhook_notification = f'''
-notify_webhook() {{
-  local status=$1
-  local step=$2
-  local message=$3
-  
-  if [ -z "${{WEBHOOK_URL}}" ]; then
-    return 0
-  fi
-  
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Notifying webhook: status=$status step=$step"
-  
-  # Prepare the JSON payload matching Azure Function expectations
-  JSON_PAYLOAD=$(cat <<EOF
-{{
-  "vm_name": "$(hostname)",
-  "status": "$status",
-  "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-  "details": {{
-    "step": "$step",
-    "message": "$message"
-  }}
-}}
-EOF
-  )
-
-  curl -X POST \\
-    "${{WEBHOOK_URL}}" \\
-    -H "Content-Type: application/json" \\
-    -d "$JSON_PAYLOAD" \\
-    --connect-timeout 10 \\
-    --max-time 30 \\
-    --retry 2 \\
-    --retry-delay 5 \\
-    --silent \\
-    --output /dev/null \\
-    --write-out "Webhook notification result: %{{http_code}}"
-
-  return $?
-}}
-'''
-    else:
-        webhook_notification = '''
-notify_webhook() {
-  # No webhook URL configured
-  return 0
-}
-'''
-
-    script_template = f'''#!/bin/bash
+    # =======================================
+    MAX_UPLOAD_FILE_SIZE_IN_MB = 1024
+    LFS_MAX_FILE_SIZE_IN_BYTES = MAX_UPLOAD_FILE_SIZE_IN_MB * 1024 * 1024
+    forgejo_dir = "/opt/forgejo"
+ 
+    script_template = f"""#!/bin/bash
 
 set -e
 
-export DEBIAN_FRONTEND=noninteractive
-
-# === User config ===
-DOMAIN_NAME="{DOMAIN_NAME}"
-ADMIN_EMAIL="{ADMIN_EMAIL}"
-FRONTEND_PORT={FRONTEND_PORT}
-BACKEND_PORT={BACKEND_PORT}
-VM_IP="{VM_IP}"
-PIN_URL="{PIN_URL}"
-INSTALL_DIR="{VOLUME_DIR}"
-LOG_DIR="${{INSTALL_DIR}}/logs"
-DOCKER_IMAGE_NAME="moonlight-embed-app"
-DOCKER_CONTAINER_NAME="moonlight-embed-container"
-JANUS_INSTALL_DIR="/opt/janus"
-MOONLIGHT_EMBEDDED_DIR="{MOONLIGHT_EMBEDDED_DIR}"
-WEBHOOK_URL="{WEBHOOK_URL}"
-
-{webhook_notification}
-
-# === Validate domain format ===
-if ! [[ "${{DOMAIN_NAME}}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
+# Validate domain
+if ! [[ "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
     echo "ERROR: Invalid domain format"
-    notify_webhook "failed" "validation" "Invalid domain format"
     exit 1
 fi
 
-notify_webhook "provisioning" "starting" "Beginning system setup"
+# Configuration
+DOMAIN_NAME="{DOMAIN_NAME}"
+ADMIN_EMAIL="{ADMIN_EMAIL}"
+ADMIN_PASSWORD="{ADMIN_PASSWORD}"
+PORT="{PORT}"
+FORGEJO_DIR="{forgejo_dir}"
+DNS_HOOK_SCRIPT="{DNS_HOOK_SCRIPT}"
 
-echo "[1/10] Updating system and installing base dependencies..."
-notify_webhook "provisioning" "system_update" "Updating system packages"
+# Generate random LFS JWT secret
+LFS_JWT_SECRET=$(openssl rand -hex 32)
+
+# ========== SYSTEM SETUP ==========
+echo "[1/9] System updates and dependencies..."
 apt-get update
-apt-get install -y --no-install-recommends \\
-    curl git nginx certbot python3-certbot-nginx \\
-    docker.io ufw build-essential cmake autoconf automake libtool pkg-config \\
-    libmicrohttpd-dev libjansson-dev libssl-dev libsofia-sip-ua-dev \\
-    libglib2.0-dev libopus-dev libogg-dev libcurl4-openssl-dev libconfig-dev \\
-    libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+DEBIAN_FRONTEND=noninteractive apt-get install -y \\
+    curl git docker.io nginx certbot \\
+    python3-pip python3-venv jq make net-tools \\
+    python3-certbot-nginx \\
+    git git-lfs openssl
 
-echo "[2/10] Installing libsrtp..."
-notify_webhook "provisioning" "install_libsrtp" "Installing libsrtp"
-cd /tmp
-wget {libsrtp_tar_url} -O libsrtp.tar.gz
-tar xzf libsrtp.tar.gz
-cd libsrtp-2.2.0
-./configure --prefix=/usr --enable-openssl
-make shared_library && make install
-ldconfig
-cd -
 
-echo "[3/10] Installing usrsctp..."
-notify_webhook "provisioning" "install_usrsctp" "Installing usrsctp"
-cd /tmp
-git clone {usrsctp_git_url}
-cd usrsctp
-./bootstrap
-./configure --prefix=/usr
-make && make install
-ldconfig
-cd -
+# ========== DOCKER SETUP ==========
+echo "[2/9] Configuring Docker..."
+# Install Docker Compose
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -SL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
 
-echo "[4/10] Installing libwebsockets..."
-notify_webhook "provisioning" "install_libwebsockets" "Installing libwebsockets"
-cd /tmp
-git clone {libwebsockets_git_url}
-cd libwebsockets
-git checkout v4.3-stable
-mkdir build
-cd build
-cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS="-fpic" ..
-make && make install
-ldconfig
-cd -
+# Add user to docker group
+usermod -aG docker $USER || true
+systemctl enable --now docker
+until docker info >/dev/null 2>&1; do sleep 2; done
 
-echo "[5/10] Installing libnice..."
-notify_webhook "provisioning" "install_libnice" "Installing libnice"
-cd /tmp
-git clone {libnice_git_url}
-cd libnice
-./autogen.sh
-./configure --prefix=/usr
-make && make install
-ldconfig
-cd -
+# ========== FORGEJO SETUP ==========
+echo "[3/9] Setting up Forgejo..."
+mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
+cd "$FORGEJO_DIR"
 
-echo "[6/10] Setting up installation directory..."
-notify_webhook "provisioning" "setup_directories" "Creating installation directories"
-mkdir -p "${{INSTALL_DIR}}"
-mkdir -p "${{LOG_DIR}}"
-cd "${{INSTALL_DIR}}"
-
-echo "[7/10] Installing Moonlight Embedded..."
-notify_webhook "provisioning" "install_moonlight" "Installing Moonlight Embedded"
-mkdir -p "${{MOONLIGHT_EMBEDDED_DIR}}"
-if [ ! -d "${{MOONLIGHT_EMBEDDED_DIR}}/.git" ]; then
-    git clone {github_url} "${{MOONLIGHT_EMBEDDED_DIR}}"
+# Handle existing directory scenarios
+if [ -d ".git" ]; then
+    echo "Existing git repository found, pulling latest changes..."
+    git pull
+elif [ -z "$(ls -A .)" ]; then
+    echo "Cloning fresh Forgejo repository..."
+    git clone "{forgejo_git}" .
+else
+    echo "Directory not empty and not a git repo. Moving contents to backup..."
+    mkdir -p ../forgejo_backup
+    mv * ../forgejo_backup/ || true
+    git clone "{forgejo_git}" .
 fi
 
-cd "${{MOONLIGHT_EMBEDDED_DIR}}"
-git pull
-mkdir -p build
-cd build
-cmake .. && make -j$(nproc) && make install
+# Initialize Git LFS
+echo "Initializing Git LFS..."
+git lfs install
+git lfs pull || true
 
-echo "[8/10] Installing Janus Gateway..."
-notify_webhook "provisioning" "install_janus" "Installing Janus Gateway"
-if [ ! -d "${{JANUS_INSTALL_DIR}}" ]; then
-    git clone {janus_git_url} /tmp/janus-gateway
-    cd /tmp/janus-gateway
-    sh autogen.sh
-    ./configure --prefix="${{JANUS_INSTALL_DIR}}" --enable-post-processing \\
-        --enable-data-channels --enable-websockets --enable-rest \\
-        --enable-plugin-streaming
-    make
-    make install
-    make configs
-    
-    # Configure Janus for Moonlight streaming
-    cat > ${{JANUS_INSTALL_DIR}}/etc/janus/janus.plugin.streaming.jcfg <<EOF
-streaming: {{
-    enabled: true,
-    type: "rtp",
-    audio: true,
-    video: true,
-    videoport: 5004,
-    videopt: 96,
-    videortpmap: "H264/90000",
-    audiopt: 111,
-    audiortpmap: "opus/48000/2",
-    secret: "moonlightstream",
-    permanent: true
-}}
+# Create custom app.ini with LFS configuration
+echo "Creating custom app.ini configuration..."
+mkdir -p "$FORGEJO_DIR/config"
+cat > "$FORGEJO_DIR/config/app.ini" <<EOF
+[server]
+LFS_START_SERVER = true
+LFS_CONTENT_PATH = /data/gitea/lfs
+LFS_JWT_SECRET = $LFS_JWT_SECRET
+LFS_MAX_FILE_SIZE = {LFS_MAX_FILE_SIZE_IN_BYTES}
+
+[lfs]
+PATH = /data/gitea/lfs
+
+[repository]
+UPLOAD_ENABLED = true
+UPLOAD_FILE_MAX_SIZE = {LFS_MAX_FILE_SIZE_IN_BYTES}
 EOF
+
+# ========== BUILD CONTAINER ==========
+echo "[4/9] Building Forgejo container..."
+# Install buildx plugin if not exists
+if ! docker buildx version &>/dev/null; then
+    mkdir -p ~/.docker/cli-plugins
+    curl -SL "{buildx_url}" -o ~/.docker/cli-plugins/docker-buildx
+    chmod +x ~/.docker/cli-plugins/docker-buildx
 fi
 
-echo "[9/10] Setting up systemd services..."
-notify_webhook "provisioning" "setup_services" "Configuring system services"
+docker buildx create --use --name forgejo-builder || true
+docker buildx inspect --bootstrap
+docker buildx build --platform linux/amd64 -t forgejo --load .
 
-# Janus service
-cat > /etc/systemd/system/janus.service <<EOF
-[Unit]
-Description=Janus WebRTC Server
-After=network.target
+# ========== DOCKER COMPOSE ==========
+echo "[5/9] Configuring Docker Compose..."
+cat > docker-compose.yml <<EOF
+version: "3.8"
 
-[Service]
-Type=simple
-User=root
-ExecStart=${{JANUS_INSTALL_DIR}}/bin/janus
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
+services:
+  server:
+    image: forgejo
+    container_name: forgejo
+    restart: unless-stopped
+    environment:
+      - FORGEJO__server__DOMAIN={DOMAIN_NAME}
+      - FORGEJO__server__ROOT_URL=https://{DOMAIN_NAME}
+      - FORGEJO__server__HTTP_PORT=3000
+      - FORGEJO__server__LFS_START_SERVER=true
+      - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
+      - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
+      - FORGEJO__server__LFS_MAX_FILE_SIZE={LFS_MAX_FILE_SIZE_IN_BYTES}
+      - FORGEJO__lfs__PATH=/data/gitea/lfs
+    volumes:
+      - ./data:/data
+      - ./config:/etc/gitea
+      - ./ssl:/ssl
+    ports:
+      - "{PORT}:3000"
+      - "222:22"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 EOF
 
-# Moonlight streaming service
-cat > /etc/systemd/system/moonlight-stream.service <<EOF
-[Unit]
-Description=Moonlight to Janus Streaming Service
-After=network.target janus.service
+docker compose up -d --wait
 
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/moonlight stream ${{VM_IP}} -app Steam -codec h264 -bitrate 20000 -fps 60 -unsupported -remote -rtp 127.0.0.1 5004 5005
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable janus.service moonlight-stream.service
-systemctl start janus.service moonlight-stream.service
-
-echo "[10/10] Configuring firewall and SSL..."
-notify_webhook "provisioning" "security_setup" "Configuring firewall and SSL"
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 5004:5005/udp
-ufw allow 7088/tcp
-ufw allow 8088/tcp
-ufw allow 10000-10200/udp
+# ========== NETWORK SECURITY ==========
+echo "[6/9] Configuring firewall..."
+ufw allow 22,80,443,{PORT}/tcp
 ufw --force enable
 
+# ========== SSL CERTIFICATE ==========
+echo "[7/9] Setting up SSL certificate..."
+
+# Download Let's Encrypt configuration files
 mkdir -p /etc/letsencrypt
-curl -s {letsencrypt_options_url} > /etc/letsencrypt/options-ssl-nginx.conf
-curl -s {ssl_dhparams_url} > /etc/letsencrypt/ssl-dhparams.pem
+curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
+curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
 
-notify_webhook "provisioning" "ssl_setup" "Requesting SSL certificates"
-certbot --nginx -d "${{DOMAIN_NAME}}" --staging --agree-tos --email "${{ADMIN_EMAIL}}" --redirect --no-eff-email
+if [ -f "$DNS_HOOK_SCRIPT" ]; then
+    echo "Using DNS hook script at $DNS_HOOK_SCRIPT"
+    chmod +x "$DNS_HOOK_SCRIPT"
+    
+    # Obtain certificate
+    certbot certonly --manual \\
+        --preferred-challenges=dns \\
+        --manual-auth-hook "$DNS_HOOK_SCRIPT add" \\
+        --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" \\
+        --agree-tos --email "{ADMIN_EMAIL}" \\
+        -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" \\
+        --non-interactive \\
+        --manual-public-ip-logging-ok
+else
+    echo "Warning: No DNS hook script found at $DNS_HOOK_SCRIPT"
+    echo "Falling back to standard certificate"
+    certbot --nginx -d "{DOMAIN_NAME}" --non-interactive --agree-tos --email "{ADMIN_EMAIL}" --redirect
+fi
 
+# ========== NGINX CONFIG ==========
+echo "[8/9] Configuring Nginx..."
+
+# Remove default Nginx config
 rm -f /etc/nginx/sites-enabled/default
 
-cat > /etc/nginx/sites-available/moonlightembed <<EOF
+# Create vscode forgejo config 
+cat > /etc/nginx/sites-available/forgejo <<EOF
+map \$http_upgrade \$connection_upgrade {{
+    default upgrade;
+    '' close;
+}}
+
 server {{
     listen 80;
     server_name {DOMAIN_NAME};
-    return 301 https://$host$request_uri;
+    return 301 https://\$host\$request_uri;
 }}
 
 server {{
@@ -279,60 +210,94 @@ server {{
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
+    client_max_body_size {MAX_UPLOAD_FILE_SIZE_IN_MB}M;
+        
     location / {{
-        proxy_pass http://localhost:8088;
+        proxy_pass http://localhost:{PORT};
         proxy_set_header Host \$host;
-    }}
-
-    location /janus-ws {{
-        proxy_pass http://localhost:7088;
-        proxy_http_version 1.1;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
     }}
-
-    client_max_body_size 1024M;
 }}
 EOF
 
-ln -sf /etc/nginx/sites-available/moonlightembed /etc/nginx/sites-enabled/
+echo "Setting global Nginx upload limit..."
+if ! grep -q "client_max_body_size" /etc/nginx/nginx.conf; then
+  sed -i '/http {{/a \    client_max_body_size 1024M;' /etc/nginx/nginx.conf
+fi
+
+ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
 
-notify_webhook "completed" "finished" "Setup completed successfully"
+# ========== VERIFICATION ==========
+echo "[9/9] Verifying setup..."
 
-echo "============================================================"
-echo "✅ Moonlight to Browser Streaming Setup Complete!"
-echo "============================================================"
+# Verify container is running
+if ! docker ps | grep -q forgejo; then
+    echo "ERROR: Forgejo container is not running!"
+    docker logs forgejo
+    exit 1
+fi
+
+# Verify Nginx config
+if ! nginx -t; then
+    echo "ERROR: Nginx configuration test failed"
+    exit 1
+fi
+
+# Verify SSL certificate
+if [ ! -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
+    echo "ERROR: SSL certificate not found!"
+    exit 1
+fi
+
+# Verify port accessibility
+if ! curl -s -o /dev/null -w "%{{http_code}}" http://localhost:{PORT} | grep -q 200; then
+    echo "ERROR: Cannot access Forgejo on port {PORT}"
+    exit 1
+fi
+
+# ========== FINAL CONFIG ==========
+echo "Creating admin user..."
+sleep 30  # Increased wait time for Forgejo initialization
+docker exec forgejo forgejo admin user create \\
+    --username admin \\
+    --password "{ADMIN_PASSWORD}" \\
+    --email "{ADMIN_EMAIL}" \\
+    --admin || echo "Admin user may already exist"
+
+# Complete the installation by accessing the web interface
+echo "Waiting for Forgejo to be fully ready..."
+until curl -s http://localhost:{PORT} | grep -q "Initial configuration"; do
+    sleep 5
+done
+
+echo "============================================"
+echo "✅ Forgejo Setup Complete!"
 echo ""
-echo "🌐 Connection Information:"
-echo "------------------------------------------------------------"
-echo "🔗 Moonlight PIN Service: https://pin.{DOMAIN_NAME}"
-echo "🔑 PIN: {ADMIN_PASSWORD}"
-echo "------------------------------------------------------------"
+echo "🔗 Access: https://{DOMAIN_NAME}"
+echo "👤 Admin: {ADMIN_EMAIL}"
+echo "🔒 Password: {ADMIN_PASSWORD}"
 echo ""
-echo "🎥 Streaming Access:"
-echo "------------------------------------------------------------"
-echo "1. Open https://{DOMAIN_NAME}/janus/streaming/test.html"
-echo "2. Use these settings:"
-echo "   - Video: H.264"
-echo "   - Audio: Opus"
-echo "   - Port: 5004"
-echo "   - Secret: moonlightstream"
-echo "------------------------------------------------------------"
+echo "⚙️ Verification:"
+echo "   - Container status: docker ps"
+echo "   - Nginx status: systemctl status nginx"
+echo "   - SSL certificate: certbot certificates"
+echo "   - Port accessibility: curl -v http://localhost:{PORT}"
 echo ""
-echo "⚙️ Service Status Commands:"
-echo "------------------------------------------------------------"
-echo "Janus Gateway: systemctl status janus.service"
-echo "Moonlight Stream: systemctl status moonlight-stream.service"
-echo "Nginx: systemctl status nginx"
-echo "------------------------------------------------------------"
-echo ""
-echo "🔧 IMPORTANT Setup Notes:"
-echo "------------------------------------------------------------"
-echo "1. On your Windows 10 machine:"
-echo "   - Install Sunshine from https://github.com/LizardByte/Sunshine"
-echo "   - Use PIN: {ADMIN_PASSWORD} when pairing"
-echo "2. The stream will be available at the Janus test page"
-echo "============================================================"
-'''
+echo "⚠️ Important:"
+echo "1. If you see Nginx default page:"
+echo "   sudo rm -f /etc/nginx/sites-enabled/default"
+echo "   sudo systemctl restart nginx"
+echo "2. If SSL fails:"
+echo "   sudo certbot --nginx -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL} --redirect"
+echo "3. First-time setup may require visiting https://{DOMAIN_NAME} to complete installation"
+echo "============================================"
+"""
     return script_template

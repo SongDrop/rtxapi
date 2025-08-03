@@ -31,7 +31,7 @@ from azure.mgmt.dns import DnsManagementClient
 from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
-
+import aiohttp
 # Use relative imports to load local modules from the same function folder.
 # This ensures Python finds these files (generate_setup.py, html_email.py, html_email_send.py)
 # in the current package instead of searching in global site-packages,
@@ -1754,35 +1754,32 @@ async def cleanup_temp_storage_on_success(resource_group, storage_client, storag
     print_success("Temp storage cleanup completed.")
 
 
-def post_status_update(hook_url: str, status_data: dict) -> dict:
+async def post_status_update(hook_url: str, status_data: dict) -> dict:
+    """Proper async version"""
     if not hook_url:
         return {"success": True, "status_url": ""}
     
     try:
-        response = requests.post(
-            hook_url,
-            json=status_data,
-            timeout=60  # 60 seconds total timeout
-        )
-        
-        if response.status_code == 200:
-            return {
-                "success": True,
-                "status_url": response.json().get("status_url", ""),
-                "response": response.json()
-            }
-        return {
-            "success": False,
-            "error": f"HTTP {response.status_code}",
-            "status_url": ""
-        }
-        
-    except requests.exceptions.Timeout:
-        return {
-            "success": False,
-            "error": "Timed out after 60 seconds",
-            "status_url": ""
-        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                hook_url,
+                json=status_data,
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        "success": True,
+                        "status_url": data.get("status_url", ""),
+                        "response": data
+                    }
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status}",
+                    "status_url": ""
+                }
+                
     except Exception as e:
         return {
             "success": False,

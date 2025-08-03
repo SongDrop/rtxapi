@@ -254,7 +254,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 }
             }
         )
-       # Handle hook response
+        # Handle hook response
         if not hook_response.get("success"):
             error_msg = hook_response.get("error", "Unknown error posting status")
             print_error(f"Initial status update failed: {error_msg}")
@@ -271,14 +271,14 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # Start the long-running operation in the background
         # Using asyncio.create_task to run it in parallel
-        asyncio.create_task(
-            provision_vm_background(
-                username, password, vm_name, resource_group, 
-                domain, subdomain, fqdn, location, vm_size,
-                storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
-                hook_url, status_url
-            )
-        )
+        # asyncio.create_task(
+        #     provision_vm_background(
+        #         username, password, vm_name, resource_group, 
+        #         domain, subdomain, fqdn, location, vm_size,
+        #         storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
+        #         hook_url, status_url
+        #     )
+        # )
 
         # Return immediate response with status URL
         return func.HttpResponse(
@@ -1754,49 +1754,38 @@ async def cleanup_temp_storage_on_success(resource_group, storage_client, storag
     print_success("Temp storage cleanup completed.")
 
 
-async def post_status_update(hook_url: str, status_data: dict) -> dict:
-    """Handle status updates with proper response parsing"""
+def post_status_update(hook_url: str, status_data: dict) -> dict:
     if not hook_url:
-        print_info("No hook_url provided, skipping status update")
-        return {
-            "success": True,
-            "status_url": "",
-            "response": {"status_url": ""}
-        }
-    
-    print_info(f"Posting status for VM {status_data.get('vm_name')}")
+        return {"success": True, "status_url": ""}
     
     try:
         response = requests.post(
             hook_url,
             json=status_data,
-            timeout=100
+            timeout=60  # 60 seconds total timeout
         )
         
-        if response.status_code != 200:
-            error_msg = f"Status update failed: HTTP {response.status_code}"
-            print_error(error_msg)
+        if response.status_code == 200:
             return {
-                "success": False,
-                "error": error_msg,
-                "status_url": ""
+                "success": True,
+                "status_url": response.json().get("status_url", ""),
+                "response": response.json()
             }
-        
-        response_data = response.json()
-        status_url = response_data.get("status_url", "")
-        
-        print_success(f"Status update successful, status_url: {status_url}")
-        return {
-            "success": True,
-            "status_url": status_url,
-            "response": response_data
-        }
-        
-    except Exception as e:
-        error_msg = f"Post error: {str(e)}"
-        print_error(error_msg)
         return {
             "success": False,
-            "error": error_msg,
+            "error": f"HTTP {response.status_code}",
+            "status_url": ""
+        }
+        
+    except requests.exceptions.Timeout:
+        return {
+            "success": False,
+            "error": "Timed out after 60 seconds",
+            "status_url": ""
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
             "status_url": ""
         }
