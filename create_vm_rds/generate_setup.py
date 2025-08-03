@@ -1,4 +1,4 @@
-def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed"):
+def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed", WEBHOOK_URL=""):
     github_url = "https://github.com/moonlight-stream/moonlight-embedded.git"
     
     # Define the Moonlight Embedded directory path
@@ -11,6 +11,58 @@ def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACK
     janus_git_url = "https://github.com/meetecho/janus-gateway.git"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
+
+    # Webhook notification function with proper JSON structure
+    webhook_notification = ""
+    if WEBHOOK_URL:
+        webhook_notification = f'''
+notify_webhook() {{
+  local status=$1
+  local step=$2
+  local message=$3
+  
+  if [ -z "${{WEBHOOK_URL}}" ]; then
+    return 0
+  fi
+  
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Notifying webhook: status=$status step=$step"
+  
+  # Prepare the JSON payload matching Azure Function expectations
+  JSON_PAYLOAD=$(cat <<EOF
+{{
+  "vm_name": "$(hostname)",
+  "status": "$status",
+  "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+  "details": {{
+    "step": "$step",
+    "message": "$message"
+  }}
+}}
+EOF
+  )
+
+  curl -X POST \\
+    "${{WEBHOOK_URL}}" \\
+    -H "Content-Type: application/json" \\
+    -d "$JSON_PAYLOAD" \\
+    --connect-timeout 10 \\
+    --max-time 30 \\
+    --retry 2 \\
+    --retry-delay 5 \\
+    --silent \\
+    --output /dev/null \\
+    --write-out "Webhook notification result: %{{http_code}}"
+
+  return $?
+}}
+'''
+    else:
+        webhook_notification = '''
+notify_webhook() {
+  # No webhook URL configured
+  return 0
+}
+'''
 
     script_template = f'''#!/bin/bash
 
@@ -31,14 +83,21 @@ DOCKER_IMAGE_NAME="moonlight-embed-app"
 DOCKER_CONTAINER_NAME="moonlight-embed-container"
 JANUS_INSTALL_DIR="/opt/janus"
 MOONLIGHT_EMBEDDED_DIR="{MOONLIGHT_EMBEDDED_DIR}"
+WEBHOOK_URL="{WEBHOOK_URL}"
+
+{webhook_notification}
 
 # === Validate domain format ===
 if ! [[ "${{DOMAIN_NAME}}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
     echo "ERROR: Invalid domain format"
+    notify_webhook "failed" "validation" "Invalid domain format"
     exit 1
 fi
 
+notify_webhook "provisioning" "starting" "Beginning system setup"
+
 echo "[1/10] Updating system and installing base dependencies..."
+notify_webhook "provisioning" "system_update" "Updating system packages"
 apt-get update
 apt-get install -y --no-install-recommends \\
     curl git nginx certbot python3-certbot-nginx \\
@@ -48,7 +107,7 @@ apt-get install -y --no-install-recommends \\
     libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
 
 echo "[2/10] Installing libsrtp..."
-# Install libsrtp from source
+notify_webhook "provisioning" "install_libsrtp" "Installing libsrtp"
 cd /tmp
 wget {libsrtp_tar_url} -O libsrtp.tar.gz
 tar xzf libsrtp.tar.gz
@@ -59,7 +118,7 @@ ldconfig
 cd -
 
 echo "[3/10] Installing usrsctp..."
-# Install usrsctp from source
+notify_webhook "provisioning" "install_usrsctp" "Installing usrsctp"
 cd /tmp
 git clone {usrsctp_git_url}
 cd usrsctp
@@ -70,7 +129,7 @@ ldconfig
 cd -
 
 echo "[4/10] Installing libwebsockets..."
-# Install libwebsockets from source
+notify_webhook "provisioning" "install_libwebsockets" "Installing libwebsockets"
 cd /tmp
 git clone {libwebsockets_git_url}
 cd libwebsockets
@@ -83,7 +142,7 @@ ldconfig
 cd -
 
 echo "[5/10] Installing libnice..."
-# Install libnice from source
+notify_webhook "provisioning" "install_libnice" "Installing libnice"
 cd /tmp
 git clone {libnice_git_url}
 cd libnice
@@ -94,11 +153,13 @@ ldconfig
 cd -
 
 echo "[6/10] Setting up installation directory..."
+notify_webhook "provisioning" "setup_directories" "Creating installation directories"
 mkdir -p "${{INSTALL_DIR}}"
 mkdir -p "${{LOG_DIR}}"
 cd "${{INSTALL_DIR}}"
 
 echo "[7/10] Installing Moonlight Embedded..."
+notify_webhook "provisioning" "install_moonlight" "Installing Moonlight Embedded"
 mkdir -p "${{MOONLIGHT_EMBEDDED_DIR}}"
 if [ ! -d "${{MOONLIGHT_EMBEDDED_DIR}}/.git" ]; then
     git clone {github_url} "${{MOONLIGHT_EMBEDDED_DIR}}"
@@ -111,6 +172,7 @@ cd build
 cmake .. && make -j$(nproc) && make install
 
 echo "[8/10] Installing Janus Gateway..."
+notify_webhook "provisioning" "install_janus" "Installing Janus Gateway"
 if [ ! -d "${{JANUS_INSTALL_DIR}}" ]; then
     git clone {janus_git_url} /tmp/janus-gateway
     cd /tmp/janus-gateway
@@ -141,6 +203,7 @@ EOF
 fi
 
 echo "[9/10] Setting up systemd services..."
+notify_webhook "provisioning" "setup_services" "Configuring system services"
 
 # Janus service
 cat > /etc/systemd/system/janus.service <<EOF
@@ -181,6 +244,7 @@ systemctl enable janus.service moonlight-stream.service
 systemctl start janus.service moonlight-stream.service
 
 echo "[10/10] Configuring firewall and SSL..."
+notify_webhook "provisioning" "security_setup" "Configuring firewall and SSL"
 ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
@@ -194,6 +258,7 @@ mkdir -p /etc/letsencrypt
 curl -s {letsencrypt_options_url} > /etc/letsencrypt/options-ssl-nginx.conf
 curl -s {ssl_dhparams_url} > /etc/letsencrypt/ssl-dhparams.pem
 
+notify_webhook "provisioning" "ssl_setup" "Requesting SSL certificates"
 certbot --nginx -d "${{DOMAIN_NAME}}" --staging --agree-tos --email "${{ADMIN_EMAIL}}" --redirect --no-eff-email
 
 rm -f /etc/nginx/sites-enabled/default
@@ -233,40 +298,41 @@ EOF
 ln -sf /etc/nginx/sites-available/moonlightembed /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
 
-print_success("============================================================")
-print_success("✅ Moonlight to Browser Streaming Setup Complete!")
-print_success("============================================================")
-print_success("")
-print_success("🌐 Connection Information:")
-print_success("------------------------------------------------------------")
-print_success(f"🔗 Moonlight PIN Service: https://pin.{DOMAIN_NAME}")
-print_success(f"📁 File Drop Service: https://drop.{DOMAIN_NAME}")
-print_success(f"🔑 PIN: {ADMIN_PASSWORD}")
-print_success("------------------------------------------------------------")
-print_success("")
-print_success("🎥 Streaming Access:")
-print_success("------------------------------------------------------------")
-print_success("1. Open https://{DOMAIN_NAME}/janus/streaming/test.html")
-print_success("2. Use these settings:")
-print_success("   - Video: H.264")
-print_success("   - Audio: Opus")
-print_success("   - Port: 5004")
-print_success("   - Secret: moonlightstream")
-print_success("------------------------------------------------------------")
-print_success("")
-print_success("⚙️ Service Status Commands:")
-print_success("------------------------------------------------------------")
-print_success("Janus Gateway: systemctl status janus.service")
-print_success("Moonlight Stream: systemctl status moonlight-stream.service")
-print_success("Nginx: systemctl status nginx")
-print_success("------------------------------------------------------------")
-print_success("")
-print_success("🔧 IMPORTANT Setup Notes:")
-print_success("------------------------------------------------------------")
-print_success("1. On your Windows 10 machine:")
-print_success("   - Install Sunshine from https://github.com/LizardByte/Sunshine")
-print_success(f"   - Use PIN: {ADMIN_PASSWORD} when pairing")
-print_success("2. The stream will be available at the Janus test page")
-print_success("============================================================")
+notify_webhook "completed" "finished" "Setup completed successfully"
+
+echo "============================================================"
+echo "✅ Moonlight to Browser Streaming Setup Complete!"
+echo "============================================================"
+echo ""
+echo "🌐 Connection Information:"
+echo "------------------------------------------------------------"
+echo "🔗 Moonlight PIN Service: https://pin.{DOMAIN_NAME}"
+echo "🔑 PIN: {ADMIN_PASSWORD}"
+echo "------------------------------------------------------------"
+echo ""
+echo "🎥 Streaming Access:"
+echo "------------------------------------------------------------"
+echo "1. Open https://{DOMAIN_NAME}/janus/streaming/test.html"
+echo "2. Use these settings:"
+echo "   - Video: H.264"
+echo "   - Audio: Opus"
+echo "   - Port: 5004"
+echo "   - Secret: moonlightstream"
+echo "------------------------------------------------------------"
+echo ""
+echo "⚙️ Service Status Commands:"
+echo "------------------------------------------------------------"
+echo "Janus Gateway: systemctl status janus.service"
+echo "Moonlight Stream: systemctl status moonlight-stream.service"
+echo "Nginx: systemctl status nginx"
+echo "------------------------------------------------------------"
+echo ""
+echo "🔧 IMPORTANT Setup Notes:"
+echo "------------------------------------------------------------"
+echo "1. On your Windows 10 machine:"
+echo "   - Install Sunshine from https://github.com/LizardByte/Sunshine"
+echo "   - Use PIN: {ADMIN_PASSWORD} when pairing"
+echo "2. The stream will be available at the Janus test page"
+echo "============================================================"
 '''
     return script_template
