@@ -3,7 +3,8 @@ def generate_setup(
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
     PORT,
-    DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh"
+    DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh",
+    WEBHOOK_URL=""
 ):
     # ========== CONFIGURABLE URLs ==========
     forgejo_git = "https://codeberg.org/forgejo/forgejo.git"
@@ -15,16 +16,73 @@ def generate_setup(
     MAX_UPLOAD_FILE_SIZE_IN_MB = 1024
     LFS_MAX_FILE_SIZE_IN_BYTES = MAX_UPLOAD_FILE_SIZE_IN_MB * 1024 * 1024
     forgejo_dir = "/opt/forgejo"
- 
+    
+    # Webhook notification function with proper JSON structure
+    webhook_notification = ""
+    if WEBHOOK_URL:
+        webhook_notification = f'''
+notify_webhook() {{
+  local status=$1
+  local step=$2
+  local message=$3
+  
+  if [ -z "${{WEBHOOK_URL}}" ]; then
+    return 0
+  fi
+  
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Notifying webhook: status=$status step=$step"
+  
+  # Prepare the JSON payload matching Azure Function expectations
+  JSON_PAYLOAD=$(cat <<EOF
+{{
+  "vm_name": "$(hostname)",
+  "status": "$status",
+  "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+  "details": {{
+    "step": "$step",
+    "message": "$message"
+  }}
+}}
+EOF
+  )
+
+  curl -X POST \\
+    "${{WEBHOOK_URL}}" \\
+    -H "Content-Type: application/json" \\
+    -d "$JSON_PAYLOAD" \\
+    --connect-timeout 10 \\
+    --max-time 30 \\
+    --retry 2 \\
+    --retry-delay 5 \\
+    --silent \\
+    --output /dev/null \\
+    --write-out "Webhook notification result: %{{http_code}}"
+
+  return $?
+}}
+'''
+    else:
+        webhook_notification = '''
+notify_webhook() {
+  # No webhook URL configured
+  return 0
+}
+'''
+
     script_template = f"""#!/bin/bash
 
 set -e
 
+{webhook_notification}
+
 # Validate domain
 if ! [[ "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
     echo "ERROR: Invalid domain format"
+    notify_webhook "failed" "validation" "Invalid domain format"
     exit 1
 fi
+
+notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
 
 # Configuration
 DOMAIN_NAME="{DOMAIN_NAME}"
@@ -33,12 +91,14 @@ ADMIN_PASSWORD="{ADMIN_PASSWORD}"
 PORT="{PORT}"
 FORGEJO_DIR="{forgejo_dir}"
 DNS_HOOK_SCRIPT="{DNS_HOOK_SCRIPT}"
+WEBHOOK_URL="{WEBHOOK_URL}"
 
 # Generate random LFS JWT secret
 LFS_JWT_SECRET=$(openssl rand -hex 32)
 
 # ========== SYSTEM SETUP ==========
 echo "[1/9] System updates and dependencies..."
+notify_webhook "provisioning" "system_update" "Updating system packages"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \\
     curl git docker.io nginx certbot \\
@@ -49,6 +109,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \\
 
 # ========== DOCKER SETUP ==========
 echo "[2/9] Configuring Docker..."
+notify_webhook "provisioning" "docker_setup" "Installing Docker components"
 # Install Docker Compose
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -SL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
@@ -62,6 +123,7 @@ until docker info >/dev/null 2>&1; do sleep 2; done
 
 # ========== FORGEJO SETUP ==========
 echo "[3/9] Setting up Forgejo..."
+notify_webhook "provisioning" "forgejo_setup" "Configuring Forgejo directories"
 mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
 cd "$FORGEJO_DIR"
 
@@ -104,6 +166,7 @@ EOF
 
 # ========== BUILD CONTAINER ==========
 echo "[4/9] Building Forgejo container..."
+notify_webhook "provisioning" "container_build" "Building Forgejo container"
 # Install buildx plugin if not exists
 if ! docker buildx version &>/dev/null; then
     mkdir -p ~/.docker/cli-plugins
@@ -117,6 +180,7 @@ docker buildx build --platform linux/amd64 -t forgejo --load .
 
 # ========== DOCKER COMPOSE ==========
 echo "[5/9] Configuring Docker Compose..."
+notify_webhook "provisioning" "docker_compose" "Setting up Docker Compose"
 cat > docker-compose.yml <<EOF
 version: "3.8"
 
@@ -152,11 +216,13 @@ docker compose up -d --wait
 
 # ========== NETWORK SECURITY ==========
 echo "[6/9] Configuring firewall..."
+notify_webhook "provisioning" "firewall" "Configuring firewall rules"
 ufw allow 22,80,443,{PORT}/tcp
 ufw --force enable
 
 # ========== SSL CERTIFICATE ==========
 echo "[7/9] Setting up SSL certificate..."
+notify_webhook "provisioning", "ssl_setup", "Configuring SSL certificates"
 
 # Download Let's Encrypt configuration files
 mkdir -p /etc/letsencrypt
@@ -165,6 +231,7 @@ curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
 
 if [ -f "$DNS_HOOK_SCRIPT" ]; then
     echo "Using DNS hook script at $DNS_HOOK_SCRIPT"
+    notify_webhook "provisioning", "ssl_dns", "Using DNS challenge for SSL"
     chmod +x "$DNS_HOOK_SCRIPT"
     
     # Obtain certificate
@@ -178,12 +245,13 @@ if [ -f "$DNS_HOOK_SCRIPT" ]; then
         --manual-public-ip-logging-ok
 else
     echo "Warning: No DNS hook script found at $DNS_HOOK_SCRIPT"
-    echo "Falling back to standard certificate"
+    notify_webhook "provisioning", "ssl_fallback", "Falling back to standard SSL"
     certbot --nginx -d "{DOMAIN_NAME}" --non-interactive --agree-tos --email "{ADMIN_EMAIL}" --redirect
 fi
 
 # ========== NGINX CONFIG ==========
 echo "[8/9] Configuring Nginx..."
+notify_webhook "provisioning", "nginx_setup", "Configuring Nginx reverse proxy"
 
 # Remove default Nginx config
 rm -f /etc/nginx/sites-enabled/default
@@ -232,46 +300,45 @@ nginx -t && systemctl restart nginx
 
 # ========== VERIFICATION ==========
 echo "[9/9] Verifying setup..."
+notify_webhook "provisioning", "verification", "Running final verification checks"
 
 # Verify container is running
 if ! docker ps | grep -q forgejo; then
     echo "ERROR: Forgejo container is not running!"
     docker logs forgejo
+    notify_webhook "failed", "verification", "Forgejo container not running"
     exit 1
 fi
 
 # Verify Nginx config
 if ! nginx -t; then
     echo "ERROR: Nginx configuration test failed"
+    notify_webhook "failed", "verification", "Nginx configuration test failed"
     exit 1
 fi
 
 # Verify SSL certificate
 if [ ! -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
     echo "ERROR: SSL certificate not found!"
+    notify_webhook "failed", "verification", "SSL certificate not found"
     exit 1
 fi
 
 # Verify port accessibility
 if ! curl -s -o /dev/null -w "%{{http_code}}" http://localhost:{PORT} | grep -q 200; then
     echo "ERROR: Cannot access Forgejo on port {PORT}"
+    notify_webhook "failed", "verification", "Cannot access Forgejo on port {PORT}"
     exit 1
 fi
 
 # ========== FINAL CONFIG ==========
-echo "Creating admin user..."
-sleep 30  # Increased wait time for Forgejo initialization
-docker exec forgejo forgejo admin user create \\
-    --username admin \\
-    --password "{ADMIN_PASSWORD}" \\
-    --email "{ADMIN_EMAIL}" \\
-    --admin || echo "Admin user may already exist"
-
 # Complete the installation by accessing the web interface
 echo "Waiting for Forgejo to be fully ready..."
 until curl -s http://localhost:{PORT} | grep -q "Initial configuration"; do
     sleep 5
 done
+
+notify_webhook "completed", "finished", "Forgejo setup completed successfully"
 
 echo "============================================"
 echo "✅ Forgejo Setup Complete!"
