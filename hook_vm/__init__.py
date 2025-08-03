@@ -77,7 +77,18 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
                 mimetype="application/json"
             )
-        
+        if not location:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'location' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not status:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'status' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
         #Checks successful -> continue 
         subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
  
