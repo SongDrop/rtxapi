@@ -106,7 +106,6 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \\
     python3-certbot-nginx \\
     git git-lfs openssl
 
-
 # ========== DOCKER SETUP ==========
 echo "[2/9] Configuring Docker..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker components"
@@ -117,7 +116,7 @@ chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
 
 # Add user to docker group
-usermod -aG docker $USER || true
+usermod -aG docker ${{SUDO_USER:-$USER}} || true
 systemctl enable --now docker
 until docker info >/dev/null 2>&1; do sleep 2; done
 
@@ -131,13 +130,13 @@ cd "$FORGEJO_DIR"
 if [ -d ".git" ]; then
     echo "Existing git repository found, pulling latest changes..."
     git pull
-elif [ -z "$(ls -A .)" ]; then
-    echo "Cloning fresh Forgejo repository..."
+elif [ -n "$(ls -A .)" ]; then
+    echo "Directory not empty. Moving contents to backup..."
+    mkdir -p ../forgejo_backup
+    mv ./* ../forgejo_backup/ || true
     git clone "{forgejo_git}" .
 else
-    echo "Directory not empty and not a git repo. Moving contents to backup..."
-    mkdir -p ../forgejo_backup
-    mv * ../forgejo_backup/ || true
+    echo "Cloning fresh Forgejo repository..."
     git clone "{forgejo_git}" .
 fi
 
@@ -212,7 +211,7 @@ services:
       retries: 3
 EOF
 
-docker compose up -d --wait
+docker-compose up -d --wait
 
 # ========== NETWORK SECURITY ==========
 echo "[6/9] Configuring firewall..."
@@ -222,7 +221,7 @@ ufw --force enable
 
 # ========== SSL CERTIFICATE ==========
 echo "[7/9] Setting up SSL certificate..."
-notify_webhook "provisioning", "ssl_setup", "Configuring SSL certificates"
+notify_webhook "provisioning" "ssl_setup" "Configuring SSL certificates"
 
 # Download Let's Encrypt configuration files
 mkdir -p /etc/letsencrypt
@@ -231,7 +230,7 @@ curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
 
 if [ -f "$DNS_HOOK_SCRIPT" ]; then
     echo "Using DNS hook script at $DNS_HOOK_SCRIPT"
-    notify_webhook "provisioning", "ssl_dns", "Using DNS challenge for SSL"
+    notify_webhook "provisioning" "ssl_dns" "Using DNS challenge for SSL"
     chmod +x "$DNS_HOOK_SCRIPT"
     
     # Obtain certificate
@@ -245,13 +244,13 @@ if [ -f "$DNS_HOOK_SCRIPT" ]; then
         --manual-public-ip-logging-ok
 else
     echo "Warning: No DNS hook script found at $DNS_HOOK_SCRIPT"
-    notify_webhook "provisioning", "ssl_fallback", "Falling back to standard SSL"
+    notify_webhook "provisioning" "ssl_fallback" "Falling back to standard SSL"
     certbot --nginx -d "{DOMAIN_NAME}" --non-interactive --agree-tos --email "{ADMIN_EMAIL}" --redirect
 fi
 
 # ========== NGINX CONFIG ==========
 echo "[8/9] Configuring Nginx..."
-notify_webhook "provisioning", "nginx_setup", "Configuring Nginx reverse proxy"
+notify_webhook "provisioning" "nginx_setup" "Configuring Nginx reverse proxy"
 
 # Remove default Nginx config
 rm -f /etc/nginx/sites-enabled/default
@@ -300,34 +299,34 @@ nginx -t && systemctl restart nginx
 
 # ========== VERIFICATION ==========
 echo "[9/9] Verifying setup..."
-notify_webhook "provisioning", "verification", "Running final verification checks"
+notify_webhook "provisioning" "verification" "Running final verification checks"
 
 # Verify container is running
 if ! docker ps | grep -q forgejo; then
     echo "ERROR: Forgejo container is not running!"
     docker logs forgejo
-    notify_webhook "failed", "verification", "Forgejo container not running"
+    notify_webhook "failed" "verification" "Forgejo container not running"
     exit 1
 fi
 
 # Verify Nginx config
 if ! nginx -t; then
     echo "ERROR: Nginx configuration test failed"
-    notify_webhook "failed", "verification", "Nginx configuration test failed"
+    notify_webhook "failed" "verification" "Nginx configuration test failed"
     exit 1
 fi
 
 # Verify SSL certificate
 if [ ! -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
     echo "ERROR: SSL certificate not found!"
-    notify_webhook "failed", "verification", "SSL certificate not found"
+    notify_webhook "failed" "verification" "SSL certificate not found"
     exit 1
 fi
 
 # Verify port accessibility
 if ! curl -s -o /dev/null -w "%{{http_code}}" http://localhost:{PORT} | grep -q 200; then
     echo "ERROR: Cannot access Forgejo on port {PORT}"
-    notify_webhook "failed", "verification", "Cannot access Forgejo on port {PORT}"
+    notify_webhook "failed" "verification" "Cannot access Forgejo on port {PORT}"
     exit 1
 fi
 
@@ -338,7 +337,7 @@ until curl -s http://localhost:{PORT} | grep -q "Initial configuration"; do
     sleep 5
 done
 
-notify_webhook "completed", "finished", "Forgejo setup completed successfully"
+notify_webhook "completed" "finished" "Forgejo setup completed successfully"
 
 echo "============================================"
 echo "✅ Forgejo Setup Complete!"
