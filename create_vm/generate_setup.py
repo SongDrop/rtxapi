@@ -107,6 +107,20 @@ try {{
     Write-Warning "Failed to download or run resetsunshine: $_"
 }}
 
+# Stop DumbDrop if it's already running
+try {{
+    $processes = Get-Process -Name "DumbDrop" -ErrorAction SilentlyContinue
+    if ($processes) {{
+        Write-Host "Stopping existing DumbDrop processes..."
+        Stop-Process -Name "DumbDrop" -Force -ErrorAction SilentlyContinue
+        Write-Host "DumbDrop processes stopped."
+    }} else {{
+        Write-Host "No existing DumbDrop process found."
+    }}
+}} catch {{
+    Write-Warning "Failed to stop DumbDrop: $_"
+}}
+
 # Download and install DumbDrop
 try {{
     $dumbdropUrl = "{dumbdrop_url}"
@@ -144,6 +158,20 @@ try {{
 
 }} catch {{
     Write-Warning "DumbDrop installation failed: $_"
+}}
+
+# Stop SuperF4 if it's already running
+try {{
+    $processes = Get-Process -Name "SuperF4" -ErrorAction SilentlyContinue
+    if ($processes) {{
+        Write-Host "Stopping existing SuperF4 processes..."
+        Stop-Process -Name "SuperF4" -Force -ErrorAction SilentlyContinue
+        Write-Host "SuperF4 processes stopped."
+    }} else {{
+        Write-Host "No existing SuperF4 process found."
+    }}
+}} catch {{
+    Write-Warning "Failed to stop SuperF4: $_"
 }}
 
 # Download and install SuperF4
