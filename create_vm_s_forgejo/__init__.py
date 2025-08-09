@@ -228,9 +228,57 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         status_url = hook_response.get("status_url", "")
 
+    # Authenticate with Azure
+    try:
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "details": {
+                    "step": "authenticating",
+                    "message": "Authenticating with Azure"
+                }
+            },
+            session=hook_session
+        )
+        
+        # Validate required environment variables
+        required_vars = ['AZURE_APP_CLIENT_ID', 'AZURE_APP_CLIENT_SECRET', 'AZURE_APP_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']
+        missing = [var for var in required_vars if not os.environ.get(var)]
+        if missing:
+            raise Exception(f"Missing environment variables: {', '.join(missing)}")
+
+        try: 
+            credentials = ClientSecretCredential(
+                client_id=os.environ['AZURE_APP_CLIENT_ID'],
+                client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
+                tenant_id=os.environ['AZURE_APP_TENANT_ID']
+            )
+        except Exception as e:
+            err = f"Authentication failed: {str(e)}"
+            print_error(err)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "authentication_failed",
+                        "error": err,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                },
+                session=hook_session
+            )
+            return
+    
         # Start the long-running operation in the background
         asyncio.create_task(
             provision_vm_background(
+                credentials,
                 username, password, vm_name, resource_group, 
                 domain, subdomain, fqdn, location, vm_size,
                 storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
@@ -281,53 +329,6 @@ async def provision_vm_background(
         },
         session=hook_session
     )
-
-    # Authenticate with Azure
-    try:
-        await post_status_update(
-            hook_url=hook_url,
-            status_data={
-                "vm_name": vm_name,
-                "status": "provisioning",
-                "details": {
-                    "step": "authenticating",
-                    "message": "Authenticating with Azure"
-                }
-            },
-            session=hook_session
-        )
-        
-        # Validate required environment variables
-        required_vars = ['AZURE_APP_CLIENT_ID', 'AZURE_APP_CLIENT_SECRET', 'AZURE_APP_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']
-        missing = [var for var in required_vars if not os.environ.get(var)]
-        if missing:
-            raise Exception(f"Missing environment variables: {', '.join(missing)}")
-
-        credentials = await run_azure_operation(
-            ClientSecretCredential,
-            client_id=os.environ['AZURE_APP_CLIENT_ID'],
-            client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
-            tenant_id=os.environ['AZURE_APP_TENANT_ID']
-        )
-    except Exception as e:
-        err = f"Authentication failed: {str(e)}"
-        print_error(err)
-        await post_status_update(
-            hook_url=hook_url,
-            status_data={
-                "vm_name": vm_name,
-                "status": "failed",
-                "resource_group": resource_group,
-                "location": location,
-                "details": {
-                    "step": "authentication_failed",
-                    "error": err,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            },
-            session=hook_session
-        )
-        return
 
     subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
 
