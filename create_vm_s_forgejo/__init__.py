@@ -257,6 +257,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             )
         except Exception as e:
             err = f"Authentication failed: {str(e)}"
+            
             print_error(err)
             await post_status_update(
                 hook_url=hook_url,
@@ -273,7 +274,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 },
                 session=hook_session
             )
-            return
+            raise Exception(err)
     
         # Start the long-running operation in the background
         asyncio.create_task(
