@@ -107,7 +107,122 @@ try {{
     Write-Warning "Failed to download or run resetsunshine: $_"
 }}
 
+# Stop DumbDrop if it's already running
+try {{
+    $processes = Get-Process -Name "DumbDrop" -ErrorAction SilentlyContinue
+    if ($processes) {{
+        Write-Host "Stopping existing DumbDrop processes..."
+        Stop-Process -Name "DumbDrop" -Force -ErrorAction SilentlyContinue
+        Write-Host "DumbDrop processes stopped."
+    }} else {{
+        Write-Host "No existing DumbDrop process found."
+    }}
+}} catch {{
+    Write-Warning "Failed to stop DumbDrop: $_"
+}}
 
+# Download and install DumbDrop
+try {{
+    $dumbdropUrl = "{dumbdrop_url}"
+    $dumbdropInstallDir = "C:\\Program Files\\DumbDrop"
+    $dumbdropExePath = Join-Path -Path $dumbdropInstallDir -ChildPath "DumbDrop.exe"
+    
+    Write-Host "Downloading DumbDrop.exe..."
+    Invoke-WebRequest -Uri $dumbdropUrl -OutFile "$env:TEMP\\DumbDrop.exe" -UseBasicParsing
+    
+    Write-Host "Installing DumbDrop..."
+    if (-not (Test-Path -Path $dumbdropInstallDir)) {{
+        New-Item -Path $dumbdropInstallDir -ItemType Directory -Force | Out-Null
+    }}
+    Copy-Item -Path "$env:TEMP\\DumbDrop.exe" -Destination $dumbdropExePath -Force
+    
+    # Create shortcut on desktop
+    $WScriptShell = New-Object -ComObject WScript.Shell
+    $Shortcut = $WScriptShell.CreateShortcut("$env:Public\\Desktop\\DumbDrop.lnk")
+    $Shortcut.TargetPath = $dumbdropExePath
+    $Shortcut.Arguments = "{safe_pin}"
+    $Shortcut.WorkingDirectory = $dumbdropInstallDir
+    $Shortcut.WindowStyle = 1
+    $Shortcut.Description = "DumbDrop"
+    $Shortcut.Save()
+    Write-Host "Shortcut created on Desktop."
+    
+    # Schedule DumbDrop to run once at next login
+    Write-Host "Scheduling DumbDrop to run at next user login..."
+    $action = New-ScheduledTaskAction -Execute $dumbdropExePath -Argument "{safe_pin}"
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    Register-ScheduledTask -TaskName "RunDumbDropOnce" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -RunLevel Highest -Force
+    Write-Host "DumbDrop will start at next login."
+
+}} catch {{
+    Write-Warning "DumbDrop installation failed: $_"
+}}
+
+# Stop SuperF4 if it's already running
+try {{
+    $processes = Get-Process -Name "SuperF4" -ErrorAction SilentlyContinue
+    if ($processes) {{
+        Write-Host "Stopping existing SuperF4 processes..."
+        Stop-Process -Name "SuperF4" -Force -ErrorAction SilentlyContinue
+        Write-Host "SuperF4 processes stopped."
+    }} else {{
+        Write-Host "No existing SuperF4 process found."
+    }}
+}} catch {{
+    Write-Warning "Failed to stop SuperF4: $_"
+}}
+
+# Download and install SuperF4
+try {{
+    $superf4Url = "{superf4_url}"
+    $superf4InstallDir = "C:\Program Files\SuperF4"
+    $superf4ZipPath = "$env:TEMP\SuperF4.zip"
+    $superf4ExePath = Join-Path -Path $superf4InstallDir -ChildPath "SuperF4.exe"
+    $superf4IniPath = Join-Path -Path $superf4InstallDir -ChildPath "SuperF4.ini"
+    
+    Write-Host "Downloading SuperF4 ZIP package..."
+    Invoke-WebRequest -Uri $superf4Url -OutFile $superf4ZipPath -UseBasicParsing
+    
+    # Create installation directory if it doesn't exist
+    if (-not (Test-Path -Path $superf4InstallDir)) {{
+        New-Item -Path $superf4InstallDir -ItemType Directory -Force | Out-Null
+    }}
+    
+    # Extract ZIP contents
+    Write-Host "Extracting SuperF4 files..."
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($superf4ZipPath, $superf4InstallDir)
+    
+    # Verify both files were extracted
+    if (-not (Test-Path -Path $superf4ExePath)) {{
+        throw "SuperF4.exe not found in the extracted files"
+    }}
+    if (-not (Test-Path -Path $superf4IniPath)) {{
+        Write-Warning "SuperF4.init not found in the extracted files (this might be expected)"
+    }}
+    
+    # Create desktop shortcut
+    $WScriptShell = New-Object -ComObject WScript.Shell
+    $Shortcut = $WScriptShell.CreateShortcut("$env:Public\Desktop\SuperF4.lnk")
+    $Shortcut.TargetPath = $superf4ExePath
+    $Shortcut.WorkingDirectory = $superf4InstallDir
+    $Shortcut.Save()
+    Write-Host "SuperF4 shortcut created on Desktop."
+    
+    # Schedule SuperF4 to run at startup
+    $taskAction = New-ScheduledTaskAction -Execute $superf4ExePath
+    $taskTrigger = New-ScheduledTaskTrigger -AtLogOn
+    Register-ScheduledTask -TaskName "SuperF4" -Action $taskAction -Trigger $taskTrigger -RunLevel Highest -Force
+    Write-Host "SuperF4 will start automatically at login."
+    
+    # Clean up temporary files
+    Remove-Item -Path $superf4ZipPath -Force -ErrorAction SilentlyContinue
+
+}}catch {{
+    Write-Warning "SuperF4 installation failed: $_"
+}}
 
 $needRestart = $false
 
