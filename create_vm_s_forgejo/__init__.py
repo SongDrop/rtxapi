@@ -308,6 +308,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
 
 async def provision_vm_background(
+    credentials,
     username, password, vm_name, resource_group, 
     domain, subdomain, fqdn, location, vm_size,
     storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
