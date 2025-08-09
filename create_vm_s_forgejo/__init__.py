@@ -94,11 +94,9 @@ def print_error(msg):
 async def run_azure_operation(func, *args, **kwargs):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, func, *args, **kwargs)
-
-
+ 
 async def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Processing create_vm request...')
- 
     try:
         try:
             req_body = req.get_json()
@@ -111,7 +109,8 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         vm_name = req_body.get('vm_name') or req.params.get('vm_name')
         resource_group = req_body.get('resource_group') or req.params.get('resource_group')
         domain = req_body.get('domain') or req.params.get('domain')
-        subdomain = vm_name 
+        
+        subdomain = vm_name
         fqdn = domain
         if subdomain:
             subdomain = subdomain.strip().strip('.')
@@ -120,8 +119,8 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             fqdn = domain
         print_info(f"Full domain to configure: {fqdn}")
 
-        location = req_body.get('location') or req.params.get('location') # uksouth
-        vm_size = req_body.get('vm_size') or req.params.get('vm_size') or 'Standard_D2s_v3' # Standard_D2s_v3
+        location = req_body.get('location') or req.params.get('location')  # e.g., 'uksouth'
+        vm_size = req_body.get('vm_size') or req.params.get('vm_size') or 'Standard_D2s_v3'
         storage_account_base = vm_name
 
         OS_DISK_SSD_GB = int(req_body.get('os_disk_ssd_gb') or req.params.get('os_disk_ssd_gb') or 256)
@@ -133,7 +132,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         FRONTEND_PORT = 3000
         BACKEND_PORT = 8000
 
-        ### Parameter checking to handle errors 
+        # Parameter checking to handle errors 
         if not vm_name:
             return func.HttpResponse(
                 json.dumps({"error": "Missing 'vm_name' parameter"}),
@@ -197,7 +196,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
                 mimetype="application/json"
             )
-    
+
         hook_session = await get_session()
         hook_response = await post_status_update(
             hook_url=hook_url,
@@ -207,12 +206,13 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 "resource_group": resource_group,
                 "location": location,
                 "details": {
-                    "step": "init", 
+                    "step": "init",
                     "vm_name": vm_name
                 }
             },
             session=hook_session
         )
+
         # Handle hook response
         if not hook_response.get("success"):
             error_msg = hook_response.get("error", "Unknown error posting status")
@@ -228,76 +228,82 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         status_url = hook_response.get("status_url", "")
 
-    # Authenticate with Azure
-    try:
-        await post_status_update(
-            hook_url=hook_url,
-            status_data={
-                "vm_name": vm_name,
-                "status": "provisioning",
-                "details": {
-                    "step": "authenticating",
-                    "message": "Authenticating with Azure"
-                }
-            },
-            session=hook_session
-        )
-        
-        # Validate required environment variables
-        required_vars = ['AZURE_APP_CLIENT_ID', 'AZURE_APP_CLIENT_SECRET', 'AZURE_APP_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']
-        missing = [var for var in required_vars if not os.environ.get(var)]
-        if missing:
-            raise Exception(f"Missing environment variables: {', '.join(missing)}")
-
-        try: 
-            credentials = ClientSecretCredential(
-                client_id=os.environ['AZURE_APP_CLIENT_ID'],
-                client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
-                tenant_id=os.environ['AZURE_APP_TENANT_ID']
-            )
-        except Exception as e:
-            err = f"Authentication failed: {str(e)}"
-            
-            print_error(err)
+        # Authenticate with Azure
+        try:
             await post_status_update(
                 hook_url=hook_url,
                 status_data={
                     "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
+                    "status": "provisioning",
                     "details": {
-                        "step": "authentication_failed",
-                        "error": err,
-                        "timestamp": datetime.utcnow().isoformat()
+                        "step": "authenticating",
+                        "message": "Authenticating with Azure"
                     }
                 },
                 session=hook_session
             )
-            raise Exception(err)
-    
-        # Start the long-running operation in the background
-        asyncio.create_task(
-            provision_vm_background(
-                credentials,
-                username, password, vm_name, resource_group, 
-                domain, subdomain, fqdn, location, vm_size,
-                storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
-                hook_url, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, hook_session
-            )
-        )
+            # Validate required environment variables
+            required_vars = ['AZURE_APP_CLIENT_ID', 'AZURE_APP_CLIENT_SECRET', 'AZURE_APP_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']
+            missing = [var for var in required_vars if not os.environ.get(var)]
+            if missing:
+                raise Exception(f"Missing environment variables: {', '.join(missing)}")
 
-        # Return immediate response with status URL
-        return func.HttpResponse(
-            json.dumps({
-                "message": "VM provisioning started",
-                "status_url": status_url,
-                "vm_name": vm_name
-            }),
-            status_code=202,  # Accepted
-            mimetype="application/json"
-        )
- 
+            credentials = None
+            try: 
+                credentials = ClientSecretCredential(
+                    client_id=os.environ['AZURE_APP_CLIENT_ID'],
+                    client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
+                    tenant_id=os.environ['AZURE_APP_TENANT_ID']
+                )
+            except Exception as e:
+                err = f"Authentication failed: {str(e)}"
+                print_error(err)
+                await post_status_update(
+                    hook_url=hook_url,
+                    status_data={
+                        "vm_name": vm_name,
+                        "status": "failed",
+                        "resource_group": resource_group,
+                        "location": location,
+                        "details": {
+                            "step": "authentication_failed",
+                            "error": err,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                    },
+                    session=hook_session
+                )
+                raise Exception(err)
+
+            # Start the long-running operation in the background
+            asyncio.create_task(
+                provision_vm_background(
+                    credentials,
+                    username, password, vm_name, resource_group, 
+                    domain, subdomain, fqdn, location, vm_size,
+                    storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
+                    hook_url, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, hook_session
+                )
+            )
+
+            # Return immediate response with status URL
+            return func.HttpResponse(
+                json.dumps({
+                    "message": "VM provisioning started",
+                    "status_url": status_url,
+                    "vm_name": vm_name
+                }),
+                status_code=202,  # Accepted
+                mimetype="application/json"
+            )
+
+        except Exception as ex:
+            logging.exception("Authentication error:")
+            return func.HttpResponse(
+                json.dumps({"error": str(ex)}),
+                status_code=500,
+                mimetype="application/json"
+            )
 
     except Exception as ex:
         logging.exception("Unhandled error:")
