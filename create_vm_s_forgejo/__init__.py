@@ -4,7 +4,7 @@ import os
 import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-load_dotenv()  # This loads environment variables from a .env file in the current directory
+load_dotenv()
 import dns.resolver
 from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import ClientSecretCredential
@@ -24,15 +24,11 @@ from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
 import aiohttp
-# Use relative imports to load local modules from the same function folder.
-# This ensures Python finds these files (generate_setup.py, html_email.py, html_email_send.py)
-# in the current package instead of searching in global site-packages,
-# which prevents ModuleNotFoundError in Azure Functions environment.
-from . import generate_setup  # Your PowerShell setup generator module
+from . import generate_setup
 from . import html_email
 from . import html_email_send
 
-# Configure logging first
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -48,20 +44,8 @@ image_reference = {
     'exactVersion': '24.04.202409120'
 }
 
-# Ports to open for application [without this app can't run on domain]
-PORTS_TO_OPEN = [
-    22,     # SSH
-    80,     # HTTP
-    443,    # HTTPS
-    8000,   # Optional app port (if used)
-    3000,   # Optional app port (if used)
-    8889,
-    8890,
-    7088,
-    8088
-]
+PORTS_TO_OPEN = [22, 80, 443, 8000, 3000, 8889, 8890, 7088, 8088]
 
-# Console colors for logs
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -73,7 +57,6 @@ class bcolors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
 
-#####
 def print_info(msg):
     logging.info(f"{bcolors.OKBLUE}[INFO]{bcolors.ENDC} {msg}")
 
@@ -89,8 +72,6 @@ def print_warn(msg):
 def print_error(msg):
     logging.info(f"{bcolors.FAIL}[ERROR]{bcolors.ENDC} {msg}")
 
-
-# Async wrapper for blocking Azure operations
 async def run_azure_operation(func, *args, **kwargs):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, func, *args, **kwargs)
@@ -103,7 +84,6 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         except ValueError:
             req_body = {}
 
-        # Get parameters
         username = req_body.get('username') or req.params.get('username') or 'azureuser'
         password = req_body.get('password') or req.params.get('password') or 'azurepassword1234!'
         vm_name = req_body.get('vm_name') or req.params.get('vm_name')
@@ -119,7 +99,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             fqdn = domain
         print_info(f"Full domain to configure: {fqdn}")
 
-        location = req_body.get('location') or req.params.get('location')  # e.g., 'uksouth'
+        location = req_body.get('location') or req.params.get('location')
         vm_size = req_body.get('vm_size') or req.params.get('vm_size') or 'Standard_D2s_v3'
         storage_account_base = vm_name
 
@@ -132,7 +112,6 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         FRONTEND_PORT = 3000
         BACKEND_PORT = 8000
 
-        # Parameter checking to handle errors 
         if not vm_name:
             return func.HttpResponse(
                 json.dumps({"error": "Missing 'vm_name' parameter"}),
@@ -151,7 +130,6 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
                 mimetype="application/json"
             )
-        # Simple regex to reject domains with subdomains (no dots before main domain)
         if '.' not in domain or domain.startswith('.'):
             return func.HttpResponse(
                 json.dumps({
@@ -197,7 +175,6 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
 
-        hook_session = await get_session()
         hook_response = await post_status_update(
             hook_url=hook_url,
             status_data={
@@ -209,11 +186,9 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                     "step": "init",
                     "vm_name": vm_name
                 }
-            },
-            session=hook_session
+            }
         )
 
-        # Handle hook response
         if not hook_response.get("success"):
             error_msg = hook_response.get("error", "Unknown error posting status")
             print_error(f"Initial status update failed: {error_msg}")
@@ -228,7 +203,6 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         status_url = hook_response.get("status_url", "")
 
-        # Authenticate with Azure
         try:
             await post_status_update(
                 hook_url=hook_url,
@@ -239,10 +213,9 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                         "step": "authenticating",
                         "message": "Authenticating with Azure"
                     }
-                },
-                session=hook_session
+                }
             )
-            # Validate required environment variables
+            
             required_vars = ['AZURE_APP_CLIENT_ID', 'AZURE_APP_CLIENT_SECRET', 'AZURE_APP_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']
             missing = [var for var in required_vars if not os.environ.get(var)]
             if missing:
@@ -270,30 +243,27 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                             "error": err,
                             "timestamp": datetime.utcnow().isoformat()
                         }
-                    },
-                    session=hook_session
+                    }
                 )
                 raise Exception(err)
 
-            # Start the long-running operation in the background
             asyncio.create_task(
                 provision_vm_background(
                     credentials,
                     username, password, vm_name, resource_group, 
                     domain, subdomain, fqdn, location, vm_size,
                     storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
-                    hook_url, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, hook_session
+                    hook_url, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT
                 )
             )
 
-            # Return immediate response with status URL
             return func.HttpResponse(
                 json.dumps({
                     "message": "VM provisioning started",
                     "status_url": status_url,
                     "vm_name": vm_name
                 }),
-                status_code=202,  # Accepted
+                status_code=202,
                 mimetype="application/json"
             )
 
@@ -319,9 +289,8 @@ async def provision_vm_background(
     username, password, vm_name, resource_group, 
     domain, subdomain, fqdn, location, vm_size,
     storage_account_base, OS_DISK_SSD_GB, RECIPIENT_EMAILS, 
-    hook_url, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, hook_session
+    hook_url, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT
 ):
-    # Initial status update - Starting provisioning
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -334,13 +303,11 @@ async def provision_vm_background(
                 "message": "Beginning VM provisioning process",
                 "timestamp": datetime.utcnow().isoformat()
             }
-        },
-        session=hook_session
+        }
     )
 
     subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
 
-    # Initialize Azure clients
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -350,8 +317,7 @@ async def provision_vm_background(
                 "step": "initializing_clients",
                 "message": "Setting up Azure service clients"
             }
-        },
-        session=hook_session
+        }
     )
     
     compute_client = ComputeManagementClient(credentials, subscription_id)
@@ -360,7 +326,6 @@ async def provision_vm_background(
     resource_client = ResourceManagementClient(credentials, subscription_id)
     dns_client = DnsManagementClient(credentials, subscription_id)
 
-    # Check public IP assignment
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -370,11 +335,9 @@ async def provision_vm_background(
                 "step": "checking_public_ip",
                 "message": "Verifying public IP assignment"
             }
-        },
-        session=hook_session
+        }
     )
     
-    # Create storage account
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -385,8 +348,7 @@ async def provision_vm_background(
                 "message": "Setting up storage account",
                 "storage_account_name": f"{storage_account_base}{int(time.time()) % 10000}"
             }
-        },
-        session=hook_session
+        }
     )
 
     storage_account_name = f"{storage_account_base}{int(time.time()) % 10000}"
@@ -412,8 +374,7 @@ async def provision_vm_background(
                     "message": "Storage account created successfully",
                     "storage_account_name": storage_account_name
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Failed to create storage account: {str(e)}"
@@ -428,34 +389,17 @@ async def provision_vm_background(
                     "error": error_msg,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            },
-            session=hook_session
+            }
         )
         return
     
-    # Generate setup script
-    await post_status_update(
-        hook_url=hook_url,
-        status_data={
-            "vm_name": vm_name,
-            "status": "provisioning",
-            "details": {
-                "step": "generating_setup_script",
-                "message": "Generating VM setup script"
-            }
-        },
-        session=hook_session
-    )
-
-     # Autoinstall script generation
     print_info("Generating installation setup script...")
-    # Generate Auto-setup setup script
     sh_script = generate_setup.generate_setup(
         fqdn, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT
     )
     record_name = subdomain.rstrip('.') if subdomain else '@'
     a_records = [record_name]
-    # Upload script to blob storage
+    
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -465,8 +409,7 @@ async def provision_vm_background(
                 "step": "uploading_script",
                 "message": "Uploading setup script to blob storage"
             }
-        },
-        session=hook_session
+        }
     )
 
     blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
@@ -480,7 +423,7 @@ async def provision_vm_background(
             container_name, 
             blob_name, 
             sh_script, 
-            2  # sas_expiry_hours
+            2
         )
         
         await post_status_update(
@@ -493,8 +436,7 @@ async def provision_vm_background(
                     "message": "Setup script uploaded successfully",
                     "blob_url": blob_url_with_sas
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Failed to upload setup script: {str(e)}"
@@ -509,12 +451,10 @@ async def provision_vm_background(
                     "error": error_msg,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            },
-            session=hook_session
+            }
         )
         return
 
-    # Network infrastructure setup
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -524,11 +464,9 @@ async def provision_vm_background(
                 "step": "network_setup",
                 "message": "Configuring network infrastructure"
             }
-        },
-        session=hook_session
+        }
     )
 
-    # Create VNet and subnet
     vnet_name = f'{vm_name}-vnet'
     subnet_name = f'{vm_name}-subnet'
     
@@ -541,8 +479,7 @@ async def provision_vm_background(
                 "step": "creating_vnet",
                 "message": f"Creating virtual network {vnet_name} with subnet {subnet_name}"
             }
-        },
-        session=hook_session
+        }
     )
 
     try:
@@ -566,8 +503,7 @@ async def provision_vm_background(
                     "step": "vnet_created",
                     "message": f"Virtual network {vnet_name} created successfully"
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Failed to create virtual network: {str(e)}"
@@ -582,12 +518,10 @@ async def provision_vm_background(
                     "error": error_msg,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            },
-            session=hook_session
+            }
         )
         return
 
-    # Create Public IP
     public_ip_name = f'{vm_name}-public-ip'
     
     await post_status_update(
@@ -599,8 +533,7 @@ async def provision_vm_background(
                 "step": "creating_public_ip",
                 "message": f"Creating public IP {public_ip_name}"
             }
-        },
-        session=hook_session
+        }
     )
 
     try:
@@ -624,8 +557,7 @@ async def provision_vm_background(
                     "step": "public_ip_created",
                     "message": f"Public IP {public_ip_name} created successfully"
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Failed to create public IP: {str(e)}"
@@ -640,15 +572,13 @@ async def provision_vm_background(
                     "error": error_msg,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            },
-            session=hook_session
+            }
         )
         return
 
     subnet_id = f'/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Network/virtualNetworks/{vnet_name}/subnets/{subnet_name}'
     public_ip_id = f'/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Network/publicIPAddresses/{public_ip_name}'
 
-    # Create or get NSG
     nsg_name = f'{vm_name}-nsg'
     
     await post_status_update(
@@ -660,8 +590,7 @@ async def provision_vm_background(
                 "step": "configuring_nsg",
                 "message": f"Configuring network security group {nsg_name}"
             }
-        },
-        session=hook_session
+        }
     )
 
     try:
@@ -701,11 +630,9 @@ async def provision_vm_background(
                         "step": "nsg_created",
                         "message": f"Created new NSG {nsg_name}"
                     }
-                },
-                session=hook_session
+                }
             )
 
-        # Add NSG rules
         await post_status_update(
             hook_url=hook_url,
             status_data={
@@ -715,8 +642,7 @@ async def provision_vm_background(
                     "step": "adding_nsg_rules",
                     "message": f"Adding security rules to NSG {nsg_name}"
                 }
-            },
-            session=hook_session
+            }
         )
 
         existing_rules = {rule.name for rule in nsg.security_rules} if nsg.security_rules else set()
@@ -740,8 +666,7 @@ async def provision_vm_background(
                                     "error": error_msg,
                                     "timestamp": datetime.utcnow().isoformat()
                                 }
-                            },
-                            session=hook_session
+                            }
                         )
                         return
 
@@ -776,8 +701,7 @@ async def provision_vm_background(
                     "step": "nsg_rules_added",
                     "message": f"Added {len(PORTS_TO_OPEN)} security rules to NSG {nsg_name}"
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Failed to configure NSG: {str(e)}"
@@ -792,12 +716,10 @@ async def provision_vm_background(
                     "error": error_msg,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            },
-            session=hook_session
+            }
         )
         return
 
-    # Create NIC
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -807,8 +729,7 @@ async def provision_vm_background(
                 "step": "creating_nic",
                 "message": f"Creating network interface for {vm_name}"
             }
-        },
-        session=hook_session
+        }
     )
 
     try:
@@ -837,8 +758,7 @@ async def provision_vm_background(
                     "step": "nic_created",
                     "message": f"Network interface {vm_name}-nic created successfully"
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Failed to create network interface: {str(e)}"
@@ -853,12 +773,10 @@ async def provision_vm_background(
                     "error": error_msg,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            },
-            session=hook_session
+            }
         )
         return
 
-    # Create VM
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -868,8 +786,7 @@ async def provision_vm_background(
                 "step": "creating_vm",
                 "message": f"Creating virtual machine {vm_name}"
             }
-        },
-        session=hook_session
+        }
     )
 
     try:
@@ -915,8 +832,7 @@ async def provision_vm_background(
                     "vm_size": vm_size,
                     "os_disk_size_gb": OS_DISK_SSD_GB
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Failed to create virtual machine: {str(e)}"
@@ -931,12 +847,10 @@ async def provision_vm_background(
                     "error": error_msg,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            },
-            session=hook_session
+            }
         )
         return
 
-    # Wait for VM to initialize
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -946,12 +860,10 @@ async def provision_vm_background(
                 "step": "vm_initializing",
                 "message": "Waiting for VM to initialize (30 seconds)"
             }
-        },
-        session=hook_session
+        }
     )
     await asyncio.sleep(30)
 
-    # Verify public IP assignment
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -961,8 +873,7 @@ async def provision_vm_background(
                 "step": "verifying_public_ip",
                 "message": "Verifying public IP assignment"
             }
-        },
-        session=hook_session
+        }
     )
 
     try:
@@ -1000,8 +911,7 @@ async def provision_vm_background(
                         "error": error_msg,
                         "timestamp": datetime.utcnow().isoformat()
                     }
-                },
-                session=hook_session
+                }
             )
             return
 
@@ -1022,8 +932,7 @@ async def provision_vm_background(
                     "step": "public_ip_confirmed",
                     "message": f"VM public IP confirmed: {public_ip}"
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Failed to verify public IP: {str(e)}"
@@ -1054,12 +963,10 @@ async def provision_vm_background(
                     "error": error_msg,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            },
-            session=hook_session
+            }
         )
         return
 
-    # DNS Configuration
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -1069,11 +976,9 @@ async def provision_vm_background(
                 "step": "dns_configuration",
                 "message": f"Configuring DNS for domain {domain}"
             }
-        },
-        session=hook_session
+        }
     )
 
-    # Create DNS Zone
     try:
         await post_status_update(
             hook_url=hook_url,
@@ -1084,8 +989,7 @@ async def provision_vm_background(
                     "step": "creating_dns_zone",
                     "message": f"Creating DNS zone for {domain}"
                 }
-            },
-            session=hook_session
+            }
         )
 
         try:
@@ -1103,8 +1007,7 @@ async def provision_vm_background(
                         "step": "dns_zone_exists",
                         "message": f"DNS zone {domain} already exists"
                     }
-                },
-                session=hook_session
+                }
             )
         except Exception:
             zone_operation = dns_client.zones.create_or_update(
@@ -1123,11 +1026,9 @@ async def provision_vm_background(
                         "step": "dns_zone_created",
                         "message": f"DNS zone {domain} created successfully"
                     }
-                },
-                session=hook_session
+                }
             )
 
-        # Wait for DNS Zone to initialize
         await post_status_update(
             hook_url=hook_url,
             status_data={
@@ -1137,12 +1038,10 @@ async def provision_vm_background(
                     "step": "dns_zone_initializing",
                     "message": "Waiting for DNS zone to initialize (5 seconds)"
                 }
-            },
-            session=hook_session
+            }
         )
         await asyncio.sleep(5)
 
-        # Verify NS delegation
         await post_status_update(
             hook_url=hook_url,
             status_data={
@@ -1152,8 +1051,7 @@ async def provision_vm_background(
                     "step": "verifying_ns_delegation",
                     "message": "Verifying NS delegation for DNS zone"
                 }
-            },
-            session=hook_session
+            }
         )
 
         if not await run_azure_operation(
@@ -1190,12 +1088,10 @@ async def provision_vm_background(
                         "error": error_msg,
                         "timestamp": datetime.utcnow().isoformat()
                     }
-                },
-                session=hook_session
+                }
             )
             return
 
-        # Create DNS A records
         record_name = subdomain.rstrip('.') if subdomain else '@' 
         a_records = [record_name]
         
@@ -1210,8 +1106,7 @@ async def provision_vm_background(
                     "records": a_records,
                     "ip_address": public_ip
                 }
-            },
-            session=hook_session
+            }
         )
 
         for a_record in a_records:
@@ -1240,8 +1135,7 @@ async def provision_vm_background(
                             "record": a_record,
                             "ip_address": public_ip
                         }
-                    },
-                    session=hook_session
+                    }
                 )
             except Exception as e:
                 error_msg = f"Failed to create DNS A record for {a_record}: {str(e)}"
@@ -1256,8 +1150,7 @@ async def provision_vm_background(
                             "error": error_msg,
                             "record": a_record
                         }
-                    },
-                    session=hook_session
+                    }
                 )
     except Exception as e:
         error_msg = f"DNS configuration failed: {str(e)}"
@@ -1288,12 +1181,10 @@ async def provision_vm_background(
                     "error": error_msg,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            },
-            session=hook_session
+            }
         )
         return
 
-    # Install Custom Script Extension
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -1303,8 +1194,7 @@ async def provision_vm_background(
                 "step": "installing_extension",
                 "message": "Installing custom script extension"
             }
-        },
-        session=hook_session
+        }
     )
 
     try:
@@ -1335,8 +1225,7 @@ async def provision_vm_background(
                     "step": "extension_installed",
                     "message": "Custom script extension installed successfully"
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Failed to install custom script extension: {str(e)}"
@@ -1367,12 +1256,10 @@ async def provision_vm_background(
                     "error": error_msg,
                     "timestamp": datetime.utcnow().isoformat()
                 }
-            },
-            session=hook_session
+            }
         )
         return
 
-    # Cleanup temporary storage
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -1382,8 +1269,7 @@ async def provision_vm_background(
                 "step": "cleaning_up",
                 "message": "Cleaning up temporary resources"
             }
-        },
-        session=hook_session
+        }
     )
 
     try:
@@ -1406,8 +1292,7 @@ async def provision_vm_background(
                     "step": "cleanup_complete",
                     "message": "Temporary resources cleaned up successfully"
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Cleanup failed (non-critical): {str(e)}"
@@ -1421,11 +1306,9 @@ async def provision_vm_background(
                     "step": "cleanup_warning",
                     "warning": error_msg
                 }
-            },
-            session=hook_session
+            }
         )
 
-    # Final wait for system to stabilize
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -1435,12 +1318,10 @@ async def provision_vm_background(
                 "step": "finalizing",
                 "message": "Finalizing setup (30 seconds)"
             }
-        },
-        session=hook_session
+        }
     )
     await asyncio.sleep(30)
 
-    # Send completion email
     await post_status_update(
         hook_url=hook_url,
         status_data={
@@ -1450,8 +1331,7 @@ async def provision_vm_background(
                 "step": "sending_email",
                 "message": "Sending completion notification"
             }
-        },
-        session=hook_session
+        }
     )
 
     try:
@@ -1493,8 +1373,7 @@ async def provision_vm_background(
                     "step": "email_sent",
                     "message": "Completion email sent successfully"
                 }
-            },
-            session=hook_session
+            }
         )
     except Exception as e:
         error_msg = f"Failed to send email: {str(e)}"
@@ -1508,8 +1387,7 @@ async def provision_vm_background(
                     "step": "email_failed",
                     "warning": error_msg
                 }
-            },
-            session=hook_session
+            }
         )
 
     await post_status_update(
@@ -1526,8 +1404,7 @@ async def provision_vm_background(
                 "url": fqdn,
                 "timestamp": datetime.utcnow().isoformat()
             }
-        },
-        session=hook_session
+        }
     )
 
     print_success("-----------------------------------------------------")
@@ -1622,7 +1499,6 @@ def get_compatible_vm_sizes():
     ]
 
 def check_vm_size_compatibility(vm_size):
-    # List of VM sizes that support Gen 2 Hypervisor with proper 'Standard_' prefix
     return vm_size in get_compatible_vm_sizes()
 
 def check_ns_delegation_with_retries(dns_client, resource_group, domain, retries=5, delay=10):
@@ -1689,7 +1565,6 @@ def check_ns_delegation(dns_client, resource_group, domain):
 def cleanup_resources_on_failure(network_client, compute_client, storage_client, blob_service_client, container_name, blob_name, dns_client, resource_group, domain, a_records, vm_name, storage_account_name):
     print_warn("Starting cleanup of Azure resources due to failure...")
 
-    # Delete VM
     try:
         vm = compute_client.virtual_machines.get(resource_group, vm_name)
         os_disk_name = vm.storage_profile.os_disk.name
@@ -1699,7 +1574,6 @@ def cleanup_resources_on_failure(network_client, compute_client, storage_client,
         print_warn(f"Could not delete VM '{vm_name}': {e}")
         os_disk_name = None
 
-    # Delete OS disk if available
     if os_disk_name:
         try:
             compute_client.disks.begin_delete(resource_group, os_disk_name).result()
@@ -1707,35 +1581,30 @@ def cleanup_resources_on_failure(network_client, compute_client, storage_client,
         except Exception as e:
             print_warn(f"Could not delete OS disk '{os_disk_name}': {e}")
 
-    # Delete NIC
     try:
         network_client.network_interfaces.begin_delete(resource_group, f"{vm_name}-nic").result()
         print_info(f"Deleted NIC '{vm_name}-nic'.")
     except Exception as e:
         print_warn(f"Could not delete NIC '{vm_name}-nic': {e}")
 
-    # Delete NSG
     try:
         network_client.network_security_groups.begin_delete(resource_group, f"{vm_name}-nsg").result()
         print_info(f"Deleted NSG '{vm_name}-nsg'.")
     except Exception as e:
         print_warn(f"Could not delete NSG '{vm_name}-nsg': {e}")
 
-    # Delete Public IP
     try:
         network_client.public_ip_addresses.begin_delete(resource_group, f"{vm_name}-public-ip").result()
         print_info(f"Deleted Public IP '{vm_name}-public-ip'.")
     except Exception as e:
         print_warn(f"Could not delete Public IP '{vm_name}-public-ip': {e}")
 
-    # Delete VNet
     try:
         network_client.virtual_networks.begin_delete(resource_group, f"{vm_name}-vnet").result()
         print_info(f"Deleted VNet '{vm_name}-vnet'.")
     except Exception as e:
         print_warn(f"Could not delete VNet '{vm_name}-vnet': {e}")
 
-    # Delete Storage Account
     try:
         print_info(f"Deleting blob '{blob_name}' from container '{container_name}'.")
         container_client = blob_service_client.get_container_client(container_name)
@@ -1750,9 +1619,8 @@ def cleanup_resources_on_failure(network_client, compute_client, storage_client,
     except Exception as e:
         print_warn(f"Could not delete Storage Account '{storage_account_name}': {e}")
 
-    # Delete DNS A record (keep DNS zone)
     for record_name in a_records:
-        record_to_delete = record_name if record_name else '@'  # handle root domain with '@'
+        record_to_delete = record_name if record_name else '@'
         try:
             dns_client.record_sets.delete(resource_group, domain, record_to_delete, 'A')
             print_info(f"Deleted DNS A record '{record_to_delete}' in zone '{domain}'.")
@@ -1764,7 +1632,6 @@ def cleanup_resources_on_failure(network_client, compute_client, storage_client,
 def cleanup_temp_storage_on_success(resource_group, storage_client, storage_account_name, blob_service_client, container_name, blob_name):
     print_info("Starting cleanup of Azure resources on success...")
 
-    # Delete Storage Account
     try:
         print_info(f"Deleting blob '{blob_name}' from container '{container_name}'.")
         container_client = blob_service_client.get_container_client(container_name)
@@ -1781,51 +1648,51 @@ def cleanup_temp_storage_on_success(resource_group, storage_client, storage_acco
 
     print_success("Temp storage cleanup completed.")
 
-
-# Create at module level
-session = None
-
-async def get_session():
-    global session
-    if session is None or session.closed:
-        session = aiohttp.ClientSession()
-    return session
-
-async def close_session():
-    global session
-    if session and not session.closed:
-        await session.close()
-
-async def post_status_update(hook_url: str, status_data: dict, session: aiohttp.ClientSession = None) -> dict:
+# NEW STATUS UPDATE FUNCTION WITH SESSION MANAGEMENT FIX
+async def post_status_update(hook_url: str, status_data: dict, max_retries=3, retry_delay=2) -> dict:
     if not hook_url:
         return {"success": True, "status_url": ""}
     
-    if session is None:
-        session = await get_session()
+    step = status_data.get("details", {}).get("step", "unknown")
+    print_info(f"Sending status update for step: {step}")
     
-    try:
-        async with session.post(
-            hook_url,
-            json=status_data,
-            timeout=aiohttp.ClientTimeout(total=60)
-        ) as response:
-            if response.status == 200:
-                data = await response.json()
-                return {
-                    "success": True,
-                    "status_url": data.get("status_url", ""),
-                    "response": data
-                }
+    for attempt in range(1, max_retries+1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    hook_url,
+                    json=status_data,
+                    timeout=aiohttp.ClientTimeout(total=60)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return {
+                            "success": True,
+                            "status_url": data.get("status_url", ""),
+                            "response": data
+                        }
+                    else:
+                        error_msg = f"HTTP {response.status}"
+        except asyncio.TimeoutError:
+            error_msg = "Timeout"
+        except aiohttp.ClientConnectionError:
+            error_msg = "Connection error"
+        except Exception as e:
+            error_msg = str(e)
+
+        if attempt < max_retries:
+            print_warn(f"Status update failed (attempt {attempt}/{max_retries}): {error_msg}. Retrying in {retry_delay} seconds...")
+            await asyncio.sleep(retry_delay)
+        else:
+            print_error(f"Status update failed after {max_retries} attempts: {error_msg}")
             return {
                 "success": False,
-                "error": f"HTTP {response.status}",
+                "error": error_msg,
                 "status_url": ""
             }
-    except Exception as e:
-        # Log error here for visibility
-        print(f"Error posting status update: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "status_url": ""
-        }
+
+    return {
+        "success": False,
+        "error": "Unexpected error in post_status_update",
+        "status_url": ""
+    }
