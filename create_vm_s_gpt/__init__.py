@@ -113,7 +113,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         vm_name = req_body.get('vm_name') or req.params.get('vm_name')
         resource_group = req_body.get('resource_group') or req.params.get('resource_group')
         domain = req_body.get('domain') or req.params.get('domain')
-        subdomain = vm_name 
+        subdomain = req_body.get('subdomain') or req.params.get('subdomain')
         fqdn = domain
         if subdomain:
             subdomain = subdomain.strip().strip('.')
