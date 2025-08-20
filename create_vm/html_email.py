@@ -27,11 +27,11 @@ def HTMLEmail(ip_address: str,
     # Format IPv6 style address for iOS
     ios_address = f"[::ffff:{ip_address}]"
     
-    # Create pin URL
+    # Create pin URL - use the direct URL without tracking
     pin_url = f"https://{ip_address}:47990/pin"
     
-    # Create dumbdrop URL
-    drop_url = f"https://{ip_address}:3745"
+    # Create drop URL - use the direct URL without tracking
+    drop_url = f"https://{ip_address}:3475"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -94,7 +94,7 @@ def HTMLEmail(ip_address: str,
         .container {{
             max-width: 700px;
             margin: 0 auto;
-            background: rgba(30, 30, 30, 0.9);
+            background: rgba(30, 30, 30, 0.95); /* Increased opacity to reduce dark overlay effect */
             padding: 25px;
             border-radius: 16px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
@@ -111,13 +111,6 @@ def HTMLEmail(ip_address: str,
             max-width: 180px;
             height: auto;
             margin-bottom: 15px;
-            animation: pulse 2s infinite;
-        }}
-
-        @keyframes pulse {{
-            0% {{ transform: scale(1); }}
-            50% {{ transform: scale(1.05); }}
-            100% {{ transform: scale(1); }}
         }}
 
         h1 {{
@@ -370,20 +363,19 @@ def HTMLEmail(ip_address: str,
             </div>
         </div>
 
+         <div class="section">
+            <div class="section-title"><i>⬆️</i> Upload files directly:</div>
+            <div class="code-box">
+                <div class="code-content">
+                    <a href="{drop_url}" target="_blank">{drop_url}</a>
+                </div>
+            </div>
+        </div>
         <div class="download-section">
             <div>{form_description}</div>
             <div class="code-box">
                 <div class="code-content">
                     <a href="{form_link}" target="_blank">{form_link}</a>
-                </div>
-            </div>
-        </div>
-
-         <div class="section">
-            <div class="section-title"><i>🆙</i> DumbDrop direct file upload:</div>
-            <div class="code-box">
-                <div class="code-content">
-                    <a href="{drop_url}" target="_blank">{drop_url}</a>
                 </div>
             </div>
         </div>
