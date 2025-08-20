@@ -124,7 +124,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         vm_name = req_body.get('vm_name') or req.params.get('vm_name')
         resource_group = req_body.get('resource_group') or req.params.get('resource_group')
         domain = req_body.get('domain') or req.params.get('domain')
-        a_records = [vm_name,"drop","pin","web"]  # single record name string, so split works
+        a_records = [vm_name,f"drop.{vm_name}",f"pin.{vm_name}",f"web.{vm_name}"]  # single record name string, so split works
 
         if not vm_name:
             return func.HttpResponse(
