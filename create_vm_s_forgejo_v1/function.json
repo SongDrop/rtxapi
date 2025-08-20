@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "create_vm_s_forgejo",
+      "route": "create_vm_s_forgejo_v1",
       "methods": ["get", "post"]
     },
     {
