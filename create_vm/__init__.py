@@ -634,6 +634,9 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         if GALLERY_IMAGE_VERSION == 'latest':
             image_version_to_use = image_latest_version_id
 
+        print_info(f"VM_Image: '{GALLERY_IMAGE_NAME}'.")
+        print_info(f"VM_Image_Version: '{image_version_to_use}'.")
+
         # Create VM
         print_info(f"Creating VM '{vm_name}'.")
         os_disk = {

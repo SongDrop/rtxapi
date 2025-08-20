@@ -13,26 +13,6 @@ def HTMLEmail(ip_address: str,
               credentials_sunshine: str,
               form_description: str,
               form_link: str):
-    
-    # Extract YouTube video ID from URL
-    def get_youtube_video_id(url):
-        import re
-        regex = r"(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|live\/|.+\?v=)?|youtu\.be\/)([^&\n?#]+)"
-        match = re.search(regex, url)
-        return match.group(1) if match else None
-    
-    video_id = get_youtube_video_id(youtube_embed_src)
-    youtube_embed_url = f"https://www.youtube.com/embed/{video_id}?loop=1&mute=1&playlist={video_id}" if video_id else ""
-    
-    # Format IPv6 style address for iOS
-    ios_address = f"[::ffff:{ip_address}]"
-    
-    # Create pin URL
-    pin_url = f"https://{ip_address}:47990/pin"
-    
-    # Create dumbdrop URL
-    drop_url = f"https://{ip_address}:3745"
-
     return f"""<!DOCTYPE html>
 <html lang="en">
 
@@ -170,11 +150,34 @@ def HTMLEmail(ip_address: str,
             position: relative;
             margin: 12px 0;
             border: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }}
 
         .code-content {{
+            flex-grow: 1;
             padding-right: 15px;
             overflow: auto;
+        }}
+
+        .copy-btn {{
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            transition: var(--transition);
+            flex-shrink: 0;
+            min-width: 65px;
+            user-select: none;
+        }}
+
+        .copy-btn:hover {{
+            background: var(--secondary);
+            transform: translateY(-2px);
         }}
 
         .code-box strong {{
@@ -221,6 +224,7 @@ def HTMLEmail(ip_address: str,
             margin: 0;
             padding: 0;
         }}
+
 
         .fixed-images a {{
             pointer-events: auto;
@@ -294,6 +298,21 @@ def HTMLEmail(ip_address: str,
             .code-box {{
                 padding: 12px;
                 font-size: 0.9rem;
+                flex-direction: column;
+                align-items: flex-start;
+            }}
+
+            .code-content {{
+                padding-right: 0;
+                padding-bottom: 10px;
+                width: 100%;
+            }}
+
+            .copy-btn {{
+                align-self: flex-end;
+                margin-top: 8px;
+                padding: 6px 10px;
+                font-size: 0.85rem;
             }}
 
             .header img {{
@@ -313,28 +332,50 @@ def HTMLEmail(ip_address: str,
                 padding: 15px;
             }}
         }}
+
+        /* Notification for copy success */
+        .copy-notification {{
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            background: var(--primary);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            transform: translateY(-100px);
+            transition: transform 0.3s ease;
+            z-index: 2000;
+            font-size: 1rem;
+        }}
+
+        .copy-notification.show {{
+            transform: translateY(0);
+        }}
     </style>
 </head>
 
 <body>
     <div class="container">
         <div class="header">
-            <img src="{logo_src}" alt="Logo" />
-            <h1>{main_heading}</h1>
-            <div class="description">{main_description}</div>
+            <img id="logo" src="{logo_src}" alt="Logo" />
+            <h1 id="t_main">{main_heading}</h1>
+            <div class="description" id="d_main">{main_description}</div>
         </div>
 
-        <iframe src="{youtube_embed_url}" allowfullscreen></iframe>
+        <iframe id="y_main" src="" allowfullscreen></iframe>
 
         <div class="section">
             <div class="section-title"><i>🔗</i> Open <strong>Moonlight</strong> and Add:</div>
             <div class="code-box">
-                <div class="code-content">{ip_address}</div>
+                <div class="code-content" id="ipAddress">0.0.0.0</div>
+                <button class="copy-btn" data-target="ipAddress">Copy</button>
             </div>
 
             <div class="section-title"><i>📱</i> Open <strong>iOS Moonlight</strong> and Add:</div>
             <div class="code-box">
-                <div class="code-content">{ios_address}</div>
+                <div class="code-content" id="iOSAddress">[::ffff:0.0.0.0]</div>
+                <button class="copy-btn" data-target="iOSAddress">Copy</button>
             </div>
         </div>
 
@@ -342,20 +383,23 @@ def HTMLEmail(ip_address: str,
             <div class="section-title"><i>🔒</i> Enter 4-digit PIN here:</div>
             <div class="code-box">
                 <div class="code-content">
-                    <a href="{pin_url}" target="_blank">{pin_url}</a>
+                    <a href="" id="pinLink" target="_blank">https://0.0.0.0:47990/pin</a>
                 </div>
+                <button class="copy-btn" id="pinCopy">Copy Link</button>
             </div>
         </div>
 
         <div class="section">
             <div class="section-title"><i>👤</i> Use credentials:</div>
             <div class="code-box">
-                <div class="code-content">{credentials_sunshine}</div>
+                <div class="code-content" id="credentials">{credentials_sunshine}</div>
+                <button class="copy-btn" data-target="credentials">Copy</button>
             </div>
 
             <div class="section-title"><i>💻</i> Windows Password:</div>
             <div class="code-box">
-                <div class="code-content">{windows_password}</div>
+                <div class="code-content" id="winPass">{windows_password}</div>
+                <button class="copy-btn" data-target="winPass">Copy</button>
             </div>
         </div>
 
@@ -371,24 +415,15 @@ def HTMLEmail(ip_address: str,
         </div>
 
         <div class="download-section">
-            <div>{form_description}</div>
+            <div id="formdesc">{form_description}</div>
             <div class="code-box">
-                <div class="code-content">
-                    <a href="{form_link}" target="_blank">{form_link}</a>
+                <div class="code-content" id="vhdblock">
+                    <a href="{form_link}" id="vhdLink" target="_blank">{form_link}</a>
                 </div>
             </div>
         </div>
 
-         <div class="section">
-            <div class="section-title"><i>🆙</i> DumbDrop direct file upload:</div>
-            <div class="code-box">
-                <div class="code-content">
-                    <a href="{drop_url}" target="_blank">{drop_url}</a>
-                </div>
-            </div>
-        </div>
-
-        <iframe src="{discord_widget_src}" width="100%" height="350" allowtransparency="true" frameborder="0"
+        <iframe id="discord" src="{discord_widget_src}" width="100%" height="350" allowtransparency="true" frameborder="0"
             sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"></iframe>
     </div>
 
@@ -404,7 +439,113 @@ def HTMLEmail(ip_address: str,
     <img id="image-left" src="{image_left_src}" />
     <img id="image-right" src="{image_right_src}" />
     <br />
-    <img class="company-logo" src="{company_src}"/>
+    <img class="company-logo" id="company" src="{company_src}"/>
+
+    <div class="copy-notification" id="copyNotification">Copied to clipboard!</div>
+
+    <script>
+        function getQueryParam(name) {{
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(name);
+        }}
+
+        function showNotification(message) {{
+            const notification = document.getElementById('copyNotification');
+            notification.textContent = message;
+            notification.classList.add('show');
+            setTimeout(() => {{
+                notification.classList.remove('show');
+            }}, 2000);
+        }}
+
+        async function copyToClipboard(text) {{
+            try {{
+                await navigator.clipboard.writeText(text);
+                showNotification('Copied to clipboard!');
+                return true;
+            }} catch (err) {{
+                console.error('Failed to copy: ', err);
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                const result = document.execCommand('copy');
+                document.body.removeChild(textarea);
+                if (result) {{
+                    showNotification('Copied to clipboard!');
+                    return true;
+                }} else {{
+                    showNotification('Failed to copy');
+                    return false;
+                }}
+            }}
+        }}
+
+        function setupEventListeners() {{
+            document.addEventListener('click', function (e) {{
+                if (e.target && e.target.matches('.copy-btn[data-target]')) {{
+                    const targetId = e.target.getAttribute('data-target');
+                    const targetElement = document.getElementById(targetId);
+                    if (targetElement) {{
+                        const text = targetElement.textContent.trim();
+                        copyToClipboard(text);
+                    }}
+                }}
+
+                if (e.target && e.target.id === 'pinCopy') {{
+                    const pinLink = document.getElementById('pinLink');
+                    copyToClipboard(pinLink.href);
+                }}
+            }});
+        }}
+
+        function updateContent() {{
+            const ipAddress = getQueryParam('url') || '{ip_address}';
+            const formUrl = getQueryParam('form') || '{form_link}';
+
+            document.getElementById('ipAddress').textContent = ipAddress;
+            document.getElementById('iOSAddress').textContent = `[::ffff:${{ipAddress}}]`;
+
+            const pinLink = document.getElementById('pinLink');
+            pinLink.href = `https://${{ipAddress}}:47990/pin`;
+            pinLink.textContent = `https://${{ipAddress}}:47990/pin`;
+
+            const vhdLink = document.getElementById('vhdLink');
+            if (vhdLink) {{
+                if (formUrl) {{
+                    vhdLink.style.display = 'block';
+                    vhdLink.href = formUrl;
+                    vhdLink.textContent = formUrl;
+                }} else {{
+                    vhdLink.style.display = 'none';
+                }}
+            }}
+        }}
+
+        function initializePage() {{
+            updateContent();
+            setupEventListeners();
+            updateYoutubeEmbed("{youtube_embed_src}");
+        }}
+
+        function updateYoutubeEmbed(url) {{
+            const getYoutubeVideoId = (url) => {{
+                const regex = /(?:https?:\\/\\/)?(?:www\\.)?(?:youtube\\.com\\/(?:watch\\?v=|embed\\/|v\\/|live\\/|.+\\?v=)?|youtu\\.be\\/)([^&\\n?#]+)/;
+                const match = url.match(regex);
+                return match ? match[1] : null;
+            }};
+
+            const videoId = getYoutubeVideoId(url);
+            if (videoId) {{
+                document.getElementById('y_main').src = `https://www.youtube.com/embed/${{videoId}}?loop=1&mute=1&playlist=${{videoId}}`;
+            }} else {{
+                document.getElementById('y_main').src = ''; // or fallback URL
+            }}
+        }}
+
+        document.addEventListener('DOMContentLoaded', initializePage);
+    </script>
 </body>
 
 </html>
