@@ -985,6 +985,7 @@ async def provision_vm_background(
                 "location": location,
                 "details": {
                     "step": "installing_extension",
+                    "message": "Script extension install...",
                     "timestamp": datetime.utcnow().isoformat()
                 }
             }
