@@ -97,11 +97,16 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
         
         # Validate required parameters
-        if not all([vm_name, resource_group, domain, location, RECIPIENT_EMAILS]):
+        missing_params = [p for p in ["vm_name", 
+                                      "resource_group", 
+                                      "domain", 
+                                      "location", 
+                                      "RECIPIENT_EMAILS"] if not locals()[p]]
+        if missing_params:
             return func.HttpResponse(
-                json.dumps({"error": "Missing required parameters"}),
+                json.dumps({"error": f"Missing parameters: {', '.join(missing_params)}"}),
                 status_code=400,
-                mimetype="application/json"
+                mimetype="application/json",
             )
         
         # Domain validation
@@ -202,6 +207,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 )
             )
 
+            #✅background-task started, hook_vm will be notified during
             return func.HttpResponse(
                 json.dumps({
                     "message": "VM provisioning started",
@@ -730,7 +736,7 @@ async def provision_vm_background(
             if not nic_client.ip_configurations or not nic_client.ip_configurations[0].public_ip_address:
                 error_msg = "No public IP found on NIC"
                 print_error(error_msg)
-                await cleanup_resources(
+                await cleanup_resources_on_failure(
                     network_client,
                     compute_client,
                     storage_client,
@@ -785,7 +791,7 @@ async def provision_vm_background(
         except Exception as e:
             error_msg = f"Failed to verify public IP: {str(e)}"
             print_error(error_msg)
-            await cleanup_resources(
+            await cleanup_resources_on_failure(
                 network_client,
                 compute_client,
                 storage_client,
@@ -843,7 +849,7 @@ async def provision_vm_background(
             ):
                 error_msg = "Incorrect NS delegation for DNS zone"
                 print_error(error_msg)
-                await cleanup_resources(
+                await cleanup_resources_on_failure(
                     network_client,
                     compute_client,
                     storage_client,
@@ -905,7 +911,7 @@ async def provision_vm_background(
         except Exception as e:
             error_msg = f"DNS configuration failed: {str(e)}"
             print_error(error_msg)
-            await cleanup_resources(
+            await cleanup_resources_on_failure(
                 network_client,
                 compute_client,
                 storage_client,
@@ -972,7 +978,7 @@ async def provision_vm_background(
         except Exception as e:
             error_msg = f"Failed to install custom script extension: {str(e)}"
             print_error(error_msg)
-            await cleanup_resources(
+            await cleanup_resources_on_failure(
                 network_client,
                 compute_client,
                 storage_client,
@@ -1145,7 +1151,7 @@ async def provision_vm_background(
                 }
             }
         )
-        await cleanup_resources(
+        await cleanup_resources_on_failure(
             network_client,
             compute_client,
             storage_client,
@@ -1261,7 +1267,7 @@ def check_ns_delegation(dns_client, resource_group, domain):
         print_error(f"NS delegation check failed: {e}")
         return False
 
-async def cleanup_resources(
+async def cleanup_resources_on_failure(
     network_client, compute_client, storage_client, blob_service_client, 
     container_name, blob_name, dns_client, resource_group, 
     domain, a_records, vm_name, storage_account_name

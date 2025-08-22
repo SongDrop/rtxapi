@@ -86,6 +86,1183 @@ async def run_azure_operation(func, *args, **kwargs):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, func, *args, **kwargs)
 
+async def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info('Processing create_vm request...')    
+    try:
+        try:
+            req_body = req.get_json()
+        except ValueError:
+            req_body = {}
+
+        # Extract parameters with defaults
+        vm_name = req_body.get('vm_name') or req.params.get('vm_name')
+        resource_group = req_body.get('resource_group') or req.params.get('resource_group')
+        domain = req_body.get('domain') or req.params.get('domain')
+        location = req_body.get('location') or req.params.get('location')
+        vm_size = req_body.get('vm_size') or req.params.get('vm_size')
+        storage_account_base = vm_name
+
+        # Image/Windows configuration
+        GALLERY_IMAGE_RESOURCE_GROUP = req_body.get('gallery_image_resource_group') or req.params.get('gallery_image_resource_group')
+        GALLERY_NAME = req_body.get('gallery_name') or req.params.get('gallery_name')
+        GALLERY_IMAGE_NAME = req_body.get('gallery_image_name') or req.params.get('gallery_image_name')
+        GALLERY_IMAGE_VERSION = req_body.get('gallery_image_version') or req.params.get('gallery_image_version') or 'latest'
+        OS_DISK_SSD_GB = int(req_body.get('os_disk_ssd_gb') or req.params.get('os_disk_ssd_gb') or 256)
+        WINDOWS_IMAGE_PASSWORD = req_body.get('windows_image_password') or req.params.get('windows_image_password')
+        RECIPIENT_EMAILS = req_body.get('recipient_emails') or req.params.get('recipient_emails')
+        DUMBDROP_PIN = req_body.get('dumbdrop_pin') or req.params.get('dumbdrop_pin') or '1234'
+        hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
+
+        # Validate required parameters
+        missing_params = [p for p in ["vm_name", 
+                                      "resource_group", 
+                                      "domain", 
+                                      "location", 
+                                      "vm_size", 
+                                      "GALLERY_IMAGE_RESOURCE_GROUP", 
+                                      "GALLERY_NAME", 
+                                      "GALLERY_IMAGE_NAME",
+                                      "WINDOWS_IMAGE_PASSWORD",
+                                      "RECIPIENT_EMAILS"] if not locals()[p]]
+        if missing_params:
+            return func.HttpResponse(
+                json.dumps({"error": f"Missing parameters: {', '.join(missing_params)}"}),
+                status_code=400,
+                mimetype="application/json",
+            )
+        
+        # Domain validation
+        if '.' not in domain or domain.startswith('.') or len(domain.split('.')) > 2:
+            return func.HttpResponse(
+                json.dumps({"error": "Invalid domain format"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        
+        # VM size validation
+        if not check_vm_size_compatibility(vm_size):
+            return func.HttpResponse(
+                json.dumps({
+                    "error": f"VM size {vm_size} is incompatible",
+                    "compatible_sizes": get_compatible_vm_sizes()
+                }),
+                status_code=400,
+                mimetype="application/json"
+            )
+        
+        # Initial status update
+        hook_response = await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "init",
+                    "vm_name": vm_name,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
+
+        if not hook_response.get("success") and hook_url:
+            error_msg = hook_response.get("error", "Unknown error posting status")
+            print_error(f"Initial status update failed: {error_msg}")
+            return func.HttpResponse(
+                json.dumps({"error": f"Status update failed: {error_msg}"}),
+                status_code=500,
+                mimetype="application/json"
+            )
+
+        status_url = hook_response.get("status_url", "")
+
+        try:
+            # Azure authentication
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "authenticating",
+                        "message": "Authenticating with Azure"
+                    }
+                }
+            )
+            
+            # Validate environment variables
+            required_vars = ['AZURE_APP_CLIENT_ID', 'AZURE_APP_CLIENT_SECRET', 
+                            'AZURE_APP_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']
+            missing = [var for var in required_vars if not os.environ.get(var)]
+            if missing:
+                raise Exception(f"Missing environment variables: {', '.join(missing)}")
+
+            credentials = ClientSecretCredential(
+                client_id=os.environ['AZURE_APP_CLIENT_ID'],
+                client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
+                tenant_id=os.environ['AZURE_APP_TENANT_ID']
+            )
+
+            # Start background provisioning
+            asyncio.create_task(
+                provision_vm_background(
+                    credentials,
+                    vm_name, resource_group, domain, location, vm_size,
+                    storage_account_base, GALLERY_IMAGE_RESOURCE_GROUP, GALLERY_NAME,
+                    GALLERY_IMAGE_NAME, GALLERY_IMAGE_VERSION, OS_DISK_SSD_GB,
+                    WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS, DUMBDROP_PIN, hook_url
+                )
+            )
+
+            #✅background-task started, hook_vm will be notified during setup
+            return func.HttpResponse(
+                json.dumps({
+                    "message": "VM provisioning started",
+                    "status_url": status_url,
+                    "vm_name": vm_name
+                }),
+                status_code=202,
+                mimetype="application/json"
+            )
+
+        except Exception as ex:
+            logging.exception("Authentication error:")
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "authentication_error",
+                        "error": str(ex),
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return func.HttpResponse(
+                json.dumps({"error": str(ex)}),
+                status_code=500,
+                mimetype="application/json"
+            )
+
+    except Exception as ex:
+        logging.exception("Unhandled error in main function:")
+        return func.HttpResponse(
+            json.dumps({"error": str(ex)}),
+            status_code=500,
+            mimetype="application/json"
+        )
+    
+
+async def provision_vm_background(
+    credentials,
+    vm_name, resource_group, domain, location, vm_size,
+    storage_account_base, GALLERY_IMAGE_RESOURCE_GROUP, GALLERY_NAME,
+    GALLERY_IMAGE_NAME, GALLERY_IMAGE_VERSION, OS_DISK_SSD_GB,
+    WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS, DUMBDROP_PIN, hook_url
+):
+    try:
+        # Initial status update
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "starting_provisioning", 
+                    "message": "Beginning VM provisioning process",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
+
+        subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
+        
+        # Initialize Azure clients
+        compute_client = ComputeManagementClient(credentials, subscription_id)
+        storage_client = StorageManagementClient(credentials, subscription_id)
+        network_client = NetworkManagementClient(credentials, subscription_id)
+        dns_client = DnsManagementClient(credentials, subscription_id)
+        
+        # Handle subdomain
+        subdomain = vm_name.strip().strip('.') if vm_name else None
+        fqdn = f"{subdomain}.{domain}" if subdomain else domain
+        print_info(f"Full domain to configure: {fqdn}")
+
+        # Create storage account
+        storage_account_name = f"{storage_account_base}{int(time.time()) % 10000}"
+        try:            
+            storage_config = await run_azure_operation(
+                create_storage_account,
+                storage_client,
+                resource_group,
+                storage_account_name,
+                location
+            )
+            global AZURE_STORAGE_ACCOUNT_KEY
+            AZURE_STORAGE_ACCOUNT_KEY = storage_config["AZURE_STORAGE_KEY"]
+            AZURE_STORAGE_URL = storage_config["AZURE_STORAGE_URL"]
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "storage_created",
+                        "message": "Storage account created successfully",
+                        "storage_account_name": storage_account_name
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to create storage account: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "storage_creation_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        # Generate and upload setup script
+        print_info("Generating PowerShell setup script...")
+        ssl_email = os.environ.get('SENDER_EMAIL')
+        ps_script = generate_setup.generate_setup(vm_name, fqdn, ssl_email, DUMBDROP_PIN, WINDOWS_IMAGE_PASSWORD)
+        
+        blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
+        container_name = 'vm-startup-scripts'
+        blob_name = f"{vm_name}-setup.ps1"
+
+        try:
+            blob_url_with_sas = await run_azure_operation(
+                upload_blob_and_generate_sas,
+                blob_service_client, 
+                container_name, 
+                blob_name, 
+                ps_script, 
+                2
+            )
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "script_uploaded",
+                        "message": "Setup script uploaded successfully"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to generate or upload setup script: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "script_upload_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        # Network infrastructure setup
+        vnet_name = f'{vm_name}-vnet'
+        subnet_name = f'{vm_name}-subnet'
+        public_ip_name = f'{vm_name}-public-ip'
+        nsg_name = f'{vm_name}-nsg'
+        
+        # Create virtual network
+        try:            
+            vnet_operation = network_client.virtual_networks.begin_create_or_update(
+                resource_group,
+                vnet_name,
+                {
+                    'location': location,
+                    'address_space': {'address_prefixes': ['10.1.0.0/16']},
+                    'subnets': [{'name': subnet_name, 'address_prefix': '10.1.0.0/24'}]
+                }
+            )
+            await run_azure_operation(vnet_operation.result)
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "vnet_created",
+                        "message": f"Virtual network {vnet_name} created"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to create virtual network: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "vnet_creation_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        # Create public IP
+        try:            
+            public_ip_params = {
+                'location': location,
+                'public_ip_allocation_method': 'Dynamic'
+            }
+            ip_operation = network_client.public_ip_addresses.begin_create_or_update(
+                resource_group,
+                public_ip_name,
+                public_ip_params
+            )
+            public_ip = await run_azure_operation(ip_operation.result)
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "public_ip_created",
+                        "message": f"Public IP {public_ip_name} created"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to create public IP: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "public_ip_creation_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        subnet_id = f'/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Network/virtualNetworks/{vnet_name}/subnets/{subnet_name}'
+        public_ip_id = f'/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Network/publicIPAddresses/{public_ip_name}'
+
+        # Create or update NSG
+        try:
+            nsg = None
+            try:
+                nsg = await run_azure_operation(
+                    network_client.network_security_groups.get,
+                    resource_group,
+                    nsg_name
+                )
+                await post_status_update(
+                    hook_url=hook_url,
+                    status_data={
+                        "vm_name": vm_name,
+                        "status": "provisioning",
+                        "resource_group": resource_group,
+                        "location": location,
+                        "details": {
+                            "step": "nsg_found",
+                            "message": f"Using existing NSG {nsg_name}"
+                        }
+                    }
+                )
+            except Exception:
+                nsg_params = NetworkSecurityGroup(location=location, security_rules=[])
+                nsg_operation = network_client.network_security_groups.begin_create_or_update(
+                    resource_group, 
+                    nsg_name, 
+                    nsg_params
+                )
+                nsg = await run_azure_operation(nsg_operation.result)
+                
+                await post_status_update(
+                    hook_url=hook_url,
+                    status_data={
+                        "vm_name": vm_name,
+                        "status": "provisioning",
+                        "resource_group": resource_group,
+                        "location": location,
+                        "details": {
+                            "step": "nsg_created",
+                            "message": f"Created new NSG {nsg_name}"
+                        }
+                    }
+                )
+
+            # Add NSG rules
+            existing_rules = {rule.name for rule in nsg.security_rules} if nsg.security_rules else set()
+            existing_priorities = {rule.priority for rule in nsg.security_rules if rule.direction == 'Inbound'} if nsg.security_rules else set()
+            priority = max(existing_priorities) + 1 if existing_priorities else 100
+
+            for port in PORTS_TO_OPEN:
+                rule_name = f'AllowAnyCustom{port}Inbound'
+                if rule_name not in existing_rules:
+                    while priority in existing_priorities or priority < 100 or priority > 4096:
+                        priority += 1
+                        if priority > 4096:
+                            error_msg = "Exceeded max NSG priority limit of 4096"
+                            await post_status_update(
+                                hook_url=hook_url,
+                                status_data={
+                                    "vm_name": vm_name,
+                                    "status": "failed",
+                                    "resource_group": resource_group,
+                                    "location": location,
+                                    "details": {
+                                        "step": "nsg_rule_failed",
+                                        "error": error_msg,
+                                        "timestamp": datetime.utcnow().isoformat()
+                                    }
+                                }
+                            )
+                            return
+
+                    rule = SecurityRule(
+                        name=rule_name,
+                        access='Allow',
+                        direction='Inbound',
+                        priority=priority,
+                        protocol='*',
+                        source_address_prefix='*',
+                        destination_address_prefix='*',
+                        destination_port_range=str(port),
+                        source_port_range='*'
+                    )
+                    nsg.security_rules.append(rule)
+                    existing_priorities.add(priority)
+                    priority += 1
+
+            nsg_operation = network_client.network_security_groups.begin_create_or_update(
+                resource_group,
+                nsg_name,
+                nsg
+            )
+            await run_azure_operation(nsg_operation.result)
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "nsg_rules_added",
+                        "message": f"Added {len(PORTS_TO_OPEN)} security rules"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to configure NSG: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "nsg_configuration_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        # Create NIC
+        try:
+            nic_params = {
+                'location': location,
+                'ip_configurations': [{
+                    'name': f'{vm_name}-ip-config',
+                    'subnet': {'id': subnet_id},
+                    'public_ip_address': {'id': public_ip_id}
+                }],
+                'network_security_group': {'id': nsg.id}
+            }
+            nic_operation = network_client.network_interfaces.begin_create_or_update(
+                resource_group, 
+                f'{vm_name}-nic', 
+                nic_params
+            )
+            nic = await run_azure_operation(nic_operation.result)
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "nic_created",
+                        "message": "Network interface created successfully"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to create network interface: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "nic_creation_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        # Create VM
+        try:            
+            # Get gallery image version
+            versions = await run_azure_operation(
+                compute_client.gallery_image_versions.list_by_gallery_image,
+                GALLERY_IMAGE_RESOURCE_GROUP,
+                GALLERY_NAME,
+                GALLERY_IMAGE_NAME
+            )
+            
+            if not versions:
+                error_msg = f"No image versions found in gallery '{GALLERY_NAME}' for image '{GALLERY_IMAGE_NAME}'."
+                print_error(error_msg)
+                await post_status_update(
+                    hook_url=hook_url,
+                    status_data={
+                        "vm_name": vm_name,
+                        "status": "failed",
+                        "resource_group": resource_group,
+                        "location": location,
+                        "details": {
+                            "step": "vm_creation_failed",
+                            "error": error_msg,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                    }
+                )
+                return
+            
+            # Pick the latest version
+            latest_version = sorted(versions, key=lambda v: v.name)[-1].name
+            print_info(f"Latest gallery image version found: {latest_version}")
+
+            image_version_id = (
+                f"/subscriptions/{subscription_id}/resourceGroups/{GALLERY_IMAGE_RESOURCE_GROUP}"
+                f"/providers/Microsoft.Compute/galleries/{GALLERY_NAME}"
+                f"/images/{GALLERY_IMAGE_NAME}/versions/{GALLERY_IMAGE_VERSION}"
+            )
+
+            image_latest_version_id = (
+                f"/subscriptions/{subscription_id}/resourceGroups/{GALLERY_IMAGE_RESOURCE_GROUP}"
+                f"/providers/Microsoft.Compute/galleries/{GALLERY_NAME}"
+                f"/images/{GALLERY_IMAGE_NAME}/versions/{latest_version}"
+            )
+
+            # Use the appropriate image version
+            image_version_to_use = image_version_id
+            if GALLERY_IMAGE_VERSION == 'latest':
+                image_version_to_use = image_latest_version_id
+
+            print_info(f"VM_Image: '{GALLERY_IMAGE_NAME}'.")
+            print_info(f"VM_Image_Version: '{image_version_to_use}'.")
+
+            # Create VM configuration
+            os_disk = {
+                'name': f'{vm_name}-os-disk',
+                'managed_disk': {'storage_account_type': 'Standard_LRS'},
+                'create_option': 'FromImage',
+                'disk_size_gb': OS_DISK_SSD_GB
+            }
+
+            image_reference = {
+                'id': image_version_to_use
+            }
+
+            # Define Trusted Launch security profile
+            security_profile = SecurityProfile(
+                security_type="TrustedLaunch"
+            )
+
+            vm_parameters = VirtualMachine(
+                location=location,
+                hardware_profile=HardwareProfile(vm_size=vm_size),
+                storage_profile=StorageProfile(os_disk=os_disk, image_reference=image_reference),
+                network_profile=NetworkProfile(network_interfaces=[NetworkInterfaceReference(id=nic.id)]),
+                security_profile=security_profile,
+                zones=None
+            )
+            
+            vm_operation = compute_client.virtual_machines.begin_create_or_update(
+                resource_group, 
+                vm_name, 
+                vm_parameters
+            )
+            vm = await run_azure_operation(vm_operation.result)
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "vm_created",
+                        "message": "Virtual machine created successfully",
+                        "vm_size": vm_size,
+                        "os_disk_size_gb": OS_DISK_SSD_GB
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to create virtual machine: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "vm_creation_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        # Wait for VM initialization
+        await asyncio.sleep(30)
+
+        a_records = [f'pin.{subdomain}',f'drop.{subdomain}',f'web.{subdomain}']
+        # Verify public IP assignment
+        try:            
+            nic_client = await run_azure_operation(
+                network_client.network_interfaces.get,
+                resource_group,
+                f'{vm_name}-nic'
+            )
+            if not nic_client.ip_configurations or not nic_client.ip_configurations[0].public_ip_address:
+                error_msg = "No public IP found on NIC"
+                print_error(error_msg)
+                await cleanup_resources_on_failure(
+                    network_client,
+                    compute_client,
+                    storage_client,
+                    blob_service_client,
+                    container_name,
+                    blob_name,
+                    dns_client,
+                    resource_group,
+                    domain,
+                    a_records,
+                    vm_name,
+                    storage_account_name
+                )
+                
+                await post_status_update(
+                    hook_url=hook_url,
+                    status_data={
+                        "vm_name": vm_name,
+                        "status": "failed",
+                        "resource_group": resource_group,
+                        "location": location,
+                        "details": {
+                            "step": "public_ip_verification_failed",
+                            "error": error_msg,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                    }
+                )
+                return
+
+            public_ip_name = nic_client.ip_configurations[0].public_ip_address.id.split('/')[-1]
+            public_ip_info = await run_azure_operation(
+                network_client.public_ip_addresses.get,
+                resource_group,
+                public_ip_name
+            )
+            public_ip = public_ip_info.ip_address
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "public_ip_confirmed",
+                        "message": f"VM public IP: {public_ip}"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to verify public IP: {str(e)}"
+            print_error(error_msg)
+            
+            await cleanup_resources_on_failure(
+                network_client,
+                compute_client,
+                storage_client,
+                blob_service_client,
+                container_name,
+                blob_name,
+                dns_client,
+                resource_group,
+                domain,
+                a_records,
+                vm_name,
+                storage_account_name
+            )
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "public_ip_verification_error",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        # DNS Configuration
+        try:            
+            # Create DNS Zone
+            try:
+                dns_zone = await run_azure_operation(
+                    dns_client.zones.get,
+                    resource_group,
+                    domain
+                )
+            except Exception:
+                zone_operation = await run_azure_operation(
+                    dns_client.zones.create_or_update,
+                    resource_group, 
+                    domain, 
+                    {'location': 'global'}
+                )
+                dns_zone = await run_azure_operation(zone_operation.result)
+                await asyncio.sleep(5)  # Wait for DNS zone initialization
+                
+            # Verify NS delegation
+            if not await check_ns_delegation_with_retries(dns_client, resource_group, domain):
+                error_msg = "Incorrect NS delegation for DNS zone"
+                print_error(error_msg)
+                
+                await cleanup_resources_on_failure(
+                    network_client,
+                    compute_client,
+                    storage_client,
+                    blob_service_client,
+                    container_name,
+                    blob_name,
+                    dns_client,
+                    resource_group,
+                    domain,
+                    a_records,
+                    vm_name,
+                    storage_account_name
+                )
+                
+                await post_status_update(
+                    hook_url=hook_url,
+                    status_data={
+                        "vm_name": vm_name,
+                        "status": "failed",
+                        "resource_group": resource_group,
+                        "location": location,
+                        "details": {
+                            "step": "ns_delegation_failed",
+                            "error": error_msg,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                    }
+                )
+                return
+
+            # Create DNS A records
+            for a_record in a_records:
+                a_record_set = RecordSet(
+                    ttl=3600, 
+                    a_records=[{'ipv4_address': public_ip}]
+                )
+                await run_azure_operation(
+                    dns_client.record_sets.create_or_update,
+                    resource_group, 
+                    domain, 
+                    a_record, 
+                    'A', 
+                    a_record_set
+                )
+                
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "dns_records_created",
+                        "message": "DNS records configured successfully"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"DNS configuration failed: {str(e)}"
+            print_error(error_msg)
+            
+            await cleanup_resources_on_failure(
+                network_client,
+                compute_client,
+                storage_client,
+                blob_service_client,
+                container_name,
+                blob_name,
+                dns_client,
+                resource_group,
+                domain,
+                a_records,
+                vm_name,
+                storage_account_name
+            )
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "dns_configuration_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        # Install Custom Script Extension
+        try:
+            ext_params = {
+                'location': location,
+                'publisher': 'Microsoft.Compute',
+                'type': 'CustomScriptExtension',
+                'type_handler_version': '1.10',
+                'settings': {
+                    'fileUris': [blob_url_with_sas],
+                    'commandToExecute': f'powershell -ExecutionPolicy Unrestricted -File {blob_name}'
+                },
+            }
+            extension_operation = compute_client.virtual_machine_extensions.begin_create_or_update(
+                resource_group,
+                vm_name,
+                'customScriptExtension',
+                ext_params
+            )
+            extension = await run_azure_operation(extension_operation.result, timeout=600)
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "extension_installed",
+                        "message": "Custom script extension installed"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to install custom script extension: {str(e)}"
+            print_error(error_msg)
+            await cleanup_resources_on_failure(
+                network_client,
+                compute_client,
+                storage_client,
+                blob_service_client,
+                container_name,
+                blob_name,
+                dns_client,
+                resource_group,
+                domain,
+                a_records,
+                vm_name,
+                storage_account_name
+            )
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "extension_installation_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        # Cleanup temporary storage
+        try:            
+            await cleanup_temp_storage_on_success(
+                resource_group, 
+                storage_client, 
+                storage_account_name, 
+                blob_service_client, 
+                container_name, 
+                blob_name
+            )
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "cleanup_complete",
+                        "message": "Temporary resources cleaned up"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Cleanup failed (non-critical): {str(e)}"
+            print_warn(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "cleanup_warning",
+                        "warning": error_msg
+                    }
+                }
+            )
+
+        # Final wait
+        await asyncio.sleep(30)
+
+        # Send completion email
+        try:
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "sending_email",
+                        "message": "Sending completion email"
+                    }
+                }
+            )
+            
+            smtp_host = os.environ.get('SMTP_HOST')
+            smtp_port = int(os.environ.get('SMTP_PORT', 587))
+            smtp_user = os.environ.get('SMTP_USER')
+            smtp_password = os.environ.get('SMTP_PASS')
+            sender_email = os.environ.get('SENDER_EMAIL')
+            recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
+            
+            html_content = html_email.HTMLEmail(
+                ip_address=public_ip,
+                background_image_url="https://modwiki.dhewm3.org/images/c/cd/Bump2spec_1_local.png",
+                title=f"{vm_name} - Idtech RemoteRTX",
+                main_heading=f"{vm_name} - Idtech RemoteRTX",
+                main_description="Your virtual machine is ready to play games.",
+                youtube_embed_src="https://youtu.be/PeVxO56lCBs",
+                image_left_src="",
+                image_right_src="",
+                logo_src="https://i.postimg.cc/BnsDT6sQ/mohradiant.png",
+                company_src="https://i.postimg.cc/25pxqcWZ/powered-by-idtech.png",
+                discord_widget_src="https://discord.com/widget?id=1363815250742480927&theme=dark",
+                windows_password=WINDOWS_IMAGE_PASSWORD,
+                credentials_sunshine="Username: <strong>sunshine</strong><br>Password: <strong>sunshine</strong>",
+                form_description="Fill our form, so we can match your team with investors/publishers",
+                form_link="https://forms.gle/QgFZQhaehZLs9sySA"
+            )
+
+            await run_azure_operation(
+                html_email_send.send_html_email_smtp,
+                smtp_host=smtp_host,
+                smtp_port=smtp_port,
+                smtp_user=smtp_user,
+                smtp_password=smtp_password,
+                sender_email=sender_email,
+                recipient_emails=recipient_emails,
+                subject=f"Azure VM '{vm_name}' Completed",
+                html_content=html_content,
+                use_tls=True
+            )
+            
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "email_sent",
+                        "message": "Completion email sent"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to send email: {str(e)}"
+            print_warn(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "email_failed",
+                        "warning": error_msg
+                    }
+                }
+            )
+
+        # Final success update
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "completed",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "completed",
+                    "message": "VM provisioning successful",
+                    "public_ip": public_ip,
+                    "url": f"https://cdn.sdappnet.cloud/rtx/rtxidtech.html?url={public_ip}",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
+
+        print_success(f"Azure Windows VM provisioning completed successfully!")
+        print_success(f"Pin moonlight service at: https://pin.{subdomain}.{domain}")
+        print_success(f"Drop files service at: https://drop.{subdomain}.{domain}")
+        print_success(f"Pin: {DUMBDROP_PIN}")
+        
+    except Exception as e:
+        # Top-level error handler for background task
+        error_msg = f"Unhandled exception in background task: {str(e)}"
+        print_error(error_msg)
+        
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "failed",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "background_task_failed",
+                    "error": error_msg,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
+        
+        await cleanup_resources_on_failure(
+            network_client,
+            compute_client,
+            storage_client,
+            blob_service_client,
+            container_name,
+            blob_name,
+            dns_client,
+            resource_group,
+            domain,
+            a_records,
+            vm_name,
+            storage_account_name
+        )
+
+
 async def create_storage_account(storage_client, resource_group_name, storage_name, location):
     print_info(f"Creating storage account '{storage_name}' in '{location}'...")
     try:
@@ -362,1364 +1539,7 @@ async def cleanup_temp_storage_on_success(
     print_success("Temp storage cleanup completed.")
 
  
-async def provision_vm_background(
-    credentials,
-    vm_name, resource_group, domain, location, vm_size,
-    storage_account_base, GALLERY_IMAGE_RESOURCE_GROUP, GALLERY_NAME,
-    GALLERY_IMAGE_NAME, GALLERY_IMAGE_VERSION, OS_DISK_SSD_GB,
-    WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS, DUMBDROP_PIN, hook_url
-):
-    try:
-        subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
-        
-        # Initialize Azure clients
-        compute_client = ComputeManagementClient(credentials, subscription_id)
-        storage_client = StorageManagementClient(credentials, subscription_id)
-        network_client = NetworkManagementClient(credentials, subscription_id)
-        dns_client = DnsManagementClient(credentials, subscription_id)
-        
-        # Initial status update
-        await post_status_update(
-            hook_url=hook_url,
-            status_data={
-                "vm_name": vm_name,
-                "status": "provisioning",
-                "resource_group": resource_group,
-                "location": location,
-                "details": {
-                    "step": "starting_provisioning", 
-                    "message": "Beginning VM provisioning process",
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            }
-        )
 
-        # Handle subdomain
-        subdomain = vm_name.strip().strip('.') if vm_name else None
-        fqdn = f"{subdomain}.{domain}" if subdomain else domain
-        print_info(f"Full domain to configure: {fqdn}")
-
-        # Create storage account
-        storage_account_name = f"{storage_account_base}{int(time.time()) % 10000}"
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "creating_storage",
-                        "message": "Creating storage account"
-                    }
-                }
-            )
-            
-            storage_config = await create_storage_account(storage_client, resource_group, storage_account_name, location)
-            global AZURE_STORAGE_ACCOUNT_KEY
-            AZURE_STORAGE_ACCOUNT_KEY = storage_config["AZURE_STORAGE_KEY"]
-            AZURE_STORAGE_URL = storage_config["AZURE_STORAGE_URL"]
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "storage_created",
-                        "message": "Storage account created successfully",
-                        "storage_account_name": storage_account_name
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to create storage account: {str(e)}"
-            print_error(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "storage_creation_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
-        # Generate and upload setup script
-        print_info("Generating PowerShell setup script...")
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "generating_script",
-                        "message": "Generating setup script"
-                    }
-                }
-            )
-            
-            ssl_email = os.environ.get('SENDER_EMAIL')
-            ps_script = generate_setup.generate_setup(vm_name, fqdn, ssl_email, DUMBDROP_PIN, WINDOWS_IMAGE_PASSWORD)
-            
-            blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
-            container_name = 'vm-startup-scripts'
-            blob_name = f"{vm_name}-setup.ps1"
-
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "uploading_script",
-                        "message": "Uploading setup script to storage"
-                    }
-                }
-            )
-            
-            blob_url_with_sas = await upload_blob_and_generate_sas(
-                blob_service_client, container_name, blob_name, ps_script, 2
-            )
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "script_uploaded",
-                        "message": "Setup script uploaded successfully"
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to generate or upload setup script: {str(e)}"
-            print_error(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "script_upload_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
-        # Network infrastructure setup
-        vnet_name = f'{vm_name}-vnet'
-        subnet_name = f'{vm_name}-subnet'
-        public_ip_name = f'{vm_name}-public-ip'
-        nsg_name = f'{vm_name}-nsg'
-        
-        # Create virtual network
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "creating_network",
-                        "message": "Creating virtual network"
-                    }
-                }
-            )
-            
-            vnet_operation = await run_azure_operation(
-                network_client.virtual_networks.begin_create_or_update,
-                resource_group,
-                vnet_name,
-                {
-                    'location': location,
-                    'address_space': {'address_prefixes': ['10.1.0.0/16']},
-                    'subnets': [{'name': subnet_name, 'address_prefix': '10.1.0.0/24'}]
-                }
-            )
-            await run_azure_operation(vnet_operation.result)
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "vnet_created",
-                        "message": f"Virtual network {vnet_name} created"
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to create virtual network: {str(e)}"
-            print_error(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "vnet_creation_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
-        # Create public IP
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "creating_public_ip",
-                        "message": "Creating public IP address"
-                    }
-                }
-            )
-            
-            public_ip_params = {
-                'location': location,
-                'public_ip_allocation_method': 'Dynamic'
-            }
-            ip_operation = await run_azure_operation(
-                network_client.public_ip_addresses.begin_create_or_update,
-                resource_group,
-                public_ip_name,
-                public_ip_params
-            )
-            public_ip = await run_azure_operation(ip_operation.result)
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "public_ip_created",
-                        "message": f"Public IP {public_ip_name} created"
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to create public IP: {str(e)}"
-            print_error(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "public_ip_creation_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
-        subnet_id = f'/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Network/virtualNetworks/{vnet_name}/subnets/{subnet_name}'
-        public_ip_id = f'/subscriptions/{subscription_id}/resourceGroups/{resource_group}/providers/Microsoft.Network/publicIPAddresses/{public_ip_name}'
-
-        # Create or update NSG
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "configuring_nsg",
-                        "message": "Configuring network security group"
-                    }
-                }
-            )
-            
-            nsg = None
-            try:
-                nsg = await run_azure_operation(
-                    network_client.network_security_groups.get,
-                    resource_group,
-                    nsg_name
-                )
-                await post_status_update(
-                    hook_url=hook_url,
-                    status_data={
-                        "vm_name": vm_name,
-                        "status": "provisioning",
-                        "resource_group": resource_group,
-                        "location": location,
-                        "details": {
-                            "step": "nsg_found",
-                            "message": f"Using existing NSG {nsg_name}"
-                        }
-                    }
-                )
-            except Exception:
-                nsg_params = NetworkSecurityGroup(location=location, security_rules=[])
-                nsg_operation = await run_azure_operation(
-                    network_client.network_security_groups.begin_create_or_update,
-                    resource_group, 
-                    nsg_name, 
-                    nsg_params
-                )
-                nsg = await run_azure_operation(nsg_operation.result)
-                
-                await post_status_update(
-                    hook_url=hook_url,
-                    status_data={
-                        "vm_name": vm_name,
-                        "status": "provisioning",
-                        "resource_group": resource_group,
-                        "location": location,
-                        "details": {
-                            "step": "nsg_created",
-                            "message": f"Created new NSG {nsg_name}"
-                        }
-                    }
-                )
-
-            # Add NSG rules
-            existing_rules = {rule.name for rule in nsg.security_rules} if nsg.security_rules else set()
-            existing_priorities = {rule.priority for rule in nsg.security_rules if rule.direction == 'Inbound'} if nsg.security_rules else set()
-            priority = max(existing_priorities) + 1 if existing_priorities else 100
-
-            for port in PORTS_TO_OPEN:
-                rule_name = f'AllowAnyCustom{port}Inbound'
-                if rule_name not in existing_rules:
-                    while priority in existing_priorities or priority < 100 or priority > 4096:
-                        priority += 1
-                        if priority > 4096:
-                            error_msg = "Exceeded max NSG priority limit of 4096"
-                            await post_status_update(
-                                hook_url=hook_url,
-                                status_data={
-                                    "vm_name": vm_name,
-                                    "status": "failed",
-                                    "resource_group": resource_group,
-                                    "location": location,
-                                    "details": {
-                                        "step": "nsg_rule_failed",
-                                        "error": error_msg,
-                                        "timestamp": datetime.utcnow().isoformat()
-                                    }
-                                }
-                            )
-                            return
-
-                    rule = SecurityRule(
-                        name=rule_name,
-                        access='Allow',
-                        direction='Inbound',
-                        priority=priority,
-                        protocol='*',
-                        source_address_prefix='*',
-                        destination_address_prefix='*',
-                        destination_port_range=str(port),
-                        source_port_range='*'
-                    )
-                    nsg.security_rules.append(rule)
-                    existing_priorities.add(priority)
-                    priority += 1
-
-            nsg_operation = await run_azure_operation(
-                network_client.network_security_groups.begin_create_or_update,
-                resource_group,
-                nsg_name,
-                nsg
-            )
-            await run_azure_operation(nsg_operation.result)
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "nsg_rules_added",
-                        "message": f"Added {len(PORTS_TO_OPEN)} security rules"
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to configure NSG: {str(e)}"
-            print_error(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "nsg_configuration_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
-        # Create NIC
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "creating_nic",
-                        "message": "Creating network interface"
-                    }
-                }
-            )
-            
-            nic_params = {
-                'location': location,
-                'ip_configurations': [{
-                    'name': f'{vm_name}-ip-config',
-                    'subnet': {'id': subnet_id},
-                    'public_ip_address': {'id': public_ip_id}
-                }],
-                'network_security_group': {'id': nsg.id}
-            }
-            nic_operation = await run_azure_operation(
-                network_client.network_interfaces.begin_create_or_update,
-                resource_group, 
-                f'{vm_name}-nic', 
-                nic_params
-            )
-            nic = await run_azure_operation(nic_operation.result)
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "nic_created",
-                        "message": "Network interface created successfully"
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to create network interface: {str(e)}"
-            print_error(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "nic_creation_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
-        # Create VM
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "creating_vm",
-                        "message": "Creating virtual machine"
-                    }
-                }
-            )
-            
-            # Get gallery image version
-            versions = await run_azure_operation(
-                compute_client.gallery_image_versions.list_by_gallery_image,
-                GALLERY_IMAGE_RESOURCE_GROUP,
-                GALLERY_NAME,
-                GALLERY_IMAGE_NAME
-            )
-            
-            if not versions:
-                error_msg = f"No image versions found in gallery '{GALLERY_NAME}' for image '{GALLERY_IMAGE_NAME}'."
-                print_error(error_msg)
-                await post_status_update(
-                    hook_url=hook_url,
-                    status_data={
-                        "vm_name": vm_name,
-                        "status": "failed",
-                        "resource_group": resource_group,
-                        "location": location,
-                        "details": {
-                            "step": "vm_creation_failed",
-                            "error": error_msg,
-                            "timestamp": datetime.utcnow().isoformat()
-                        }
-                    }
-                )
-                return
-            
-            # Pick the latest version
-            latest_version = sorted(versions, key=lambda v: v.name)[-1].name
-            print_info(f"Latest gallery image version found: {latest_version}")
-
-            image_version_id = (
-                f"/subscriptions/{subscription_id}/resourceGroups/{GALLERY_IMAGE_RESOURCE_GROUP}"
-                f"/providers/Microsoft.Compute/galleries/{GALLERY_NAME}"
-                f"/images/{GALLERY_IMAGE_NAME}/versions/{GALLERY_IMAGE_VERSION}"
-            )
-
-            image_latest_version_id = (
-                f"/subscriptions/{subscription_id}/resourceGroups/{GALLERY_IMAGE_RESOURCE_GROUP}"
-                f"/providers/Microsoft.Compute/galleries/{GALLERY_NAME}"
-                f"/images/{GALLERY_IMAGE_NAME}/versions/{latest_version}"
-            )
-
-            # Use the appropriate image version
-            image_version_to_use = image_version_id
-            if GALLERY_IMAGE_VERSION == 'latest':
-                image_version_to_use = image_latest_version_id
-
-            print_info(f"VM_Image: '{GALLERY_IMAGE_NAME}'.")
-            print_info(f"VM_Image_Version: '{image_version_to_use}'.")
-
-            # Create VM configuration
-            os_disk = {
-                'name': f'{vm_name}-os-disk',
-                'managed_disk': {'storage_account_type': 'Standard_LRS'},
-                'create_option': 'FromImage',
-                'disk_size_gb': OS_DISK_SSD_GB
-            }
-
-            image_reference = {
-                'id': image_version_to_use
-            }
-
-            # Define Trusted Launch security profile
-            security_profile = SecurityProfile(
-                security_type="TrustedLaunch"
-            )
-
-            vm_parameters = VirtualMachine(
-                location=location,
-                hardware_profile=HardwareProfile(vm_size=vm_size),
-                storage_profile=StorageProfile(os_disk=os_disk, image_reference=image_reference),
-                network_profile=NetworkProfile(network_interfaces=[NetworkInterfaceReference(id=nic.id)]),
-                security_profile=security_profile,
-                zones=None
-            )
-            
-            vm_operation = await run_azure_operation(
-                compute_client.virtual_machines.begin_create_or_update,
-                resource_group, 
-                vm_name, 
-                vm_parameters
-            )
-            vm = await run_azure_operation(vm_operation.result)
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "vm_created",
-                        "message": "Virtual machine created successfully",
-                        "vm_size": vm_size,
-                        "os_disk_size_gb": OS_DISK_SSD_GB
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to create virtual machine: {str(e)}"
-            print_error(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "vm_creation_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
-        # Wait for VM initialization
-        await asyncio.sleep(30)
-
-        # Verify public IP assignment
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "verifying_public_ip",
-                        "message": "Verifying public IP assignment"
-                    }
-                }
-            )
-            
-            nic_client = await run_azure_operation(
-                network_client.network_interfaces.get,
-                resource_group,
-                f'{vm_name}-nic'
-            )
-            if not nic_client.ip_configurations or not nic_client.ip_configurations[0].public_ip_address:
-                error_msg = "No public IP found on NIC"
-                print_error(error_msg)
-                
-                await cleanup_resources_on_failure(
-                    network_client,
-                    compute_client,
-                    storage_client,
-                    blob_service_client,
-                    container_name,
-                    blob_name,
-                    dns_client,
-                    resource_group,
-                    domain,
-                    [f'pin.{subdomain}', f'drop.{subdomain}', f'web.{subdomain}'],
-                    vm_name,
-                    storage_account_name
-                )
-                
-                await post_status_update(
-                    hook_url=hook_url,
-                    status_data={
-                        "vm_name": vm_name,
-                        "status": "failed",
-                        "resource_group": resource_group,
-                        "location": location,
-                        "details": {
-                            "step": "public_ip_verification_failed",
-                            "error": error_msg,
-                            "timestamp": datetime.utcnow().isoformat()
-                        }
-                    }
-                )
-                return
-
-            public_ip_name = nic_client.ip_configurations[0].public_ip_address.id.split('/')[-1]
-            public_ip_info = await run_azure_operation(
-                network_client.public_ip_addresses.get,
-                resource_group,
-                public_ip_name
-            )
-            public_ip = public_ip_info.ip_address
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "public_ip_confirmed",
-                        "message": f"VM public IP: {public_ip}"
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to verify public IP: {str(e)}"
-            print_error(error_msg)
-            
-            await cleanup_resources_on_failure(
-                network_client,
-                compute_client,
-                storage_client,
-                blob_service_client,
-                container_name,
-                blob_name,
-                dns_client,
-                resource_group,
-                domain,
-                [f'pin.{subdomain}', f'drop.{subdomain}', f'web.{subdomain}'],
-                vm_name,
-                storage_account_name
-            )
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "public_ip_verification_error",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
-        # DNS Configuration
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "configuring_dns",
-                        "message": "Configuring DNS records"
-                    }
-                }
-            )
-            
-            # Create DNS Zone
-            try:
-                dns_zone = await run_azure_operation(
-                    dns_client.zones.get,
-                    resource_group,
-                    domain
-                )
-                await post_status_update(
-                    hook_url=hook_url,
-                    status_data={
-                        "vm_name": vm_name,
-                        "status": "provisioning",
-                        "resource_group": resource_group,
-                        "location": location,
-                        "details": {
-                            "step": "dns_zone_found",
-                            "message": f"Found existing DNS zone '{domain}'"
-                        }
-                    }
-                )
-            except Exception:
-                zone_operation = await run_azure_operation(
-                    dns_client.zones.create_or_update,
-                    resource_group, 
-                    domain, 
-                    {'location': 'global'}
-                )
-                dns_zone = await run_azure_operation(zone_operation.result)
-                await post_status_update(
-                    hook_url=hook_url,
-                    status_data={
-                        "vm_name": vm_name,
-                        "status": "provisioning",
-                        "resource_group": resource_group,
-                        "location": location,
-                        "details": {
-                            "step": "dns_zone_created",
-                            "message": f"Created DNS zone '{domain}'"
-                        }
-                    }
-                )
-                await asyncio.sleep(5)  # Wait for DNS zone initialization
-
-            # Verify NS delegation
-            if not await check_ns_delegation_with_retries(dns_client, resource_group, domain):
-                error_msg = "Incorrect NS delegation for DNS zone"
-                print_error(error_msg)
-                
-                await cleanup_resources_on_failure(
-                    network_client,
-                    compute_client,
-                    storage_client,
-                    blob_service_client,
-                    container_name,
-                    blob_name,
-                    dns_client,
-                    resource_group,
-                    domain,
-                    [f'pin.{subdomain}', f'drop.{subdomain}', f'web.{subdomain}'],
-                    vm_name,
-                    storage_account_name
-                )
-                
-                await post_status_update(
-                    hook_url=hook_url,
-                    status_data={
-                        "vm_name": vm_name,
-                        "status": "failed",
-                        "resource_group": resource_group,
-                        "location": location,
-                        "details": {
-                            "step": "ns_delegation_failed",
-                            "error": error_msg,
-                            "timestamp": datetime.utcnow().isoformat()
-                        }
-                    }
-                )
-                return
-
-            # Create DNS A records
-            a_records = [f'pin.{subdomain}', f'drop.{subdomain}', f'web.{subdomain}']
-            for a_record in a_records:
-                a_record_set = RecordSet(
-                    ttl=3600, 
-                    a_records=[{'ipv4_address': public_ip}]
-                )
-                await run_azure_operation(
-                    dns_client.record_sets.create_or_update,
-                    resource_group, 
-                    domain, 
-                    a_record, 
-                    'A', 
-                    a_record_set
-                )
-                
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "dns_records_created",
-                        "message": "DNS records configured successfully"
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"DNS configuration failed: {str(e)}"
-            print_error(error_msg)
-            
-            await cleanup_resources_on_failure(
-                network_client,
-                compute_client,
-                storage_client,
-                blob_service_client,
-                container_name,
-                blob_name,
-                dns_client,
-                resource_group,
-                domain,
-                [f'pin.{subdomain}', f'drop.{subdomain}', f'web.{subdomain}'],
-                vm_name,
-                storage_account_name
-            )
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "dns_configuration_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
-        # Install Custom Script Extension
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "installing_extension",
-                        "message": "Installing custom script extension"
-                    }
-                }
-            )
-            
-            ext_params = {
-                'location': location,
-                'publisher': 'Microsoft.Compute',
-                'type': 'CustomScriptExtension',
-                'type_handler_version': '1.10',
-                'settings': {
-                    'fileUris': [blob_url_with_sas],
-                    'commandToExecute': f'powershell -ExecutionPolicy Unrestricted -File {blob_name}'
-                },
-            }
-            extension_operation = await run_azure_operation(
-                compute_client.virtual_machine_extensions.begin_create_or_update,
-                resource_group,
-                vm_name,
-                'customScriptExtension',
-                ext_params
-            )
-            extension = await run_azure_operation(extension_operation.result, timeout=600)
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "extension_installed",
-                        "message": "Custom script extension installed"
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to install custom script extension: {str(e)}"
-            print_error(error_msg)
-            
-            await cleanup_resources_on_failure(
-                network_client,
-                compute_client,
-                storage_client,
-                blob_service_client,
-                container_name,
-                blob_name,
-                dns_client,
-                resource_group,
-                domain,
-                [f'pin.{subdomain}', f'drop.{subdomain}', f'web.{subdomain}'],
-                vm_name,
-                storage_account_name
-            )
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "extension_installation_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
-        # Cleanup temporary storage
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "cleaning_up",
-                        "message": "Cleaning up temporary resources"
-                    }
-                }
-            )
-            
-            await cleanup_temp_storage_on_success(
-                resource_group, 
-                storage_client, 
-                storage_account_name, 
-                blob_service_client, 
-                container_name, 
-                blob_name
-            )
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "cleanup_complete",
-                        "message": "Temporary resources cleaned up"
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Cleanup failed (non-critical): {str(e)}"
-            print_warn(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "cleanup_warning",
-                        "warning": error_msg
-                    }
-                }
-            )
-
-        # Final wait
-        await asyncio.sleep(30)
-
-        # Send completion email
-        try:
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "sending_email",
-                        "message": "Sending completion email"
-                    }
-                }
-            )
-            
-            smtp_host = os.environ.get('SMTP_HOST')
-            smtp_port = int(os.environ.get('SMTP_PORT', 587))
-            smtp_user = os.environ.get('SMTP_USER')
-            smtp_password = os.environ.get('SMTP_PASS')
-            sender_email = os.environ.get('SENDER_EMAIL')
-            recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
-            
-            html_content = html_email.HTMLEmail(
-                ip_address=public_ip,
-                background_image_url="https://modwiki.dhewm3.org/images/c/cd/Bump2spec_1_local.png",
-                title=f"{vm_name} - Idtech RemoteRTX",
-                main_heading=f"{vm_name} - Idtech RemoteRTX",
-                main_description="Your virtual machine is ready to play games.",
-                youtube_embed_src="https://youtu.be/PeVxO56lCBs",
-                image_left_src="",
-                image_right_src="",
-                logo_src="https://i.postimg.cc/BnsDT6sQ/mohradiant.png",
-                company_src="https://i.postimg.cc/25pxqcWZ/powered-by-idtech.png",
-                discord_widget_src="https://discord.com/widget?id=1363815250742480927&theme=dark",
-                windows_password=WINDOWS_IMAGE_PASSWORD,
-                credentials_sunshine="Username: <strong>sunshine</strong><br>Password: <strong>sunshine</strong>",
-                form_description="Fill our form, so we can match your team with investors/publishers",
-                form_link="https://forms.gle/QgFZQhaehZLs9sySA"
-            )
-
-            await run_azure_operation(
-                html_email_send.send_html_email_smtp,
-                smtp_host=smtp_host,
-                smtp_port=smtp_port,
-                smtp_user=smtp_user,
-                smtp_password=smtp_password,
-                sender_email=sender_email,
-                recipient_emails=recipient_emails,
-                subject=f"Azure VM '{vm_name}' Completed",
-                html_content=html_content,
-                use_tls=True
-            )
-            
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "email_sent",
-                        "message": "Completion email sent"
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to send email: {str(e)}"
-            print_warn(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "email_failed",
-                        "warning": error_msg
-                    }
-                }
-            )
-
-        # Final success update
-        await post_status_update(
-            hook_url=hook_url,
-            status_data={
-                "vm_name": vm_name,
-                "status": "completed",
-                "resource_group": resource_group,
-                "location": location,
-                "details": {
-                    "step": "completed",
-                    "message": "VM provisioning successful",
-                    "public_ip": public_ip,
-                    "url": f"https://cdn.sdappnet.cloud/rtx/rtxidtech.html?url={public_ip}",
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            }
-        )
-
-        print_success(f"Azure Windows VM provisioning completed successfully!")
-        print_success(f"Pin moonlight service at: https://pin.{subdomain}.{domain}")
-        print_success(f"Drop files service at: https://drop.{subdomain}.{domain}")
-        print_success(f"Pin: {DUMBDROP_PIN}")
-        
-    except Exception as e:
-        # Top-level error handler for background task
-        error_msg = f"Unhandled exception in background task: {str(e)}"
-        print_error(error_msg)
-        
-        await post_status_update(
-            hook_url=hook_url,
-            status_data={
-                "vm_name": vm_name,
-                "status": "failed",
-                "resource_group": resource_group,
-                "location": location,
-                "details": {
-                    "step": "background_task_failed",
-                    "error": error_msg,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            }
-        )
-        
-        await cleanup_resources_on_failure(
-            network_client,
-            compute_client,
-            storage_client,
-            blob_service_client,
-            container_name,
-            blob_name,
-            dns_client,
-            resource_group,
-            domain,
-            [f'pin.{subdomain}', f'drop.{subdomain}', f'web.{subdomain}'],
-            vm_name,
-            storage_account_name
-        )
-
-async def main(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Processing create_vm request...')
-    
-    try:
-        try:
-            req_body = req.get_json()
-        except ValueError:
-            req_body = {}
-
-        # Extract parameters with defaults
-        vm_name = req_body.get('vm_name') or req.params.get('vm_name')
-        resource_group = req_body.get('resource_group') or req.params.get('resource_group')
-        domain = req_body.get('domain') or req.params.get('domain')
-        location = req_body.get('location') or req.params.get('location')
-        vm_size = req_body.get('vm_size') or req.params.get('vm_size')
-        storage_account_base = vm_name
-
-        # Image/Windows configuration
-        GALLERY_IMAGE_RESOURCE_GROUP = req_body.get('gallery_image_resource_group') or req.params.get('gallery_image_resource_group')
-        GALLERY_NAME = req_body.get('gallery_name') or req.params.get('gallery_name')
-        GALLERY_IMAGE_NAME = req_body.get('gallery_image_name') or req.params.get('gallery_image_name')
-        GALLERY_IMAGE_VERSION = req_body.get('gallery_image_version') or req.params.get('gallery_image_version') or 'latest'
-        OS_DISK_SSD_GB = int(req_body.get('os_disk_ssd_gb') or req.params.get('os_disk_ssd_gb') or 256)
-        WINDOWS_IMAGE_PASSWORD = req_body.get('windows_image_password') or req.params.get('windows_image_password')
-        RECIPIENT_EMAILS = req_body.get('recipient_emails') or req.params.get('recipient_emails')
-        DUMBDROP_PIN = req_body.get('dumbdrop_pin') or req.params.get('dumbdrop_pin') or '1234'
-        hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
-
-        # Validate required parameters
-        if not all([vm_name, resource_group, domain, location, vm_size, 
-                   GALLERY_IMAGE_RESOURCE_GROUP, GALLERY_NAME, GALLERY_IMAGE_NAME,
-                   WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS]):
-            return func.HttpResponse(
-                json.dumps({"error": "Missing required parameters"}),
-                status_code=400,
-                mimetype="application/json"
-            )
-        
-        # Domain validation
-        if '.' not in domain or domain.startswith('.') or len(domain.split('.')) > 2:
-            return func.HttpResponse(
-                json.dumps({"error": "Invalid domain format"}),
-                status_code=400,
-                mimetype="application/json"
-            )
-        
-        # VM size validation
-        if not check_vm_size_compatibility(vm_size):
-            return func.HttpResponse(
-                json.dumps({
-                    "error": f"VM size {vm_size} is incompatible",
-                    "compatible_sizes": get_compatible_vm_sizes()
-                }),
-                status_code=400,
-                mimetype="application/json"
-            )
-        
-        # Initial status update
-        hook_response = await post_status_update(
-            hook_url=hook_url,
-            status_data={
-                "vm_name": vm_name,
-                "status": "provisioning",
-                "resource_group": resource_group,
-                "location": location,
-                "details": {
-                    "step": "init",
-                    "vm_name": vm_name,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            }
-        )
-
-        if not hook_response.get("success") and hook_url:
-            error_msg = hook_response.get("error", "Unknown error posting status")
-            print_error(f"Initial status update failed: {error_msg}")
-            return func.HttpResponse(
-                json.dumps({"error": f"Status update failed: {error_msg}"}),
-                status_code=500,
-                mimetype="application/json"
-            )
-
-        status_url = hook_response.get("status_url", "")
-
-        try:
-            # Azure authentication
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "authenticating",
-                        "message": "Authenticating with Azure"
-                    }
-                }
-            )
-            
-            # Validate environment variables
-            required_vars = ['AZURE_APP_CLIENT_ID', 'AZURE_APP_CLIENT_SECRET', 
-                            'AZURE_APP_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']
-            missing = [var for var in required_vars if not os.environ.get(var)]
-            if missing:
-                raise Exception(f"Missing environment variables: {', '.join(missing)}")
-
-            credentials = ClientSecretCredential(
-                client_id=os.environ['AZURE_APP_CLIENT_ID'],
-                client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
-                tenant_id=os.environ['AZURE_APP_TENANT_ID']
-            )
-
-            # Start background provisioning
-            asyncio.create_task(
-                provision_vm_background(
-                    credentials,
-                    vm_name, resource_group, domain, location, vm_size,
-                    storage_account_base, GALLERY_IMAGE_RESOURCE_GROUP, GALLERY_NAME,
-                    GALLERY_IMAGE_NAME, GALLERY_IMAGE_VERSION, OS_DISK_SSD_GB,
-                    WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS, DUMBDROP_PIN, hook_url
-                )
-            )
-
-            return func.HttpResponse(
-                json.dumps({
-                    "message": "VM provisioning started",
-                    "status_url": status_url,
-                    "vm_name": vm_name
-                }),
-                status_code=202,
-                mimetype="application/json"
-            )
-
-        except Exception as ex:
-            logging.exception("Authentication error:")
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "authentication_error",
-                        "error": str(ex),
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return func.HttpResponse(
-                json.dumps({"error": str(ex)}),
-                status_code=500,
-                mimetype="application/json"
-            )
-
-    except Exception as ex:
-        logging.exception("Unhandled error in main function:")
-        return func.HttpResponse(
-            json.dumps({"error": str(ex)}),
-            status_code=500,
-            mimetype="application/json"
-        )
 
 # ====================== STATUS UPDATE FUNCTION ======================
 async def post_status_update(hook_url: str, status_data: dict) -> dict:
