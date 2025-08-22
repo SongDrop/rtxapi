@@ -1101,7 +1101,7 @@ async def provision_vm_background(
                 'customScriptExtension',
                 ext_params
             )
-            extension = await run_azure_operation(extension_operation.result, timeout=600)
+            extension = await run_azure_operation(extension_operation.result)
             
             await post_status_update(
                 hook_url=hook_url,
