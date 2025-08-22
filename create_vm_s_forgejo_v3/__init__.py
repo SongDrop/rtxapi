@@ -1262,6 +1262,8 @@ def upload_blob_and_generate_sas(blob_service_client, container_name, blob_name,
     )
     return f"https://{blob_service_client.account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
 
+# ====================== VM_SIZE COMPATIBILITY FUNCTIONS ======================
+
 def get_compatible_vm_sizes():
     """Return list of compatible VM sizes"""
     return [

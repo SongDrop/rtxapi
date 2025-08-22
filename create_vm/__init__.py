@@ -1333,20 +1333,17 @@ async def provision_vm_background(
             storage_account_name
         )
 
+# ====================== HELPER FUNCTIONS ======================
 
-async def create_storage_account(storage_client, resource_group_name, storage_name, location):
-    print_info(f"Creating storage account '{storage_name}' in '{location}'...")
+def create_storage_account(storage_client, resource_group_name, storage_name, location):
+    """Create or get storage account"""
+    print_info(f"Creating storage account '{storage_name}'...")
     try:
         try:
-            await run_azure_operation(
-                storage_client.storage_accounts.get_properties,
-                resource_group_name,
-                storage_name
-            )
+            storage_client.storage_accounts.get_properties(resource_group_name, storage_name)
             print_info(f"Storage account '{storage_name}' already exists.")
         except:
-            poller = await run_azure_operation(
-                storage_client.storage_accounts.begin_create,
+            poller = storage_client.storage_accounts.begin_create(
                 resource_group_name,
                 storage_name,
                 {
@@ -1356,14 +1353,10 @@ async def create_storage_account(storage_client, resource_group_name, storage_na
                     "enable_https_traffic_only": True
                 }
             )
-            await run_azure_operation(poller.result)
+            poller.result()
             print_success(f"Storage account '{storage_name}' created.")
 
-        keys = await run_azure_operation(
-            storage_client.storage_accounts.list_keys,
-            resource_group_name,
-            storage_name
-        )
+        keys = storage_client.storage_accounts.list_keys(resource_group_name, storage_name)
         storage_key = keys.keys[0].value
         storage_url = f"https://{storage_name}.blob.core.windows.net"
 
@@ -1377,23 +1370,21 @@ async def create_storage_account(storage_client, resource_group_name, storage_na
         raise
 
 def ensure_container_exists(blob_service_client, container_name):
-    print_info(f"Checking container '{container_name}'.")
+    """Ensure blob container exists"""
     container_client = blob_service_client.get_container_client(container_name)
     try:
         container_client.create_container()
         print_success(f"Created container '{container_name}'.")
-    except Exception as e:
-        print_info(f"Container '{container_name}' likely exists or could not be created: {e}")
+    except Exception:
+        print_info(f"Container '{container_name}' already exists.")
     return container_client
 
-async def upload_blob_and_generate_sas(blob_service_client, container_name, blob_name, data, sas_expiry_hours=1):
-    print_info(f"Uploading blob '{blob_name}' to container '{container_name}'.")
+def upload_blob_and_generate_sas(blob_service_client, container_name, blob_name, data, sas_expiry_hours=1):
+    """Upload blob and generate SAS URL"""
     container_client = ensure_container_exists(blob_service_client, container_name)
     blob_client = container_client.get_blob_client(blob_name)
-    await run_azure_operation(blob_client.upload_blob, data, overwrite=True)
-    print_success(f"Uploaded blob '{blob_name}' to container '{container_name}'.")
+    blob_client.upload_blob(data, overwrite=True)
     
-    print_info(f"SAS URL generating for blob '{blob_name}'.")
     sas_token = generate_blob_sas(
         blob_service_client.account_name,
         container_name,
@@ -1402,11 +1393,10 @@ async def upload_blob_and_generate_sas(blob_service_client, container_name, blob
         expiry=datetime.utcnow() + timedelta(hours=sas_expiry_hours),
         account_key=AZURE_STORAGE_ACCOUNT_KEY
     )
-    blob_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{container_name}/{blob_name}"
-    blob_url_with_sas = f"{blob_url}?{sas_token}"
-    print_success(f"SAS URL generated for blob '{blob_name}'.")
-    return blob_url_with_sas
+    return f"https://{blob_service_client.account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
 
+# ====================== VM_SIZE COMPATIBILITY FUNCTIONS ======================
+# ===== NVIDIA GPU BASED INSTANCES =====
 def get_compatible_vm_sizes():
     return [
         'Standard_NV4as_v4',
@@ -1424,190 +1414,92 @@ def get_compatible_vm_sizes():
 def check_vm_size_compatibility(vm_size):
     return vm_size in get_compatible_vm_sizes()
 
-async def check_ns_delegation_with_retries(dns_client, resource_group, domain, retries=5, delay=10):
+def check_ns_delegation_with_retries(dns_client, resource_group, domain, retries=5, delay=10):
+    """Check NS delegation with retries"""
     for attempt in range(1, retries + 1):
-        if await check_ns_delegation(dns_client, resource_group, domain):
+        if check_ns_delegation(dns_client, resource_group, domain):
             return True
-        print_warn(f"\n⚠️ Retrying NS delegation check in {delay} seconds... (Attempt {attempt}/{retries})")
-        await asyncio.sleep(delay)
+        print_warn(f"Retrying NS delegation check in {delay} seconds... (Attempt {attempt}/{retries})")
+        time.sleep(delay)
     return False
 
-async def check_ns_delegation(dns_client, resource_group, domain):
-    print_warn(
-        "\nIMPORTANT: You must update your domain registrar's nameserver (NS) records "
-        "to exactly match the Azure DNS nameservers. Without this delegation, "
-        "your domain will NOT resolve correctly, and your application will NOT work as expected.\n"
-        "Please log into your domain registrar (e.g., Namecheap, GoDaddy) and set the NS records "
-        "for your domain to the above nameservers.\n"
-        "DNS changes may take up to 24–48 hours to propagate globally.\n"
-    )
-
+def check_ns_delegation(dns_client, resource_group, domain):
+    """Verify correct NS delegation"""
     try:
-        print_info("\n----------------------------")
-        print_info("🔍 Checking Azure DNS zone for NS servers...")
-        dns_zone = await run_azure_operation(dns_client.zones.get, resource_group, domain)
+        dns_zone = dns_client.zones.get(resource_group, domain)
         azure_ns = sorted(ns.lower().rstrip('.') for ns in dns_zone.name_servers)
-        print_info(f"✅ Azure DNS zone NS servers for '{domain}':")
-        for ns in azure_ns:
-            print(f"  - {ns}")
-    except Exception as e:
-        print_error(f"\n❌ Failed to get Azure DNS zone NS servers: {e}")
-        return False
-
-    try:
-        print_info("\n🌐 Querying public DNS to verify delegation...")
+        
         resolver = dns.resolver.Resolver()
         resolver.nameservers = ['8.8.8.8', '8.8.4.4']  # Google DNS
         answers = resolver.resolve(domain, 'NS')
         public_ns = sorted(str(rdata.target).lower().rstrip('.') for rdata in answers)
-        print_info(f"🌍 Publicly visible NS servers for '{domain}':")
-        for ns in public_ns:
-            print(f"  - {ns}")
+        
+        return set(azure_ns).issubset(set(public_ns))
     except Exception as e:
-        print_error(f"\n❌ Failed to resolve public NS records for domain '{domain}': {e}")
-        return False
-
-    if set(azure_ns).issubset(set(public_ns)):
-        print_success("\n✅✅✅ NS delegation is correctly configured ✅✅✅")
-        return True
-    else:
-        print_error("\n❌ NS delegation mismatch detected!")
-        print_error("\nAzure DNS NS servers:")
-        for ns in azure_ns:
-            print_error(f"  - {ns}")
-        print_error("\nPublicly visible NS servers:")
-        for ns in public_ns:
-            print_error(f"  - {ns}")
-
-        print_warn(
-            "\nACTION REQUIRED: Update your domain registrar's NS records to match the Azure DNS NS servers.\n"
-            "Provisioning will stop until this is fixed.\n"
-        )
+        print_error(f"NS delegation check failed: {e}")
         return False
 
 async def cleanup_resources_on_failure(
     network_client, compute_client, storage_client, blob_service_client, 
-    container_name, blob_name, dns_client, resource_group, domain, 
-    a_records, vm_name, storage_account_name
+    container_name, blob_name, dns_client, resource_group, 
+    domain, a_records, vm_name, storage_account_name
 ):
-    print_warn("Starting cleanup of Azure resources due to failure...")
-
-    # Delete VM
+    """Cleanup all resources on failure"""
+    print_warn("Cleaning up Azure resources due to failure...")
+    
+    # Delete VM and associated resources
     try:
-        vm = await run_azure_operation(compute_client.virtual_machines.get, resource_group, vm_name)
+        vm = compute_client.virtual_machines.get(resource_group, vm_name)
         os_disk_name = vm.storage_profile.os_disk.name
-        await run_azure_operation(
-            compute_client.virtual_machines.begin_delete(resource_group, vm_name).result
-        )
-        print_info(f"Deleted VM '{vm_name}'.")
-    except Exception as e:
-        print_warn(f"Could not delete VM '{vm_name}': {e}")
-        os_disk_name = None
-
-    # Delete OS disk if available
-    if os_disk_name:
+        compute_client.virtual_machines.begin_delete(resource_group, vm_name).wait()
+        compute_client.disks.begin_delete(resource_group, os_disk_name).wait()
+    except Exception:
+        pass
+    
+    # Delete networking resources
+    for resource_type, name in [
+        (network_client.network_interfaces, f"{vm_name}-nic"),
+        (network_client.network_security_groups, f"{vm_name}-nsg"),
+        (network_client.public_ip_addresses, f"{vm_name}-public-ip"),
+        (network_client.virtual_networks, f"{vm_name}-vnet")
+    ]:
         try:
-            await run_azure_operation(
-                compute_client.disks.begin_delete(resource_group, os_disk_name).result
-            )
-            print_info(f"Deleted OS disk '{os_disk_name}'.")
-        except Exception as e:
-            print_warn(f"Could not delete OS disk '{os_disk_name}': {e}")
-
-    # Delete NIC
+            resource_type.begin_delete(resource_group, name).wait()
+        except Exception:
+            pass
+    
+    # Delete storage resources
     try:
-        await run_azure_operation(
-            network_client.network_interfaces.begin_delete(resource_group, f"{vm_name}-nic").result
-        )
-        print_info(f"Deleted NIC '{vm_name}-nic'.")
-    except Exception as e:
-        print_warn(f"Could not delete NIC '{vm_name}-nic': {e}")
-
-    # Delete NSG
-    try:
-        await run_azure_operation(
-            network_client.network_security_groups.begin_delete(resource_group, f"{vm_name}-nsg").result
-        )
-        print_info(f"Deleted NSG '{vm_name}-nsg'.")
-    except Exception as e:
-        print_warn(f"Could not delete NSG '{vm_name}-nsg': {e}")
-
-    # Delete Public IP
-    try:
-        await run_azure_operation(
-            network_client.public_ip_addresses.begin_delete(resource_group, f"{vm_name}-public-ip").result
-        )
-        print_info(f"Deleted Public IP '{vm_name}-public-ip'.")
-    except Exception as e:
-        print_warn(f"Could not delete Public IP '{vm_name}-public-ip': {e}")
-
-    # Delete VNet
-    try:
-        await run_azure_operation(
-            network_client.virtual_networks.begin_delete(resource_group, f"{vm_name}-vnet").result
-        )
-        print_info(f"Deleted VNet '{vm_name}-vnet'.")
-    except Exception as e:
-        print_warn(f"Could not delete VNet '{vm_name}-vnet': {e}")
-
-    # Delete Storage Account
-    try:
-        print_info(f"Deleting blob '{blob_name}' from container '{container_name}'.")
         container_client = blob_service_client.get_container_client(container_name)
-        await run_azure_operation(container_client.delete_blob, blob_name)
-        print_success(f"Deleted blob '{blob_name}' from container '{container_name}'.")
-        
-        print_info(f"Deleting container '{container_name}'.")
-        await run_azure_operation(blob_service_client.delete_container, container_name)
-        print_success(f"Deleted container '{container_name}'.")
-        
-        print_info(f"Deleting storage account '{storage_account_name}'.")
-        await run_azure_operation(
-            storage_client.storage_accounts.delete, resource_group, storage_account_name
-        )
-        print_success(f"Deleted storage account '{storage_account_name}'.")
-    except Exception as e:
-        print_warn(f"Could not delete Storage Account '{storage_account_name}': {e}")
-
-    # Delete DNS A record (keep DNS zone)
+        container_client.delete_blob(blob_name)
+        blob_service_client.delete_container(container_name)
+        storage_client.storage_accounts.delete(resource_group, storage_account_name)
+    except Exception:
+        pass
+    
+    # Delete DNS records
     for record_name in a_records:
-        record_to_delete = record_name if record_name else '@'  # handle root domain with '@'
+        record_to_delete = record_name if record_name else '@'
         try:
-            await run_azure_operation(
-                dns_client.record_sets.delete, resource_group, domain, record_to_delete, 'A'
-            )
-            print_info(f"Deleted DNS A record '{record_to_delete}' in zone '{domain}'.")
-        except Exception as e:
-            print_warn(f"Could not delete DNS A record '{record_to_delete}' in zone '{domain}': {e}")
-
+            dns_client.record_sets.delete(resource_group, domain, record_to_delete, 'A')
+        except Exception:
+            pass
+    
     print_success("Cleanup completed.")
 
-async def cleanup_temp_storage_on_success(
+async def cleanup_temp_storage(
     resource_group, storage_client, storage_account_name, 
     blob_service_client, container_name, blob_name
 ):
-    print_info("Starting cleanup of Azure resources on success...")
-
-    # Delete Storage Account
+    """Cleanup temporary storage on success"""
     try:
-        print_info(f"Deleting blob '{blob_name}' from container '{container_name}'.")
         container_client = blob_service_client.get_container_client(container_name)
-        await run_azure_operation(container_client.delete_blob, blob_name)
-        print_success(f"Deleted blob '{blob_name}' from container '{container_name}'.")
-        
-        print_info(f"Deleting container '{container_name}'.")
-        await run_azure_operation(blob_service_client.delete_container, container_name)
-        print_success(f"Deleted container '{container_name}'.")
-        
-        print_info(f"Deleting storage account '{storage_account_name}'.")
-        await run_azure_operation(
-            storage_client.storage_accounts.delete, resource_group, storage_account_name
-        )
-        print_success(f"Deleted storage account '{storage_account_name}'.")
+        container_client.delete_blob(blob_name)
+        blob_service_client.delete_container(container_name)
+        storage_client.storage_accounts.delete(resource_group, storage_account_name)
     except Exception as e:
-        print_warn(f"Could not delete Storage Account '{storage_account_name}': {e}")
-
-    print_success("Temp storage cleanup completed.")
+        print_warn(f"Temp storage cleanup failed: {str(e)}")
+        raise
 
  
 
