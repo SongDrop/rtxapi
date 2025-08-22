@@ -972,20 +972,23 @@ async def provision_vm_background(
                     domain
                 )
             except Exception:
-                zone_operation = await run_azure_operation(
-                    dns_client.zones.create_or_update,
+                zone_operation = dns_client.zones.create_or_update(
                     resource_group, 
                     domain, 
                     {'location': 'global'}
                 )
                 dns_zone = await run_azure_operation(zone_operation.result)
                 await asyncio.sleep(5)  # Wait for DNS zone initialization
-                
+
             # Verify NS delegation
-            if not await check_ns_delegation_with_retries(dns_client, resource_group, domain):
+            if not await run_azure_operation(
+                check_ns_delegation_with_retries,
+                dns_client,
+                resource_group,
+                domain
+            ):
                 error_msg = "Incorrect NS delegation for DNS zone"
                 print_error(error_msg)
-                
                 await cleanup_resources_on_failure(
                     network_client,
                     compute_client,
@@ -1016,6 +1019,7 @@ async def provision_vm_background(
                     }
                 )
                 return
+
 
             # Create DNS A records
             for a_record in a_records:
@@ -1048,7 +1052,6 @@ async def provision_vm_background(
         except Exception as e:
             error_msg = f"DNS configuration failed: {str(e)}"
             print_error(error_msg)
-            
             await cleanup_resources_on_failure(
                 network_client,
                 compute_client,
@@ -1148,8 +1151,9 @@ async def provision_vm_background(
             return
 
         # Cleanup temporary storage
-        try:            
-            await cleanup_temp_storage_on_success(
+        try:
+            await run_azure_operation(
+                cleanup_temp_storage,
                 resource_group, 
                 storage_client, 
                 storage_account_name, 
