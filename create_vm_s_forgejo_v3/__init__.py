@@ -96,34 +96,68 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         RECIPIENT_EMAILS = req_body.get('recipient_emails') or req.params.get('recipient_emails')
         hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
         
-        # Validate required parameters
-        missing_params = [p for p in ["vm_name", 
-                                      "resource_group", 
-                                      "domain", 
-                                      "location", 
-                                      "RECIPIENT_EMAILS"] if not locals()[p]]
-        if missing_params:
+        ###Parameter checking to handle errors 
+        if not vm_name:
             return func.HttpResponse(
-                json.dumps({"error": f"Missing parameters: {', '.join(missing_params)}"}),
-                status_code=400,
-                mimetype="application/json",
-            )
-        
-        # Domain validation
-        if '.' not in domain or domain.startswith('.') or len(domain.split('.')) > 2:
-            return func.HttpResponse(
-                json.dumps({"error": "Invalid domain format"}),
+                json.dumps({"error": "Missing 'vm_name' parameter"}),
                 status_code=400,
                 mimetype="application/json"
             )
-        
-        # VM size validation
-        if not check_vm_size_compatibility(vm_size):
+        if not resource_group:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'resource_group' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not domain:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'domain' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        # Simple regex to reject domains with subdomains (no dots before main domain)
+        # This matches domains like example.com or example.co.uk but not sub.example.com
+        if '.' not in domain or domain.startswith('.'):
             return func.HttpResponse(
                 json.dumps({
-                    "error": f"VM size {vm_size} is incompatible",
-                    "compatible_sizes": get_compatible_vm_sizes()
+                    "error": f"Domain '{domain}' is invalid or incomplete. Please enter a valid domain (e.g., 'example.com')."
                 }),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if len(domain.split('.')) > 2:
+            return func.HttpResponse(
+                json.dumps({
+                    "error": f"Domain '{domain}' should not contain subdomains. Please enter the root domain only (e.g., 'example.com')."
+                }),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not location:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'location' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not vm_size:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'vm_size' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        else:
+            if not check_vm_size_compatibility(vm_size):
+                compatible_sizes = get_compatible_vm_sizes()
+                return func.HttpResponse(
+                    json.dumps({
+                        "error": f"VmSize {vm_size} is incompatible. Please select a size from the list: {compatible_sizes}"
+                    }),
+                    status_code=400,
+                    mimetype="application/json"
+                )
+        if not RECIPIENT_EMAILS:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'recipient_emails' parameter"}),
                 status_code=400,
                 mimetype="application/json"
             )

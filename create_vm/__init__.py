@@ -113,42 +113,113 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         DUMBDROP_PIN = req_body.get('dumbdrop_pin') or req.params.get('dumbdrop_pin') or '1234'
         hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
 
-        # Validate required parameters
-        missing_params = [p for p in ["vm_name", 
-                                      "resource_group", 
-                                      "domain", 
-                                      "location", 
-                                      "vm_size", 
-                                      "GALLERY_IMAGE_RESOURCE_GROUP", 
-                                      "GALLERY_NAME", 
-                                      "GALLERY_IMAGE_NAME",
-                                      "WINDOWS_IMAGE_PASSWORD",
-                                      "RECIPIENT_EMAILS"] if not locals()[p]]
-        if missing_params:
+        ###Parameter checking to handle errors 
+        if not vm_name:
             return func.HttpResponse(
-                json.dumps({"error": f"Missing parameters: {', '.join(missing_params)}"}),
-                status_code=400,
-                mimetype="application/json",
-            )
-        
-        # Domain validation
-        if '.' not in domain or domain.startswith('.') or len(domain.split('.')) > 2:
-            return func.HttpResponse(
-                json.dumps({"error": "Invalid domain format"}),
+                json.dumps({"error": "Missing 'vm_name' parameter"}),
                 status_code=400,
                 mimetype="application/json"
             )
-        
-        # VM size validation
-        if not check_vm_size_compatibility(vm_size):
+        if not resource_group:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'resource_group' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not domain:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'domain' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        # Simple regex to reject domains with subdomains (no dots before main domain)
+        # This matches domains like example.com or example.co.uk but not sub.example.com
+        if '.' not in domain or domain.startswith('.'):
             return func.HttpResponse(
                 json.dumps({
-                    "error": f"VM size {vm_size} is incompatible",
-                    "compatible_sizes": get_compatible_vm_sizes()
+                    "error": f"Domain '{domain}' is invalid or incomplete. Please enter a valid domain (e.g., 'example.com')."
                 }),
                 status_code=400,
                 mimetype="application/json"
             )
+        if len(domain.split('.')) > 2:
+            return func.HttpResponse(
+                json.dumps({
+                    "error": f"Domain '{domain}' should not contain subdomains. Please enter the root domain only (e.g., 'example.com')."
+                }),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not location:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'location' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not vm_size:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'vm_size' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        else:
+            if not check_vm_size_compatibility(vm_size):
+                compatible_sizes = get_compatible_vm_sizes()
+                return func.HttpResponse(
+                    json.dumps({
+                        "error": f"VmSize {vm_size} is incompatible. Please select a size from the list: {compatible_sizes}"
+                    }),
+                    status_code=400,
+                    mimetype="application/json"
+                )
+        if not GALLERY_IMAGE_RESOURCE_GROUP:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'gallery_image_resource_group' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not GALLERY_NAME:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'gallery_name' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not GALLERY_IMAGE_NAME:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'gallery_image_name' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not GALLERY_IMAGE_VERSION:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'gallery_image_version' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if GALLERY_IMAGE_VERSION.lower() != 'latest':
+            # Regex to match semantic versioning: e.g. 1.0.0, 2.3.4, etc.
+            semver_pattern = r'^\d+\.\d+\.\d+$'
+            if not re.match(semver_pattern, GALLERY_IMAGE_VERSION):
+                return func.HttpResponse(
+                    json.dumps({
+                        "error": f"Invalid 'gallery_image_version' format: '{GALLERY_IMAGE_VERSION}'. Must be 'latest' or semantic version 'X.Y.Z' like '1.0.0'."
+                    }),
+                    status_code=400,
+                    mimetype="application/json"
+                )
+        if not WINDOWS_IMAGE_PASSWORD:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'windows_image_password' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not RECIPIENT_EMAILS:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'recipient_emails' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        
         
         # Initial status update
         hook_response = await post_status_update(
