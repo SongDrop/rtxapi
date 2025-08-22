@@ -964,19 +964,32 @@ async def provision_vm_background(
                 hook_url=hook_url,
                 status_data={
                     "vm_name": vm_name,
-                    "status": "failed",
+                    "status": "provisioning",
                     "resource_group": resource_group,
                     "location": location,
                     "details": {
-                        "step": "dns_configuration_failed",
-                        "error": error_msg,
+                        "step": "installing_extension",
                         "timestamp": datetime.utcnow().isoformat()
                     }
                 }
             )
             return
 
-        # Install Custom Script Extension
+        # Install Custom Script Extensions
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "installing_extension",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
+        
         try:
             ext_params = {
                 'location': location,

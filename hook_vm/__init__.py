@@ -152,7 +152,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             print_success(f"Deleted storage account '{storage_account_name}'.")
 
         result = {
-            "message": "Status updated",
+            "message": f"Status updated '{storage_account_name}' deleted.",
             "vm_name": vm_name,
             "status": status,
             "status_url": blob_url_with_sas,
