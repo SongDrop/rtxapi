@@ -120,7 +120,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         storage_client = StorageManagementClient(credentials, subscription_id)
  
         # Container storage
-        storage_account_name = f"{storage_account_base}provision"
+        storage_account_name = f"{storage_account_base}_hookvm"
         storage_config = await create_storage_account(storage_client, resource_group, storage_account_name, location)
         global AZURE_STORAGE_ACCOUNT_KEY
         AZURE_STORAGE_ACCOUNT_KEY = storage_config["AZURE_STORAGE_KEY"]
@@ -147,6 +147,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         print_success(f"Updated json status to Blob Storage: {blob_url_with_sas}")
         print_success("-----------------------------------------------------")
 
+        # DELETE STORAGE on 'FAILED' or 'COMPLETED'
         if status == "failed" or status == "completed":
             storage_client.storage_accounts.delete(resource_group, storage_account_name)
             print_success(f"Deleted storage account '{storage_account_name}'.")

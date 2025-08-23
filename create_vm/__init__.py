@@ -367,8 +367,8 @@ async def provision_vm_background(
         fqdn = f"{subdomain}.{domain}" if subdomain else domain
         print_info(f"Full domain to configure: {fqdn}")
 
-        # Create storage account
-        storage_account_name = f"{storage_account_base}{int(time.time()) % 10000}"
+        # Create storage account #vm_name0000
+        storage_account_name = f"{storage_account_base}_{int(time.time()) % 10000}"
         try:            
             storage_config = await run_azure_operation(
                 create_storage_account,
