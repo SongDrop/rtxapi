@@ -1317,6 +1317,31 @@ def check_ns_delegation(dns_client, resource_group, domain):
         print_error(f"NS delegation check failed: {e}")
         return False
 
+async def cleanup_temp_storage(
+    resource_group, storage_client, storage_account_name, 
+    blob_service_client, container_name, blob_name
+):
+    """Cleanup temporary storage on success"""
+    try:
+        # Delete blob
+        container_client = blob_service_client.get_container_client(container_name)
+        await run_azure_operation(container_client.delete_blob, blob_name)
+        
+        # Delete container
+        await run_azure_operation(blob_service_client.delete_container, container_name)
+        
+        # Delete storage account - wait for completion
+        poller = await run_azure_operation(
+            storage_client.storage_accounts.begin_delete,
+            resource_group, 
+            storage_account_name
+        )
+        await run_azure_operation(poller.result)  # Wait for deletion to complete
+        
+    except Exception as e:
+        print_warn(f"Temp storage cleanup failed: {str(e)}")
+        # Don't re-raise as this is non-critical
+        
 async def cleanup_resources_on_failure(
     network_client, compute_client, storage_client, blob_service_client, 
     container_name, blob_name, dns_client, resource_group, 
@@ -1364,20 +1389,6 @@ async def cleanup_resources_on_failure(
             pass
     
     print_success("Cleanup completed.")
-
-async def cleanup_temp_storage(
-    resource_group, storage_client, storage_account_name, 
-    blob_service_client, container_name, blob_name
-):
-    """Cleanup temporary storage on success"""
-    try:
-        container_client = blob_service_client.get_container_client(container_name)
-        container_client.delete_blob(blob_name)
-        blob_service_client.delete_container(container_name)
-        storage_client.storage_accounts.delete(resource_group, storage_account_name)
-    except Exception as e:
-        print_warn(f"Temp storage cleanup failed: {str(e)}")
-        raise
 
 # ====================== STATUS UPDATE FUNCTION ======================
 async def post_status_update(hook_url: str, status_data: dict) -> dict:
