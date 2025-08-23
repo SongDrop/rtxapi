@@ -119,8 +119,8 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         storage_client = StorageManagementClient(credentials, subscription_id)
  
-        # Container storage
-        storage_account_name = f"{storage_account_base}_hookvm"
+        # Container storage(storage cant contains _ or - just numbers and letters)
+        storage_account_name = f"{storage_account_base}provision" 
         storage_config = await create_storage_account(storage_client, resource_group, storage_account_name, location)
         global AZURE_STORAGE_ACCOUNT_KEY
         AZURE_STORAGE_ACCOUNT_KEY = storage_config["AZURE_STORAGE_KEY"]
