@@ -1251,8 +1251,7 @@ async def provision_vm_background(
                 form_link="https://forms.gle/QgFZQhaehZLs9sySA"
             )
 
-            await run_azure_operation(
-                html_email_send.send_html_email_smtp(
+            await html_email_send.send_html_email_smtp(
                     smtp_host=smtp_host,
                     smtp_port=smtp_port,
                     smtp_user=smtp_user,
@@ -1263,7 +1262,6 @@ async def provision_vm_background(
                     html_content=html_content,
                     use_tls=True
                 )
-            )
             
             await post_status_update(
                 hook_url=hook_url,
