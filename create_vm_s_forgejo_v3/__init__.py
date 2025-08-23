@@ -1059,15 +1059,14 @@ async def provision_vm_background(
 
         # Cleanup temporary storage
         try:
-            await run_azure_operation(
-                cleanup_temp_storage(
-                    resource_group, 
-                    storage_client, 
-                    storage_account_name, 
-                    blob_service_client, 
-                    container_name, 
-                    blob_name
-                )
+            # Correct way to call the async function
+            await cleanup_temp_storage(
+                resource_group, 
+                storage_client, 
+                storage_account_name, 
+                blob_service_client, 
+                container_name, 
+                blob_name
             )
             
             await post_status_update(
@@ -1325,76 +1324,25 @@ async def cleanup_temp_storage(
 ):
     """Cleanup temporary storage on success"""
     try:
-        print_info(f"Starting cleanup of storage account: {storage_account_name}")
-        
         # Delete blob
-        try:
-            container_client = blob_service_client.get_container_client(container_name)
-            await run_azure_operation(container_client.delete_blob, blob_name)
-            print_info(f"Deleted blob: {blob_name}")
-        except Exception as e:
-            print_warn(f"Failed to delete blob {blob_name}: {str(e)}")
+        container_client = blob_service_client.get_container_client(container_name)
+        await run_azure_operation(container_client.delete_blob, blob_name)
         
         # Delete container
-        try:
-            await run_azure_operation(blob_service_client.delete_container, container_name)
-            print_info(f"Deleted container: {container_name}")
-        except Exception as e:
-            print_warn(f"Failed to delete container {container_name}: {str(e)}")
+        await run_azure_operation(blob_service_client.delete_container, container_name)
         
         # Delete storage account
-        try:
-            print_info(f"Attempting to delete storage account: {storage_account_name}")
-            
-            # First check if the storage account exists
-            try:
-                account_props = await run_azure_operation(
-                    storage_client.storage_accounts.get_properties,
-                    resource_group,
-                    storage_account_name
-                )
-                print_info(f"Storage account status: {account_props.provisioning_state}")
-            except Exception as e:
-                print_warn(f"Could not get storage account properties: {str(e)}")
-                return
-            
-            # Begin deletion
-            poller = await run_azure_operation(
-                storage_client.storage_accounts.begin_delete,
-                resource_group, 
-                storage_account_name
-            )
-            
-            # Wait for deletion to complete with timeout
-            max_wait_time = 300  # 5 minutes
-            start_time = time.time()
-            
-            while not poller.done():
-                if time.time() - start_time > max_wait_time:
-                    raise TimeoutError("Storage account deletion timed out")
-                
-                status = await run_azure_operation(poller.status)
-                print_info(f"Deletion status: {status}")
-                await asyncio.sleep(10)
-            
-            # Get final result
-            result = await run_azure_operation(poller.result)
-            print_success(f"Storage account {storage_account_name} deleted successfully")
-            
-        except Exception as e:
-            print_error(f"Failed to delete storage account {storage_account_name}: {str(e)}")
-            # Try to get more details about the error
-            try:
-                error_details = str(e)
-                if hasattr(e, 'response') and hasattr(e.response, 'text'):
-                    error_details += f" Response: {e.response.text}"
-                print_error(f"Error details: {error_details}")
-            except:
-                pass
-            
-    except Exception as e:
-        print_error(f"Unexpected error in cleanup_temp_storage: {str(e)}")
+        poller = await run_azure_operation(
+            storage_client.storage_accounts.begin_delete,
+            resource_group, 
+            storage_account_name
+        )
+        await run_azure_operation(poller.result)  # Wait for deletion to complete
         
+    except Exception as e:
+        print_warn(f"Temp storage cleanup failed: {str(e)}")
+        # Don't re-raise as this is non-critical
+
 async def cleanup_resources_on_failure(
     network_client, compute_client, storage_client, blob_service_client, 
     container_name, blob_name, dns_client, resource_group, 
