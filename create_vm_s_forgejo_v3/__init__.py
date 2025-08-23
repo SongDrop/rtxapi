@@ -1060,13 +1060,14 @@ async def provision_vm_background(
         # Cleanup temporary storage
         try:
             await run_azure_operation(
-                cleanup_temp_storage,
-                resource_group, 
-                storage_client, 
-                storage_account_name, 
-                blob_service_client, 
-                container_name, 
-                blob_name
+                cleanup_temp_storage(
+                    resource_group, 
+                    storage_client, 
+                    storage_account_name, 
+                    blob_service_client, 
+                    container_name, 
+                    blob_name
+                )
             )
             
             await post_status_update(
@@ -1119,16 +1120,17 @@ async def provision_vm_background(
             )
 
             await run_azure_operation(
-                html_email_send.send_html_email_smtp,
-                smtp_host=smtp_host,
-                smtp_port=smtp_port,
-                smtp_user=smtp_user,
-                smtp_password=smtp_password,
-                sender_email=sender_email,
-                recipient_emails=recipient_emails,
-                subject=f"Azure VM '{vm_name}' Completed",
-                html_content=html_content,
-                use_tls=True
+                html_email_send.send_html_email_smtp(
+                    smtp_host=smtp_host,
+                    smtp_port=smtp_port,
+                    smtp_user=smtp_user,
+                    smtp_password=smtp_password,
+                    sender_email=sender_email,
+                    recipient_emails=recipient_emails,
+                    subject=f"Azure VM '{vm_name}' Completed",
+                    html_content=html_content,
+                    use_tls=True
+                )
             )
             
             await post_status_update(

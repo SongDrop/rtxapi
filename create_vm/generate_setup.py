@@ -12,6 +12,7 @@ def generate_setup(PC_NAME: str, DOMAIN_NAME: str, SSL_EMAIL: str, PIN_CODE: str
     # New URLs for the images to replace
     force_quit_img_url = "https://github.com/SongDrop/win10dev/raw/main/forcequit.png"
     restart_img_url = "https://github.com/SongDrop/win10dev/raw/main/restart.png"
+    taskmanager_img_url = "https://github.com/SongDrop/win10dev/raw/main/taskmanager.png"
 
     # --- NEW: Caddy Downloads ---
     caddy_url = "https://github.com/caddyserver/caddy/releases/download/v2.7.6/caddy_2.7.6_windows_amd64.zip"
@@ -246,6 +247,7 @@ try {{
     $sunshineAssetsDir = "C:\\Program Files\\Sunshine\\assets"
     $forceQuitPath = Join-Path -Path $sunshineAssetsDir -ChildPath "forcequit.png"
     $restartPath = Join-Path -Path $sunshineAssetsDir -ChildPath "restart.png"
+    $taskManagerPath = Join-Path -Path $sunshineAssetsDir -ChildPath "taskmanager.png"
 
     Write-Host "Replacing Sunshine web assets..."
 
@@ -262,6 +264,10 @@ try {{
     # Download and replace restart.png
     Invoke-WebRequest -Uri "{restart_img_url}" -OutFile $restartPath -UseBasicParsing
     Add-Content -Path $installLog -Value "Downloaded/Replaced: $restartPath"
+
+    # Download and replace taskmanager.png
+    Invoke-WebRequest -Uri "{taskmanager_img_url}" -OutFile $taskManagerPath -UseBasicParsing
+    Add-Content -Path $installLog -Value "Downloaded/Replaced: $taskManagerPath"
 
     Write-Host "Sunshine assets replaced successfully."
     Add-Content -Path $installLog -Value "[SUCCESS] Sunshine web assets replaced."
