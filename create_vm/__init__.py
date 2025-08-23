@@ -1471,18 +1471,16 @@ async def cleanup_temp_storage(
         # Delete container
         await run_azure_operation(blob_service_client.delete_container, container_name)
         
-        # Delete storage account
-        poller = await run_azure_operation(
-            storage_client.storage_accounts.begin_delete,
-            resource_group, 
-            storage_account_name
+        # Delete storage account - FIXED
+        poller = await storage_client.storage_accounts.begin_delete(
+            resource_group_name=resource_group,
+            account_name=storage_account_name
         )
-        await run_azure_operation(poller.result)  # Wait for deletion to complete
+        await poller.wait()  # Wait for deletion to complete
         
     except Exception as e:
         print_warn(f"Temp storage cleanup failed: {str(e)}")
         # Don't re-raise as this is non-critical
-
  
 async def cleanup_resources_on_failure(
     network_client, compute_client, storage_client, blob_service_client, 
