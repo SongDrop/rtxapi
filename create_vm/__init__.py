@@ -368,7 +368,8 @@ async def provision_vm_background(
         print_info(f"Full domain to configure: {fqdn}")
 
         # Container storage(storage cant contains _ or - just numbers and letters)
-        storage_account_name = f"{storage_account_base}{int(time.time()) % 10000}"
+        storage_account_name = f"{storage_account_base}{int(time.time()) % 10000}temp"
+        
         try:            
             storage_config = await run_azure_operation(
                 create_storage_account,
@@ -1165,46 +1166,46 @@ async def provision_vm_background(
             return
 
         # Cleanup temporary storage
-        # try:
-        #     await run_azure_operation(
-        #         cleanup_temp_storage,
-        #         resource_group, 
-        #         storage_client, 
-        #         storage_account_name, 
-        #         blob_service_client, 
-        #         container_name, 
-        #         blob_name
-        #     )
+        try:
+            await run_azure_operation(
+                cleanup_temp_storage,
+                resource_group, 
+                storage_client, 
+                storage_account_name, 
+                blob_service_client, 
+                container_name, 
+                blob_name
+            )
             
-        #     await post_status_update(
-        #         hook_url=hook_url,
-        #         status_data={
-        #             "vm_name": vm_name,
-        #             "status": "provisioning",
-        #             "resource_group": resource_group,
-        #             "location": location,
-        #             "details": {
-        #                 "step": "cleanup_complete",
-        #                 "message": "Temporary resources cleaned up"
-        #             }
-        #         }
-        #     )
-        # except Exception as e:
-        #     error_msg = f"Cleanup failed (non-critical): {str(e)}"
-        #     print_warn(error_msg)
-        #     await post_status_update(
-        #         hook_url=hook_url,
-        #         status_data={
-        #             "vm_name": vm_name,
-        #             "status": "provisioning",
-        #             "resource_group": resource_group,
-        #             "location": location,
-        #             "details": {
-        #                 "step": "cleanup_warning",
-        #                 "warning": error_msg
-        #             }
-        #         }
-        #     )
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "cleanup_complete",
+                        "message": "Temporary resources cleaned up"
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Cleanup failed (non-critical): {str(e)}"
+            print_warn(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "cleanup_warning",
+                        "warning": error_msg
+                    }
+                }
+            )
 
         # Final wait
         await asyncio.sleep(30)
