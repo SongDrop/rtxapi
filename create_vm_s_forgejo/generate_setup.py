@@ -6,6 +6,8 @@ def generate_setup(
     DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh",
     WEBHOOK_URL="",
     ALLOW_EMBED_WEBSITE="",
+    location="",
+    resource_group=""
 ):
     """
     Returns a Bash script that installs Forgejo behind Nginx,
@@ -44,6 +46,8 @@ notify_webhook() {{
   "vm_name": "$(hostname)",
   "status": "$status",
   "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+  "location": {location},
+  "resource_group": {resource_group},
   "details": {{
     "step": "$step",
     "message": "$message"
