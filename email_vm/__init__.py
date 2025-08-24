@@ -57,16 +57,6 @@ smtp_user = os.environ.get('SMTP_USER')
 smtp_password = os.environ.get('SMTP_PASS')
 sender_email = os.environ.get('SENDER_EMAIL')
 
-def get_public_ip(network_client, resource_group, nic_name):
-    nic = network_client.network_interfaces.get(resource_group, nic_name)
-    if nic.ip_configurations and nic.ip_configurations[0].public_ip_address:
-        public_ip_id = nic.ip_configurations[0].public_ip_address.id
-        parts = public_ip_id.split('/')
-        pubip_rg = parts[4]
-        pubip_name = parts[-1]
-        public_ip_resource = network_client.public_ip_addresses.get(pubip_rg, pubip_name)
-        return public_ip_resource.ip_address
-    return None
 
 async def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
@@ -94,7 +84,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             )
         if not RECIPIENT_EMAILS:
             return func.HttpResponse(
-                json.dumps({"error": "Missing 'recipients' parameter"}),
+                json.dumps({"error": "Missing 'recipient_emails' parameter"}),
                 status_code=400,
                 mimetype="application/json"
             )
@@ -162,3 +152,14 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             mimetype="application/json"
         )
+    
+def get_public_ip(network_client, resource_group, nic_name):
+    nic = network_client.network_interfaces.get(resource_group, nic_name)
+    if nic.ip_configurations and nic.ip_configurations[0].public_ip_address:
+        public_ip_id = nic.ip_configurations[0].public_ip_address.id
+        parts = public_ip_id.split('/')
+        pubip_rg = parts[4]
+        pubip_name = parts[-1]
+        public_ip_resource = network_client.public_ip_addresses.get(pubip_rg, pubip_name)
+        return public_ip_resource.ip_address
+    return None
