@@ -444,6 +444,9 @@ async def delete_vm_and_resources(compute_client, network_client, dns_client, re
             }
         )
 
+    # Wait for cleanup finishing
+    await asyncio.sleep(10)
+    
     # Final success update
     if hook_url:
         await post_status_update(
