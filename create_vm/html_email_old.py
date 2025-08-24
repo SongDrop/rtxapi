@@ -55,7 +55,6 @@ def HTMLEmail(ip_address: str,
     <meta name="twitter:title" content="{title}">
     <meta name="twitter:description" content="Your virtual machine is ready to use">
     <meta name="twitter:card" content="summary_large_image">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {{
             --primary: #0f9d58;
@@ -88,106 +87,87 @@ def HTMLEmail(ip_address: str,
             background-size: cover;
             background-attachment: fixed;
             line-height: 1.6;
-            padding: 20px;
+            padding: 15px;
             min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
         }}
 
         .container {{
-            max-width: 800px;
-            width: 100%;
-            background: rgba(20, 20, 20, 0.92);
-            padding: 30px;
-            border-radius: 20px;
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(8px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            max-width: 700px;
+            margin: 0 auto;
+            background: rgba(30, 30, 30, 0.95); /* Increased opacity to reduce dark overlay effect */
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(5px);
+            border: 1px solid var(--border);
         }}
 
         .header {{
             text-align: center;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 25px;
         }}
 
         .header img {{
-            max-width: 200px;
+            max-width: 180px;
             height: auto;
-            margin-bottom: 20px;
-            filter: drop-shadow(0 0 10px rgba(16, 124, 16, 0.5));
+            margin-bottom: 15px;
         }}
 
         h1 {{
-            font-size: 2.4rem;
+            font-size: 2.2rem;
             color: var(--primary);
-            margin-bottom: 15px;
+            margin-bottom: 10px;
             text-shadow: 0 0 10px rgba(16, 124, 16, 0.5);
-            font-weight: 700;
-            letter-spacing: 0.5px;
         }}
 
         .description {{
             font-size: 1.1rem;
-            margin-bottom: 30px;
+            margin-bottom: 25px;
             background: rgba(42, 42, 42, 0.7);
-            padding: 20px;
-            border-radius: 12px;
+            padding: 15px;
+            border-radius: 8px;
             border-left: 4px solid var(--primary);
             white-space: pre-wrap;
-            line-height: 1.7;
         }}
 
         iframe {{
             width: 100%;
-            height: 350px;
+            height: 300px;
             border: none;
-            border-radius: 12px;
-            margin-bottom: 25px;
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.4);
         }}
 
         .section {{
-            margin-bottom: 25px;
+            margin-bottom: 20px;
         }}
 
         .section-title {{
-            font-size: 1.4rem;
+            font-size: 1.3rem;
             color: var(--accent);
-            margin-bottom: 15px;
+            margin-bottom: 12px;
             display: flex;
             align-items: center;
-            gap: 12px;
-            font-weight: 600;
+            gap: 10px;
         }}
 
         .section-title i {{
             color: var(--primary);
-            font-size: 1.3rem;
         }}
 
         .code-box {{
             background: rgba(42, 42, 42, 0.7);
-            padding: 18px;
-            border-radius: 12px;
+            padding: 15px;
+            border-radius: 10px;
             position: relative;
-            margin: 15px 0;
+            margin: 12px 0;
             border: 1px solid var(--border);
-            transition: var(--transition);
-        }}
-
-        .code-box:hover {{
-            background: rgba(50, 50, 50, 0.8);
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
         }}
 
         .code-content {{
             padding-right: 15px;
             overflow: auto;
-            font-size: 1.1rem;
         }}
 
         .code-box strong {{
@@ -208,153 +188,122 @@ def HTMLEmail(ip_address: str,
 
         .download-section {{
             text-align: center;
-            margin-top: 40px;
-            padding: 25px;
+            margin-top: 35px;
+            padding: 20px;
             background: rgba(16, 124, 16, 0.2);
-            border-radius: 12px;
+            border-radius: 10px;
             border-top: 2px solid var(--primary);
-            border-bottom: 2px solid var(--primary);
         }}
 
         .fixed-images {{
+            position: fixed;
+            bottom: 15px;
+            left: 0;
+            right: 0;
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            margin-top: 40px;
-            padding: 0 10px;
+            pointer-events: none;
+            z-index: 1000;
+            padding: 0 15px;
         }}
 
         .fixed-image-left,
         .fixed-image-right {{
+            position: static;
             background-color: transparent;
             margin: 0;
             padding: 0;
         }}
 
         .fixed-images a {{
-            transition: var(--transition);
+            pointer-events: auto;
         }}
 
         .fixed-images img {{
-            width: 80px;
+            width: 70px;
             height: auto;
-            opacity: 0.85;
+            opacity: 0.8;
             transition: var(--transition);
-            border-radius: 8px;
         }}
 
         .fixed-images img:hover {{
             opacity: 1;
-            transform: scale(1.08);
+            transform: scale(1.05);
         }}
 
         .company-logo {{
             display: block;
-            margin: 40px auto 0;
-            max-width: 300px;
+            margin: 25px auto 0;
+            max-width: 280px;
             height: auto;
-            opacity: 0.9;
-            border-radius: 12px;
-            padding: 10px;
-            background: rgba(255, 255, 255, 0.05);
         }}
 
         #image-left, #image-right {{
-            width: 120px;
+            position: fixed;
+            bottom: 50px;
+            width: 100px;
             z-index: 999;
-            border-radius: 10px;
-            opacity: 0.9;
         }}
 
         #image-left {{
-            float: left;
-            margin-right: 20px;
-            shape-outside: circle(50%);
+            left: 0;
         }}
 
         #image-right {{
-            float: right;
-            margin-left: 20px;
-            shape-outside: circle(50%);
+            right: 0;
         }}
 
-        .clearfix::after {{
-            content: "";
-            display: table;
-            clear: both;
-        }}
-
-        /* Responsive adjustments */
-        @media (max-width: 768px) {{
+        /* Responsive adjustments for small screens */
+        @media (max-width: 320px) {{
             body {{
-                padding: 15px;
+                padding: 8px;
+                font-size: 16px;
             }}
 
             .container {{
-                padding: 20px;
+                padding: 15px 12px;
             }}
 
             h1 {{
-                font-size: 2rem;
+                font-size: 1.7rem;
             }}
 
             .description {{
                 font-size: 1rem;
-                padding: 15px;
+                padding: 12px;
+                margin-bottom: 20px;
             }}
 
             iframe {{
-                height: 250px;
+                height: 180px;
+                margin-bottom: 15px;
             }}
 
             .section-title {{
-                font-size: 1.2rem;
+                font-size: 1.15rem;
+                margin-bottom: 10px;
             }}
 
-            .code-content {{
-                font-size: 1rem;
+            .code-box {{
+                padding: 12px;
+                font-size: 0.9rem;
             }}
 
             .header img {{
-                max-width: 160px;
+                max-width: 140px;
             }}
 
             .fixed-images img {{
-                width: 65px;
+                width: 55px;
             }}
 
             .company-logo {{
-                max-width: 220px;
+                max-width: 180px;
             }}
 
-            #image-left, #image-right {{
-                width: 90px;
-                float: none;
-                margin: 15px auto;
-                display: block;
-            }}
-        }}
-
-        @media (max-width: 480px) {{
-            .container {{
+            .download-section {{
+                margin-top: 25px;
                 padding: 15px;
-            }}
-
-            h1 {{
-                font-size: 1.8rem;
-            }}
-
-            iframe {{
-                height: 200px;
-            }}
-
-            .fixed-images {{
-                flex-direction: column;
-                gap: 15px;
-            }}
-
-            .fixed-images img {{
-                width: 70px;
             }}
         }}
     </style>
@@ -370,64 +319,58 @@ def HTMLEmail(ip_address: str,
 
         <iframe src="{youtube_embed_url}" allowfullscreen></iframe>
 
-        <div class="clearfix">
-            <img id="image-left" src="{image_left_src}" />
-            <img id="image-right" src="{image_right_src}" />
-            
-            <div class="section">
-                <div class="section-title"><i class="fas fa-link"></i> Open <strong>Moonlight</strong> and Add:</div>
-                <div class="code-box">
-                    <div class="code-content">{ip_address}</div>
-                </div>
-
-                <div class="section-title"><i class="fas fa-mobile-alt"></i> Open <strong>iOS Moonlight</strong> and Add:</div>
-                <div class="code-box">
-                    <div class="code-content">{ios_address}</div>
-                </div>
+        <div class="section">
+            <div class="section-title"><i>🔗</i> Open <strong>Moonlight</strong> and Add:</div>
+            <div class="code-box">
+                <div class="code-content">{ip_address}</div>
             </div>
 
-            <div class="section">
-                <div class="section-title"><i class="fas fa-lock"></i> Enter 4-digit PIN here:</div>
-                <div class="code-box">
-                    <div class="code-content">
-                        <a href="{pin_url}" target="_blank">{pin_url}</a>
-                    </div>
-                </div>
+            <div class="section-title"><i>📱</i> Open <strong>iOS Moonlight</strong> and Add:</div>
+            <div class="code-box">
+                <div class="code-content">{ios_address}</div>
             </div>
+        </div>
 
-            <div class="section">
-                <div class="section-title"><i class="fas fa-user-circle"></i> Use credentials:</div>
-                <div class="code-box">
-                    <div class="code-content">{credentials_sunshine}</div>
-                </div>
-
-                <div class="section-title"><i class="fas fa-desktop"></i> Windows Password:</div>
-                <div class="code-box">
-                    <div class="code-content">{windows_password}</div>
-                </div>
-            </div>
-
-            <div class="section">
-                <div class="section-title"><i class="fas fa-download"></i> You need to download <strong>Moonlight</strong> to connect:</div>
-                <div class="code-box">
-                    <div class="code-content">
-                        <a href="https://github.com/moonlight-stream/moonlight-qt/releases" target="_blank">
-                            https://github.com/moonlight-stream/moonlight-qt/releases
-                        </a>
-                    </div>
-                </div>
-            </div>
-
-            <div class="section">
-                <div class="section-title"><i class="fas fa-cloud-upload-alt"></i> Upload files directly:</div>
-                <div class="code-box">
-                    <div class="code-content">
-                        <a href="{drop_url}" target="_blank">{drop_url}</a>
-                    </div>
+        <div class="section">
+            <div class="section-title"><i>🔒</i> Enter 4-digit PIN here:</div>
+            <div class="code-box">
+                <div class="code-content">
+                    <a href="{pin_url}" target="_blank">{pin_url}</a>
                 </div>
             </div>
         </div>
 
+        <div class="section">
+            <div class="section-title"><i>👤</i> Use credentials:</div>
+            <div class="code-box">
+                <div class="code-content">{credentials_sunshine}</div>
+            </div>
+
+            <div class="section-title"><i>💻</i> Windows Password:</div>
+            <div class="code-box">
+                <div class="code-content">{windows_password}</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title"><i>⬇️</i> You need to download <strong>Moonlight</strong> to connect:</div>
+            <div class="code-box">
+                <div class="code-content">
+                    <a href="https://github.com/moonlight-stream/moonlight-qt/releases" target="_blank">
+                        https://github.com/moonlight-stream/moonlight-qt/releases
+                    </a>
+                </div>
+            </div>
+        </div>
+
+         <div class="section">
+            <div class="section-title"><i>⬆️</i> Upload files directly:</div>
+            <div class="code-box">
+                <div class="code-content">
+                    <a href="{drop_url}" target="_blank">{drop_url}</a>
+                </div>
+            </div>
+        </div>
         <div class="download-section">
             <div>{form_description}</div>
             <div class="code-box">
@@ -439,18 +382,21 @@ def HTMLEmail(ip_address: str,
 
         <iframe src="{discord_widget_src}" width="100%" height="350" allowtransparency="true" frameborder="0"
             sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"></iframe>
-
-        <div class="fixed-images">
-            <a href="https://portal.azure.com" target="_blank" class="fixed-image-left">
-                <img src="https://i.ibb.co/459vKcy/azure.png" width="100px" alt="Azure" />
-            </a>
-            <a href="https://rtxdevstation.xyz" target="_blank" class="fixed-image-right">
-                <img src="https://i.ibb.co/mChg6mrj/nvidiartx.png" width="100px" alt="NVIDIA RTX" />
-            </a>
-        </div>
-
-        <img class="company-logo" src="{company_src}"/>
     </div>
+
+    <div class="fixed-images">
+        <a href="https://portal.azure.com" target="_blank" class="fixed-image-left">
+            <img src="https://i.ibb.co/459vKcy/azure.png" alt="Azure" />
+        </a>
+        <a href="https://ue3rtx.netlify.app" target="_blank" class="fixed-image-right">
+            <img src="https://i.ibb.co/mChg6mrj/nvidiartx.png" alt="NVIDIA RTX" />
+        </a>
+    </div>
+
+    <img id="image-left" src="{image_left_src}" />
+    <img id="image-right" src="{image_right_src}" />
+    <br />
+    <img class="company-logo" src="{company_src}"/>
 </body>
 
 </html>
