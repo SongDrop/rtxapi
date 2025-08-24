@@ -77,7 +77,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         vm_name = req_body.get("vm_name") or req.params.get("vm_name")
         resource_group = req_body.get("resource_group") or req.params.get("resource_group")
-        recipients = req_body.get("recipients") or req.params.get("recipients")
+        RECIPIENT_EMAILS = req_body.get("recipient_emails") or req.params.get("recipient_emails")
 
         ###Parameter checking to handle errors 
         if not vm_name:
@@ -92,14 +92,14 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
                 mimetype="application/json"
             )
-        if not recipients:
+        if not RECIPIENT_EMAILS:
             return func.HttpResponse(
                 json.dumps({"error": "Missing 'recipients' parameter"}),
                 status_code=400,
                 mimetype="application/json"
             )
 
-        recipient_emails = [e.strip() for e in recipients.split(',')]
+        recipient_email_addresses = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
 
         # Authenticate with Azure
         credential = ClientSecretCredential(
@@ -142,7 +142,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 smtp_user=smtp_user,
                 smtp_password=smtp_password,
                 sender_email=sender_email,
-                recipient_emails=recipient_emails,
+                recipient_emails=recipient_email_addresses,
                 subject=f"Azure VM '{vm_name}' Completed",
                 html_content=html_content,
                 use_tls=True
