@@ -456,6 +456,7 @@ async def delete_vm_and_resources(compute_client, network_client, dns_client, re
                 "details": {
                     "step": "completed",
                     "message": "VM and all related resources deleted successfully",
+                    "url": f"https://cdn.sdappnet.cloud/rtx/rtxvmdeleted.html?vm_name={vm_name}",
                     "timestamp": datetime.utcnow().isoformat()
                 }
             }
