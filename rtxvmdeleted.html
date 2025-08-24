@@ -199,11 +199,6 @@
                 </div>
 
                 <div class="detail-row">
-                    <span class="detail-label">IP Address:</span>
-                    <span class="detail-value" id="vm-ip">192.168.1.105</span>
-                </div>
-
-                <div class="detail-row">
                     <span class="detail-label">Deletion Time:</span>
                     <span class="detail-value" id="deletion-time">Loading...</span>
                 </div>
@@ -215,12 +210,12 @@
             </div>
 
             <div class="actions">
-                <button class="btn btn-primary">
+                <a id="new_vm_url" class="btn btn-primary" href="https://rtxdevstation.xyz/requestvm" target="_blank">
                     <i class="fas fa-plus"></i> Create New VM
-                </button>
-                <button class="btn btn-secondary">
+                </a>
+                <a id="dash_url" class="btn btn-secondary" href="https://rtxdevstation.xyz/" target="_blank">
                     <i class="fas fa-arrow-left"></i> Return to Dashboard
-                </button>
+                </a>
             </div>
         </div>
 
@@ -235,8 +230,7 @@
 
         // You can customize these values or pull from URL parameters
         const urlParams = new URLSearchParams(window.location.search);
-        const vmName = urlParams.get('name') || 'ennaeyidtech';
-        const vmIP = urlParams.get('ip') || '192.168.1.105';
+        const vmName = urlParams.get('vm_name') || '';
 
         document.getElementById('vm-name').textContent = vmName;
         document.getElementById('vm-ip').textContent = vmIP;
