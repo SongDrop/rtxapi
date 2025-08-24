@@ -8,13 +8,8 @@ from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.dns import DnsManagementClient
 import asyncio
 import concurrent.futures
-
-# Use relative imports to load local modules from the same function folder.
-# This ensures Python finds these files (generate_setup.py, html_email.py, html_email_send.py)
-# in the current package instead of searching in global site-packages,
-# which prevents ModuleNotFoundError in Azure Functions environment.
-from . import html_email
-from . import html_email_send
+import aiohttp
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,7 +24,99 @@ async def run_blocking(func, *args, **kwargs):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(executor, lambda: func(*args, **kwargs))
 
-async def delete_vm_and_resources(compute_client, network_client, dns_client, resource_group, vm_name, domain, a_records_list, response_log):
+# Console colors for logs (copied from create_vm.py)
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKORANGE = '\033[38;5;214m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+
+def print_info(msg):
+    logging.info(f"{bcolors.OKBLUE}[INFO]{bcolors.ENDC} {msg}")
+
+def print_build(msg):
+    logging.info(f"{bcolors.OKORANGE}[BUILD]{bcolors.ENDC} {msg}")
+
+def print_success(msg):
+    logging.info(f"{bcolors.OKGREEN}[SUCCESS]{bcolors.ENDC} {msg}")
+
+def print_warn(msg):
+    logging.info(f"{bcolors.WARNING}[WARNING]{bcolors.ENDC} {msg}")
+
+def print_error(msg):
+    logging.info(f"{bcolors.FAIL}[ERROR]{bcolors.ENDC} {msg}")
+
+# ====================== STATUS UPDATE FUNCTION ======================
+async def post_status_update(hook_url: str, status_data: dict) -> dict:
+    """Send status update to webhook with retry logic"""
+    if not hook_url:
+        return {"success": True, "status_url": ""}
+    
+    step = status_data.get("details", {}).get("step", "unknown")
+    print_info(f"Sending status update for step: {step}")
+    
+    # Retry configuration
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    hook_url,
+                    json=status_data,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return {
+                            "success": True,
+                            "status_url": data.get("status_url", ""),
+                            "response": data
+                        }
+                    else:
+                        error_msg = f"HTTP {response.status}"
+        except (asyncio.TimeoutError, aiohttp.ClientConnectionError) as e:
+            error_msg = str(e)
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+        
+        # Log failure and retry
+        if attempt < max_retries:
+            print_warn(f"Status update failed (attempt {attempt}/{max_retries}): {error_msg}")
+            await asyncio.sleep(retry_delay * attempt)  # Exponential backoff
+        else:
+            print_error(f"Status update failed after {max_retries} attempts: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "status_url": ""
+            }
+    
+    return {"success": False, "error": "Unknown error", "status_url": ""}
+
+async def delete_vm_and_resources(compute_client, network_client, dns_client, resource_group, vm_name, domain, a_records_list, response_log, hook_url):
+    # Initial status update
+    if hook_url:
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "deleting",
+                "resource_group": resource_group,
+                "details": {
+                    "step": "starting_deletion",
+                    "message": "Beginning VM deletion process",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
+    
     try:
         # Get VM details
         vm = await run_blocking(compute_client.virtual_machines.get, resource_group, vm_name)
@@ -45,6 +132,22 @@ async def delete_vm_and_resources(compute_client, network_client, dns_client, re
         try:
             await run_blocking(compute_client.virtual_machines.begin_delete(resource_group, vm_name).result)
             response_log.append({"success": f"Deleted VM '{vm_name}'."})
+            
+            # Status update
+            if hook_url:
+                await post_status_update(
+                    hook_url=hook_url,
+                    status_data={
+                        "vm_name": vm_name,
+                        "status": "deleting",
+                        "resource_group": resource_group,
+                        "details": {
+                            "step": "vm_deleted",
+                            "message": f"VM {vm_name} deleted successfully",
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                    }
+                )
         except Exception as e:
             response_log.append({"warning": f"Failed to delete VM '{vm_name}': {str(e)}"})
 
@@ -95,11 +198,26 @@ async def delete_vm_and_resources(compute_client, network_client, dns_client, re
             try:
                 await run_blocking(dns_client.record_sets.delete, resource_group, domain, record_to_delete, 'A')
                 response_log.append({"success": f"Deleted DNS A record '{record_to_delete}' in zone '{domain}'."})
+                
+                # Status update for each DNS record
+                if hook_url:
+                    await post_status_update(
+                        hook_url=hook_url,
+                        status_data={
+                            "vm_name": vm_name,
+                            "status": "deleting",
+                            "resource_group": resource_group,
+                            "details": {
+                                "step": "dns_record_deleted",
+                                "message": f"DNS record {record_to_delete} deleted",
+                                "timestamp": datetime.utcnow().isoformat()
+                            }
+                        }
+                    )
             except Exception as e:
                 response_log.append({"warning": f"Failed to delete DNS A record '{record_to_delete}' in zone '{domain}': {str(e)}"})
 
-    # Run deletions concurrently where possible
-    # VM and OS disk deletions must be sequential since disk depends on VM
+    # Run deletions
     await delete_vm()
     await delete_os_disk()
 
@@ -111,6 +229,22 @@ async def delete_vm_and_resources(compute_client, network_client, dns_client, re
         delete_vnet(),
         delete_dns_records()
     )
+    
+    # Final success update
+    if hook_url:
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "deleted",
+                "resource_group": resource_group,
+                "details": {
+                    "step": "completed",
+                    "message": "VM and all related resources deleted successfully",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
 
 async def main(req: func.HttpRequest) -> func.HttpResponse:
     logger.info("Processing request to delete VM and related resources.")
@@ -124,7 +258,8 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         vm_name = req_body.get('vm_name') or req.params.get('vm_name')
         resource_group = req_body.get('resource_group') or req.params.get('resource_group')
         domain = req_body.get('domain') or req.params.get('domain')
-        a_records = [vm_name,f"drop.{vm_name}",f"pin.{vm_name}",f"web.{vm_name}"]  # single record name string, so split works
+        hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
+        a_records = req_body.get('a_records') or req.params.get('a_records') or [vm_name, f"drop.{vm_name}", f"pin.{vm_name}", f"web.{vm_name}"]
 
         if not vm_name:
             return func.HttpResponse(
@@ -153,10 +288,49 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         else:
             a_records_list = []
 
+        # Initial status update
+        hook_response = await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "deleting",
+                "resource_group": resource_group,
+                "details": {
+                    "step": "init",
+                    "vm_name": vm_name,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
+
+        if not hook_response.get("success") and hook_url:
+            error_msg = hook_response.get("error", "Unknown error posting status")
+            print_error(f"Initial status update failed: {error_msg}")
+            return func.HttpResponse(
+                json.dumps({"error": f"Status update failed: {error_msg}"}),
+                status_code=500,
+                mimetype="application/json"
+            )
+
+        status_url = hook_response.get("status_url", "")
+
         subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID')
         if not subscription_id:
             err = "AZURE_SUBSCRIPTION_ID environment variable is not set."
             logger.error(err)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "details": {
+                        "step": "authentication_error",
+                        "error": err,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
             return func.HttpResponse(
                 json.dumps({"error": err}),
                 status_code=500,
@@ -172,6 +346,19 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         except KeyError as e:
             err = f"Missing environment variable: {e}"
             logger.error(err)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "details": {
+                        "step": "authentication_error",
+                        "error": err,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
             return func.HttpResponse(
                 json.dumps({"error": err}),
                 status_code=500,
@@ -184,21 +371,41 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         response_log = []
 
-        await delete_vm_and_resources(
-            compute_client, network_client, dns_client,
-            resource_group, vm_name, domain, a_records_list, response_log
+        # Start background deletion
+        asyncio.create_task(
+            delete_vm_and_resources(
+                compute_client, network_client, dns_client,
+                resource_group, vm_name, domain, a_records_list, 
+                response_log, hook_url
+            )
         )
 
-        response_log.append({"success": "Deletion process completed."})
-
+        # Return immediately with status URL
         return func.HttpResponse(
-            json.dumps({"results": response_log}, indent=2),
-            status_code=200,
+            json.dumps({
+                "message": "VM deletion started",
+                "status_url": status_url,
+                "vm_name": vm_name
+            }),
+            status_code=202,
             mimetype="application/json"
         )
 
     except Exception as ex:
         logger.exception("Unhandled error:")
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "failed",
+                "resource_group": resource_group,
+                "details": {
+                    "step": "unhandled_error",
+                    "error": str(ex),
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
         return func.HttpResponse(
             json.dumps({"error": str(ex)}),
             status_code=500,
