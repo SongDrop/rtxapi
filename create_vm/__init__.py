@@ -1186,6 +1186,7 @@ async def provision_vm_background(
                     "location": location,
                     "details": {
                         "step": "cleanup_complete",
+                        "storage": storage_account_name,
                         "message": "Temporary resources cleaned up"
                     }
                 }
@@ -1472,10 +1473,7 @@ async def cleanup_temp_storage(
         await run_azure_operation(blob_service_client.delete_container, container_name)
         
         # Delete storage account - FIXED
-        poller = await storage_client.storage_accounts.begin_delete(
-            resource_group_name=resource_group,
-            account_name=storage_account_name
-        )
+        poller = await storage_client.storage_accounts.delete(resource_group, storage_account_name)
         await poller.wait()  # Wait for deletion to complete
         
     except Exception as e:

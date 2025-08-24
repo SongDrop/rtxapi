@@ -1330,10 +1330,7 @@ async def cleanup_temp_storage(
         await run_azure_operation(blob_service_client.delete_container, container_name)
         
         # Delete storage account - FIXED
-        poller = await storage_client.storage_accounts.begin_delete(
-            resource_group_name=resource_group,
-            account_name=storage_account_name
-        )
+        poller = await storage_client.storage_accounts.delete(resource_group, storage_account_name)
         await poller.wait()  # Wait for deletion to complete
         
     except Exception as e:
