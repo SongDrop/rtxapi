@@ -89,6 +89,7 @@ def HTMLEmail(ip_address: str,
             display: flex;
             justify-content: center;
             align-items: center;
+            background: linear-gradient(135deg, #0a527c, #1a7c9e, #38b6ff);
         }}
 
         .container {{
@@ -280,6 +281,48 @@ def HTMLEmail(ip_address: str,
             clear: both;
         }}
 
+        /* Action buttons styles */
+        .actions {{
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin: 40px 0 20px;
+        }}
+
+        .btn {{
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+        }}
+
+        .btn-primary {{
+            background: #3498db;
+            color: white;
+        }}
+
+        .btn-primary:hover {{
+            background: #2980b9;
+            transform: translateY(-3px);
+        }}
+
+        .btn-secondary {{
+            background: #e9ecef;
+            color: #2c3e50;
+        }}
+
+        .btn-secondary:hover {{
+            background: #dee2e6;
+            transform: translateY(-3px);
+        }}
+
         /* Responsive adjustments */
         @media (max-width: 768px) {{
             body {{
@@ -328,6 +371,15 @@ def HTMLEmail(ip_address: str,
                 float: none;
                 margin: 15px auto;
                 display: block;
+            }}
+
+            .actions {{
+                flex-direction: column;
+                gap: 15px;
+            }}
+
+            .btn {{
+                justify-content: center;
             }}
         }}
 
