@@ -1116,7 +1116,9 @@ async def provision_vm_background(
                 ip_address=public_ip,
                 link1=f"https://{fqdn}",
                 link2=f"https://{fqdn}/admin",
-                link3=f"https://{fqdn}/status"
+                link3=f"https://{fqdn}/status",
+                new_vm_url=f"https://rtxdevstation.xyz/requestvm",
+                dash_url="https://rtxdevstation.xyz"
             )
 
             await html_email_send.send_html_email_smtp(
@@ -1163,7 +1165,7 @@ async def provision_vm_background(
 
         # Wait for cleanup finishing
         await asyncio.sleep(10)
-        
+
         # Final success update
         await post_status_update(
             hook_url=hook_url,
