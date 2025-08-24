@@ -1306,7 +1306,7 @@ async def provision_vm_background(
                     "step": "completed",
                     "message": "VM provisioning successful",
                     "public_ip": public_ip,
-                    "url": f"https://cdn.sdappnet.cloud/rtx/rtxvmrun.html?url={public_ip}",
+                    "url": f"https://cdn.sdappnet.cloud/rtx/rtxvmrun.html?url={public_ip}&vm_name={vm_name}",
                     "timestamp": datetime.utcnow().isoformat()
                 }
             }
