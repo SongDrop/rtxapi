@@ -1161,6 +1161,9 @@ async def provision_vm_background(
                 }
             )
 
+        # Wait for cleanup finishing
+        await asyncio.sleep(10)
+        
         # Final success update
         await post_status_update(
             hook_url=hook_url,
