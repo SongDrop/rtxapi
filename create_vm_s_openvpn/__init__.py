@@ -1059,8 +1059,8 @@ async def provision_vm_background(
 
         # Cleanup temporary storage
         try:
-            await run_azure_operation(
-                cleanup_temp_storage,
+            # Correct way to call the async function
+            await cleanup_temp_storage(
                 resource_group, 
                 storage_client, 
                 storage_account_name, 
@@ -1118,18 +1118,17 @@ async def provision_vm_background(
                 link3=f"https://{fqdn}/status"
             )
 
-            await run_azure_operation(
-                html_email_send.send_html_email_smtp,
-                smtp_host=smtp_host,
-                smtp_port=smtp_port,
-                smtp_user=smtp_user,
-                smtp_password=smtp_password,
-                sender_email=sender_email,
-                recipient_emails=recipient_emails,
-                subject=f"Azure VM '{vm_name}' Completed",
-                html_content=html_content,
-                use_tls=True
-            )
+            await html_email_send.send_html_email_smtp(
+                    smtp_host=smtp_host,
+                    smtp_port=smtp_port,
+                    smtp_user=smtp_user,
+                    smtp_password=smtp_password,
+                    sender_email=sender_email,
+                    recipient_emails=recipient_emails,
+                    subject=f"Azure VM '{vm_name}' Completed",
+                    html_content=html_content,
+                    use_tls=True
+                )
             
             await post_status_update(
                 hook_url=hook_url,
@@ -1317,6 +1316,22 @@ def check_ns_delegation(dns_client, resource_group, domain):
         print_error(f"NS delegation check failed: {e}")
         return False
 
+async def cleanup_temp_storage(
+    resource_group, storage_client, storage_account_name, 
+    blob_service_client, container_name, blob_name
+):
+    """Cleanup temporary storage on success"""
+    # Delete storage resources
+    try:
+        container_client = blob_service_client.get_container_client(container_name)
+        container_client.delete_blob(blob_name)
+        blob_service_client.delete_container(container_name)
+        storage_client.storage_accounts.delete(resource_group, storage_account_name)
+
+    except Exception as e:
+        print_warn(f"Temp storage cleanup failed: {str(e)}")
+        # Don't re-raise as this is non-critical
+        
 async def cleanup_resources_on_failure(
     network_client, compute_client, storage_client, blob_service_client, 
     container_name, blob_name, dns_client, resource_group, 
@@ -1364,20 +1379,6 @@ async def cleanup_resources_on_failure(
             pass
     
     print_success("Cleanup completed.")
-
-async def cleanup_temp_storage(
-    resource_group, storage_client, storage_account_name, 
-    blob_service_client, container_name, blob_name
-):
-    """Cleanup temporary storage on success"""
-    try:
-        container_client = blob_service_client.get_container_client(container_name)
-        container_client.delete_blob(blob_name)
-        blob_service_client.delete_container(container_name)
-        storage_client.storage_accounts.delete(resource_group, storage_account_name)
-    except Exception as e:
-        print_warn(f"Temp storage cleanup failed: {str(e)}")
-        raise
 
 # ====================== STATUS UPDATE FUNCTION ======================
 async def post_status_update(hook_url: str, status_data: dict) -> dict:
