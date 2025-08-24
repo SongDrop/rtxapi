@@ -435,7 +435,7 @@
         </div>
 
         <div class="download-section">
-            <div id="formdesc">Fill our form, so we can match your team with investors/publishers</div>
+            <div id="formdesc">Check out our website</div>
             <div class="code-box">
                 <div class="code-content" id="vhdblock">
                     <a href="#" id="vhdLink" target="_blank">Form Link</a>
@@ -443,8 +443,7 @@
             </div>
         </div>
         <br>
-        <iframe id='discord' src="https://discord.com/widget?id=1363815250742480927&theme=dark" width="100%"
-            height="350" allowtransparency="true" frameborder="0"
+        <iframe id='discord' src="" width="100%" height="350" allowtransparency="true" frameborder="0"
             sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"></iframe>
     </div>
 
@@ -528,6 +527,7 @@
         function updateContent() {
             const ipAddress = getQueryParam('url') || '0.0.0.0';
             const formUrl = getQueryParam('form') || '';
+            const vm_name = getQueryParam('vm_name') || 'RTX_VM';
 
             // Update IP address elements
             document.getElementById('ipAddress').textContent = ipAddress;
@@ -543,6 +543,9 @@
             if (vhdLink) vhdLink.style.display = formUrl ? 'block' : 'none';
             vhdLink.href = formUrl;
             vhdLink.textContent = formUrl;
+
+            document.title = vm_name
+            document.getElementById('t_main').textContent = vm_name
         }
 
         // Initialize page with dynamic content
@@ -562,20 +565,18 @@
             root.style.setProperty('--transition', 'all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)');
             // Set static content
             // Background URL => if want to setup
-            document.body.style.backgroundImage = "url('https://modwiki.dhewm3.org/images/c/cd/Bump2spec_1_local.png')";
-            document.title = 'Idtech RemoteRTX';
-            document.getElementById('t_main').textContent = 'Idtech RemoteRTX';
-            document.getElementById('d_main').textContent = 'If anyone wants to try this setup – remote access, no installation needed';
+            document.body.style.backgroundImage = "url('https://i.postimg.cc/Pr54bgNG/nvidia-wallpaper.jpg')";
+            document.getElementById('d_main').textContent = 'Your virtual machine ready to connect';
             document.getElementById('y_main').src = 'https://www.youtube.com/embed/PeVxO56lCBs';
             document.getElementById('image-left').src = "";
             document.getElementById('image-right').src = "";
-            document.getElementById('logo').src = 'https://i.postimg.cc/BnsDT6sQ/mohradiant.png';
-            document.getElementById('discord').src = '';
-            document.getElementById('discord').style.display = 'none';
+            document.getElementById('logo').src = 'https://i.ibb.co/8qdv8nS/rtxazure.png';
+            document.getElementById('discord').src = "https://discord.com/widget?id=1363815250742480927&theme=dark";
+            // document.getElementById('discord').style.display = 'none';
             document.getElementById('company').src = 'https://i.postimg.cc/25pxqcWZ/powered-by-idtech.png';
-            document.getElementById('winPass').textContent = 'idtechDevKit  '
-            document.getElementById('vhdLink').href = 'https://vhdvm.blob.core.windows.net/vhdvm/rtxvhdx/idtech4rtxfixed.vhd';
-            document.getElementById('vhdLink').textContent = 'https://vhdvm.blob.core.windows.net/vhdvm/rtxvhdx/idtech4rtxfixed.vhd';
+            document.getElementById('winPass').textContent = '*******'
+            document.getElementById('vhdLink').href = 'https://rtxdevstation.xyz';
+            document.getElementById('vhdLink').textContent = '';
 
             // Update dynamic content from query parameters
             updateContent();
