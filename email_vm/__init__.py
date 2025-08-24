@@ -75,14 +75,26 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         except ValueError:
             req_body = {}
 
-        recipients = req_body.get("recipients") or req.params.get("recipients")
         vm_name = req_body.get("vm_name") or req.params.get("vm_name")
         resource_group = req_body.get("resource_group") or req.params.get("resource_group")
+        recipients = req_body.get("recipients") or req.params.get("recipients")
 
-        missing = [param for param in ["recipients", "vm_name", "resource_group"] if not locals()[param]]
-        if missing:
+        ###Parameter checking to handle errors 
+        if not vm_name:
             return func.HttpResponse(
-                json.dumps({"error": f"Missing parameters: {', '.join(missing)}"}),
+                json.dumps({"error": "Missing 'vm_name' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not resource_group:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'resource_group' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not recipients:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'recipients' parameter"}),
                 status_code=400,
                 mimetype="application/json"
             )
