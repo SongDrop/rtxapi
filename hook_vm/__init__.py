@@ -10,6 +10,7 @@ from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPerm
 import logging
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
+import asyncio
 
  
 # Configure logging first
@@ -149,6 +150,8 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # DELETE STORAGE on 'FAILED' or 'COMPLETED'
         if status == "failed" or status == "completed":
+            # Wait for cleanup finishing
+            await asyncio.sleep(10)
             storage_client.storage_accounts.delete(resource_group, storage_account_name)
             print_success(f"Deleted storage account '{storage_account_name}'.")
 
