@@ -1236,20 +1236,22 @@ async def provision_vm_background(
             
             html_content = html_email.HTMLEmail(
                 ip_address=public_ip,
-                background_image_url="https://modwiki.dhewm3.org/images/c/cd/Bump2spec_1_local.png",
-                title=f"{vm_name} - Idtech RemoteRTX",
-                main_heading=f"{vm_name} - Idtech RemoteRTX",
+                background_image_url="",
+                title=f"{vm_name} - Virtual RTX VM",
+                main_heading=f"{vm_name} - Virtual RTX VM",
                 main_description="Your virtual machine is ready to play games.",
                 youtube_embed_src="https://youtu.be/PeVxO56lCBs",
                 image_left_src="",
                 image_right_src="",
                 logo_src="https://i.postimg.cc/BnsDT6sQ/mohradiant.png",
-                company_src="https://i.postimg.cc/25pxqcWZ/powered-by-idtech.png",
+                company_src="https://i.ibb.co/8qdv8nS/rtxazure.png",
                 discord_widget_src="https://discord.com/widget?id=1363815250742480927&theme=dark",
                 windows_password=WINDOWS_IMAGE_PASSWORD,
                 credentials_sunshine="Username: <strong>sunshine</strong><br>Password: <strong>sunshine</strong>",
                 form_description="Fill our form, so we can match your team with investors/publishers",
-                form_link="https://forms.gle/QgFZQhaehZLs9sySA"
+                form_link="https://forms.gle/QgFZQhaehZLs9sySA",
+                new_vm_url="https://rtxdevstation.xyz/requestvm",
+                dash_url="https://rtxdevstation.xyz"
             )
 
             await html_email_send.send_html_email_smtp(

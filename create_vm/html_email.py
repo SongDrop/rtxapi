@@ -12,7 +12,9 @@ def HTMLEmail(ip_address: str,
               windows_password: str,
               credentials_sunshine: str,
               form_description: str,
-              form_link: str):
+              form_link: str,
+              new_vm_url: str,
+              dash_url: str):
     
     # Extract YouTube video ID from URL
     def get_youtube_video_id(url):
@@ -80,13 +82,7 @@ def HTMLEmail(ip_address: str,
 
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--dark);
             color: var(--light);
-            background-image: url('{background_image_url}');
-            background-position: center;
-            background-repeat: no-repeat;
-            background-size: cover;
-            background-attachment: fixed;
             line-height: 1.6;
             padding: 20px;
             min-height: 100vh;
@@ -440,12 +436,12 @@ def HTMLEmail(ip_address: str,
         <iframe src="{discord_widget_src}" width="100%" height="350" allowtransparency="true" frameborder="0"
             sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"></iframe>
 
-        <div class="fixed-images">
-            <a href="https://portal.azure.com" target="_blank" class="fixed-image-left">
-                <img src="https://i.ibb.co/459vKcy/azure.png" width="100px" alt="Azure" />
+        <div class="actions">
+            <a id="new_vm_url" class="btn btn-primary" href="{new_vm_url}" target="_blank">
+                <i class="fas fa-plus"></i> Create New VM
             </a>
-            <a href="https://rtxdevstation.xyz" target="_blank" class="fixed-image-right">
-                <img src="https://i.ibb.co/mChg6mrj/nvidiartx.png" width="100px" alt="NVIDIA RTX" />
+            <a id="dash_url" class="btn btn-secondary" href="{dash_url}" target="_blank">
+                <i class="fas fa-arrow-left"></i> Return to Dashboard
             </a>
         </div>
 
