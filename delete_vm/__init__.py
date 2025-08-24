@@ -395,21 +395,11 @@ async def delete_vm_and_resources(compute_client, network_client, dns_client, re
         recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
         
         html_content = html_email.HTMLEmail(
-            ip_address=public_ip,
-            background_image_url="https://modwiki.dhewm3.org/images/c/cd/Bump2spec_1_local.png",
-            title=f"{vm_name} - Idtech RemoteRTX",
-            main_heading=f"{vm_name} - Idtech RemoteRTX",
-            main_description="Your virtual machine is ready to play games.",
-            youtube_embed_src="https://youtu.be/PeVxO56lCBs",
-            image_left_src="",
-            image_right_src="",
-            logo_src="https://i.postimg.cc/BnsDT6sQ/mohradiant.png",
-            company_src="https://i.postimg.cc/25pxqcWZ/powered-by-idtech.png",
-            discord_widget_src="https://discord.com/widget?id=1363815250742480927&theme=dark",
-            windows_password=WINDOWS_IMAGE_PASSWORD,
-            credentials_sunshine="Username: <strong>sunshine</strong><br>Password: <strong>sunshine</strong>",
-            form_description="Fill our form, so we can match your team with investors/publishers",
-            form_link="https://forms.gle/QgFZQhaehZLs9sySA"
+            vm_name,
+            datetime.utcnow().isoformat(),
+            "Successfully deleted",
+            "https://rtxdevstation.xyz/requestvm",
+            "https://rtxdevstation.xyz"
         )
 
         await html_email_send.send_html_email_smtp(
@@ -419,7 +409,7 @@ async def delete_vm_and_resources(compute_client, network_client, dns_client, re
                 smtp_password=smtp_password,
                 sender_email=sender_email,
                 recipient_emails=recipient_emails,
-                subject=f"Azure VM '{vm_name}' Completed",
+                subject=f"'{vm_name}' deleted",
                 html_content=html_content,
                 use_tls=True
             )
@@ -460,7 +450,7 @@ async def delete_vm_and_resources(compute_client, network_client, dns_client, re
             hook_url=hook_url,
             status_data={
                 "vm_name": vm_name,
-                "status": "deleted",
+                "status": "completed",
                 "resource_group": resource_group,
                 "location": location,
                 "details": {
