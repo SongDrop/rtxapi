@@ -125,19 +125,18 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
         # Send email in background
-        asyncio.create_task(
-            html_email_send.send_html_email_smtp(
-                smtp_host=smtp_host,
-                smtp_port=smtp_port,
-                smtp_user=smtp_user,
-                smtp_password=smtp_password,
-                sender_email=sender_email,
-                recipient_emails=recipient_email_addresses,
-                subject=f"Azure VM '{vm_name}' Completed",
-                html_content=html_content,
-                use_tls=True
-            )
+        await html_email_send.send_html_email_smtp(
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_user=smtp_user,
+            smtp_password=smtp_password,
+            sender_email=sender_email,
+            recipient_emails=recipient_email_addresses,
+            subject=f"Azure VM '{vm_name}' Completed",
+            html_content=html_content,
+            use_tls=True
         )
+            
 
         return func.HttpResponse(
             json.dumps({"status": "success", "public_ip": public_ip}),
