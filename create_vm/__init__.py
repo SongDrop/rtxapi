@@ -1243,7 +1243,7 @@ async def provision_vm_background(
                 youtube_embed_src="https://youtu.be/PeVxO56lCBs",
                 image_left_src="",
                 image_right_src="",
-                logo_src="https://i.postimg.cc/BnsDT6sQ/mohradiant.png",
+                logo_src="https://i.ibb.co/8qdv8nS/rtxazure.png",
                 company_src="https://i.ibb.co/8qdv8nS/rtxazure.png",
                 discord_widget_src="https://discord.com/widget?id=1363815250742480927&theme=dark",
                 windows_password=WINDOWS_IMAGE_PASSWORD,

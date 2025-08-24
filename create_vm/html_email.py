@@ -95,7 +95,7 @@ def HTMLEmail(ip_address: str,
         .container {{
             max-width: 800px;
             width: 100%;
-            background: rgba(20, 20, 20, 0.92);
+            background: white;
             padding: 30px;
             border-radius: 20px;
             box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
