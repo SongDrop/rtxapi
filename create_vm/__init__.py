@@ -1237,8 +1237,8 @@ async def provision_vm_background(
             html_content = html_email.HTMLEmail(
                 ip_address=public_ip,
                 background_image_url="",
-                title=f"{vm_name} - Virtual RTX VM",
-                main_heading=f"{vm_name} - Virtual RTX VM",
+                title=f"{vm_name}",
+                main_heading=f"{vm_name}",
                 main_description="Your virtual machine is ready to play games.",
                 youtube_embed_src="https://youtu.be/PeVxO56lCBs",
                 image_left_src="",
