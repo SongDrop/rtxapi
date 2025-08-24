@@ -1,9 +1,9 @@
-import aiosmtplib
+import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import ssl
 
-async def send_html_email_smtp(
+def send_html_email_smtp(
     smtp_host: str,
     smtp_port: int,
     smtp_user: str,
@@ -39,19 +39,19 @@ async def send_html_email_smtp(
     msg.attach(MIMEText(html_content, 'html'))
 
     try:
-        # Use aiosmtplib for async email sending
-        smtp = aiosmtplib.SMTP(hostname=smtp_host, port=smtp_port, use_tls=use_tls)
-        await smtp.connect()
-        if use_tls:
-            await smtp.starttls()
-        await smtp.login(smtp_user, smtp_password)
-        await smtp.send_message(msg)
-        await smtp.quit()
+        if use_ssl:
+            context = ssl.create_default_context()
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=10)
+        else:
+            server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
+            if use_tls:
+                server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.sendmail(sender_email, recipient_emails, msg.as_string())
+        server.quit()
         print_success("Notification email sent successfully.")
-        return True
     except Exception as e:
         print_error(f"Failed to send email: {e}")
-        return False
 
 # Console colors for logs
 class bcolors:
