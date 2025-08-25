@@ -46,8 +46,8 @@ notify_webhook() {{
   "vm_name": "$(hostname)",
   "status": "$status",
   "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-  "location": "{location}",
-  "resource_group": "{resource_group}",
+  "location": {location},
+  "resource_group": {resource_group},
   "details": {{
     "step": "$step",
     "message": "$message"
@@ -82,10 +82,6 @@ notify_webhook() {
     script_template = f"""#!/usr/bin/env bash
 set -e
 set -o pipefail
-# ----------------------------------------------------------------------
-#  Set essential environment variables
-# ----------------------------------------------------------------------
-export HOME=/root  # Required for Git operations under Azure CustomScript
 
 # ----------------------------------------------------------------------
 #  Helper: webhook notification
@@ -184,15 +180,15 @@ else
 fi
 
 # Initialise Git‑LFS (required for some assets)
-git lfs install --force
-git lfs pull --force || true
+git lfs install
+git lfs pull || true
 
 # ----------------------------------------------------------------------
 #  Create a custom app.ini with LFS configuration
 # ----------------------------------------------------------------------
 echo "[3/10] Creating custom app.ini..."
 mkdir -p "$FORGEJO_DIR/config"
-cat > "$FORGEJO_DIR/config/app.ini" <<EOF_APPINI
+cat > "$FORGEJO_DIR/config/app.ini" <<'EOF_APPINI'
 [server]
 LFS_START_SERVER = true
 LFS_CONTENT_PATH = /data/gitea/lfs
@@ -221,7 +217,7 @@ docker buildx build --platform linux/amd64 -t forgejo:local --load .
 #  Docker‑Compose file
 # ----------------------------------------------------------------------
 echo "[5/10] Generating docker‑compose.yml..."
-cat > docker-compose.yml <<EOF_COMPOSE
+cat > docker-compose.yml <<'EOF_COMPOSE'
 version: "3.8"
 
 services:
@@ -302,6 +298,7 @@ if [ -x "$DNS_HOOK_SCRIPT" ]; then
     --manual-public-ip-logging-ok
 else
   echo "Falling back to standalone HTTP‑01 challenge"
+  # Stop Nginx temporarily so the standalone server can bind to :80
   systemctl stop nginx || true
   certbot certonly --standalone \\
     --preferred-challenges http \\
@@ -315,7 +312,7 @@ fi
 #  Nginx reverse‑proxy configuration
 # ----------------------------------------------------------------------
 echo "[8/10] Configuring Nginx..."
-cat > /etc/nginx/sites-available/forgejo <<EOF_NGINX
+cat > /etc/nginx/sites-available/forgejo <<'EOF_NGINX'
 map $http_upgrade $connection_upgrade {{
     default upgrade;
     ''      close;
@@ -363,6 +360,7 @@ nginx -t && systemctl restart nginx
 echo "[9/10] Performing final checks..."
 notify_webhook "provisioning" "verification" "Running post‑install checks"
 
+# 1️⃣  Container must be running
 if ! docker ps --filter "name=forgejo" --filter "status=running" | grep -q forgejo; then
   echo "ERROR: Forgejo container is not running!"
   docker logs forgejo || true
@@ -370,18 +368,21 @@ if ! docker ps --filter "name=forgejo" --filter "status=running" | grep -q forge
   exit 1
 fi
 
+# 2️⃣  Nginx config already tested – just double‑check it’s still OK
 if ! nginx -t; then
   echo "ERROR: Nginx configuration test failed"
   notify_webhook "failed" "verification" "Nginx test failed"
   exit 1
 fi
 
+# 3️⃣  SSL files must exist
 if [ ! -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
   echo "ERROR: SSL certificate not found!"
   notify_webhook "failed" "verification" "SSL cert missing"
   exit 1
 fi
 
+# 4️⃣  Verify HTTPS endpoint (ignore self‑signed certs on the very first run)
 HTTPS_CODE=$(curl -k -s -o /dev/null -w "%{{http_code}}" https://{DOMAIN_NAME} || echo "000")
 if [[ "$HTTPS_CODE" != "200" ]]; then
   echo "ERROR: HTTPS check returned $HTTPS_CODE (expected 200)"
@@ -390,7 +391,7 @@ if [[ "$HTTPS_CODE" != "200" ]]; then
 fi
 
 # ----------------------------------------------------------------------
-#  Wait for Forgejo’s web UI to be ready
+#  Wait for Forgejo’s web UI to be ready (it prints “Initial configuration” on first launch)
 # ----------------------------------------------------------------------
 echo "[10/10] Waiting for Forgejo UI to become ready..."
 while ! curl -s http://localhost:{PORT} | grep -q "Initial configuration"; do
@@ -399,13 +400,13 @@ done
 
 notify_webhook "completed" "finished" "Forgejo deployment succeeded"
 
-cat <<EOF_FINAL
+cat <<'EOF_FINAL'
 =============================================
 ✅ Forgejo Setup Complete!
 ---------------------------------------------
 🔗 Access URL     : https://{DOMAIN_NAME}
 👤 Admin login    : {ADMIN_EMAIL}
-🔑 Admin password : {ADMIN_PASSWORD}
+🔑 Admin password: {ADMIN_PASSWORD}
 ---------------------------------------------
 ⚙️ Useful commands
    - Check container: docker ps --filter "name=forgejo"
