@@ -147,23 +147,47 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
 echo "[2/10] Installing Docker-Compose plugin & Buildx..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker components"
 
+# Debug: Show current directory and files
+echo "Current directory: $(pwd)"
+echo "Files in current directory:"
+ls -la
+
+# Debug: Show system information
+echo "System information:"
+lsb_release -a
+uname -a
+
 # Install Docker using the official Docker repository (more reliable)
-apt-get install -yq apt-transport-https ca-certificates curl software-properties-common
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "Installing Docker dependencies..."
+apt-get install -yq apt-transport-https ca-certificates curl software-properties-common gnupg
+
+echo "Adding Docker GPG key..."
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo "Adding Docker repository..."
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+echo "Updating package list..."
 apt-get update -qq
+
+echo "Installing Docker packages..."
 DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io
 
 # Install docker-compose (CLI-plugin)
+echo "Installing Docker Compose..."
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose || true
 
 # Add current user to the docker group (so we can run docker without sudo)
+echo "Adding user to docker group..."
 usermod -aG docker ${{SUDO_USER:-$USER}} || true
 
 # Start Docker service with improved error handling
+echo "Starting Docker service..."
 systemctl enable docker
 if ! systemctl start docker; then
     echo "ERROR: Failed to start Docker service"
@@ -195,11 +219,17 @@ if ! docker buildx version >/dev/null 2>&1; then
     chmod +x ~/.docker/cli-plugins/docker-buildx
 fi
 
+# Debug: Show Docker information
+echo "Docker installation completed successfully:"
+docker --version
+docker-compose --version
+docker buildx version
+
 # ----------------------------------------------------------------------
 #  Forgejo source checkout
 # ----------------------------------------------------------------------
 echo "[3/10] Preparing Forgejo source tree..."
-notify_webhook "provisioning" "forgejo_source" "Cloning / pulling Forgejo repo"
+notify_webhook "provisioning" "forgejo_source" "Cloning pulling Forgejo repo"
 
 mkdir -p "$FORGEJO_DIR"
 cd "$FORGEJO_DIR"
