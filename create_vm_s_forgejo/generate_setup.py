@@ -285,12 +285,12 @@ if [ -x "$DNS_HOOK_SCRIPT" ]; then
     --non-interactive \\
     --manual-public-ip-logging-ok
 else
-  echo "Falling back to standalone HTTP-01 challenge"
+  echo "Falling back to standalone HTTP-01 challenge (wildcard not supported)"
   systemctl stop nginx || true
   certbot certonly --standalone \\
     --preferred-challenges http \\
     --agree-tos --email "{ADMIN_EMAIL}" \\
-    -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" \\
+    -d "{DOMAIN_NAME}" \\
     --non-interactive
   systemctl start nginx
 fi
