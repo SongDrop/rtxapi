@@ -146,13 +146,25 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
 echo "[2/10] Installing Docker-Compose plugin & Buildx..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker components"
 
-# Use the official Docker installation script (most reliable method)
-echo "Installing Docker using the official installation script..."
-curl -fsSL https://get.docker.com -o get-docker.sh
-sh get-docker.sh
+# Install Docker using the official Docker repository
+echo "Setting up Docker repository..."
+apt-get install -y apt-transport-https ca-certificates curl software-properties-common gnupg
 
-# Install docker-compose (CLI-plugin)
-echo "Installing Docker Compose..."
+# Add Docker's official GPG key
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+# Add the Docker repository
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Update package list and install Docker
+echo "Installing Docker..."
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# Install docker-compose (CLI-plugin) as a fallback
+echo "Installing Docker Compose as fallback..."
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
@@ -162,10 +174,15 @@ ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose 
 echo "Adding user to docker group..."
 usermod -aG docker ${{SUDO_USER:-$USER}} || true
 
-# Start Docker service
+# Start Docker service with improved error handling
 echo "Starting Docker service..."
 systemctl enable docker
-systemctl start docker
+if ! systemctl start docker; then
+    echo "ERROR: Failed to start Docker service"
+    journalctl -u docker --no-pager -n 20
+    notify_webhook "failed" "docker_setup" "Docker service failed to start"
+    exit 1
+fi
 
 # Wait for Docker to be ready with timeout
 echo "Waiting for Docker to start..."
