@@ -100,7 +100,7 @@ def HTMLEmail(ip_address: str,
             border-radius: 20px;
             box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
             backdrop-filter: blur(8px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            border: 1px solid lightgray;
         }}
 
         .header {{
@@ -166,7 +166,6 @@ def HTMLEmail(ip_address: str,
         }}
 
         .code-box {{
-            background: rgba(42, 42, 42, 0.7);
             padding: 18px;
             border-radius: 12px;
             position: relative;
@@ -176,8 +175,7 @@ def HTMLEmail(ip_address: str,
         }}
 
         .code-box:hover {{
-            background: rgba(50, 50, 50, 0.8);
-            transform: translateY(-2px);
+             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
         }}
 
@@ -284,7 +282,8 @@ def HTMLEmail(ip_address: str,
         /* Action buttons styles */
         .actions {{
             display: flex;
-            justify-content: center;
+            justify-content: space-between;
+            align-items: center;
             gap: 20px;
             margin: 40px 0 20px;
         }}

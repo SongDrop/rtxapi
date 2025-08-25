@@ -108,7 +108,8 @@ def HTMLEmail(vm_name: str,
 
         .actions {{
             display: flex;
-            justify-content: center;
+            justify-content: space-between;
+            align-items: center;
             gap: 20px;
             margin-top: 40px;
         }}
