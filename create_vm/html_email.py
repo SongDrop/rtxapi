@@ -129,12 +129,12 @@ def HTMLEmail(ip_address: str,
         .description {{
             font-size: 1.1rem;
             margin-bottom: 30px;
-            background: rgba(42, 42, 42, 0.7);
             padding: 20px;
             border-radius: 12px;
             border-left: 4px solid var(--primary);
             white-space: pre-wrap;
             line-height: 1.7;
+            background: rgba(16, 124, 16, 0.2);
         }}
 
         iframe {{
