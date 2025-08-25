@@ -146,31 +146,55 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
 echo "[2/10] Installing Docker-Compose plugin & Buildx..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker components"
 
+# Use the official Docker installation script (most reliable method)
+echo "Installing Docker using the official installation script..."
+curl -fsSL https://get.docker.com -o get-docker.sh
+sh get-docker.sh
+
 # Install docker-compose (CLI-plugin)
+echo "Installing Docker Compose..."
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose || true
 
-# Add current user to the docker group (so we can run docker without sudo)
+# Add current user to the docker group
+echo "Adding user to docker group..."
 usermod -aG docker ${{SUDO_USER:-$USER}} || true
 
 # Start Docker service
-systemctl enable --now docker
+echo "Starting Docker service..."
+systemctl enable docker
+systemctl start docker
 
-# Wait for Docker to be ready
+# Wait for Docker to be ready with timeout
 echo "Waiting for Docker to start..."
+COUNTER=0
 until docker info >/dev/null 2>&1; do
-  sleep 2
+    sleep 2
+    COUNTER=$((COUNTER + 1))
+    if [ $COUNTER -gt 30 ]; then
+        echo "ERROR: Docker did not start within 60 seconds"
+        systemctl status docker --no-pager
+        journalctl -u docker --no-pager -n 20
+        notify_webhook "failed" "docker_setup" "Docker failed to start within timeout"
+        exit 1
+    fi
 done
 
 # Install Buildx if missing
 if ! docker buildx version >/dev/null 2>&1; then
-  echo "Installing Docker Buildx..."
-  mkdir -p ~/.docker/cli-plugins
-  curl -sSfSL "{buildx_url}" -o ~/.docker/cli-plugins/docker-buildx
-  chmod +x ~/.docker/cli-plugins/docker-buildx
+    echo "Installing Docker Buildx..."
+    mkdir -p ~/.docker/cli-plugins
+    curl -sSfSL "{buildx_url}" -o ~/.docker/cli-plugins/docker-buildx
+    chmod +x ~/.docker/cli-plugins/docker-buildx
 fi
+
+# Debug: Show Docker information
+echo "Docker installation completed successfully:"
+docker --version
+docker-compose --version
+docker buildx version
 
 # ----------------------------------------------------------------------
 #  Create Forgejo directory structure
