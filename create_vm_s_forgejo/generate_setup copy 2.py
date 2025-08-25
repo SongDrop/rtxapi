@@ -147,6 +147,13 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
 echo "[2/10] Installing Docker-Compose plugin & Buildx..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker components"
 
+# Install Docker using the official Docker repository (more reliable)
+apt-get install -yq apt-transport-https ca-certificates curl software-properties-common
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io
+
 # Install docker-compose (CLI-plugin)
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
@@ -156,21 +163,36 @@ ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose 
 # Add current user to the docker group (so we can run docker without sudo)
 usermod -aG docker ${{SUDO_USER:-$USER}} || true
 
-# Start Docker service
-systemctl enable --now docker
+# Start Docker service with improved error handling
+systemctl enable docker
+if ! systemctl start docker; then
+    echo "ERROR: Failed to start Docker service"
+    journalctl -u docker --no-pager -n 20
+    notify_webhook "failed" "docker_setup" "Docker service failed to start"
+    exit 1
+fi
 
-# Wait for Docker to be ready
+# Wait for Docker to be ready with timeout
 echo "Waiting for Docker to start..."
+COUNTER=0
 until docker info >/dev/null 2>&1; do
-  sleep 2
+    sleep 2
+    COUNTER=$((COUNTER + 1))
+    if [ $COUNTER -gt 30 ]; then
+        echo "ERROR: Docker did not start within 60 seconds"
+        systemctl status docker --no-pager
+        journalctl -u docker --no-pager -n 20
+        notify_webhook "failed" "docker_setup" "Docker failed to start within timeout"
+        exit 1
+    fi
 done
 
 # Install Buildx if missing
 if ! docker buildx version >/dev/null 2>&1; then
-  echo "Installing Docker Buildx..."
-  mkdir -p ~/.docker/cli-plugins
-  curl -sSfSL "{buildx_url}" -o ~/.docker/cli-plugins/docker-buildx
-  chmod +x ~/.docker/cli-plugins/docker-buildx
+    echo "Installing Docker Buildx..."
+    mkdir -p ~/.docker/cli-plugins
+    curl -sSfSL "{buildx_url}" -o ~/.docker/cli-plugins/docker-buildx
+    chmod +x ~/.docker/cli-plugins/docker-buildx
 fi
 
 # ----------------------------------------------------------------------
