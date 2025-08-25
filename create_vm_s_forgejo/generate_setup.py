@@ -16,7 +16,6 @@ def generate_setup(
     """
 
     # ---------- URLs ----------
-    forgejo_git = "https://codeberg.org/forgejo/forgejo.git"
     docker_compose_url = "https://github.com/docker/compose/releases/download/v2.38.1/docker-compose-linux-x86_64"
     buildx_url = "https://github.com/docker/buildx/releases/download/v0.11.2/buildx-v0.11.2.linux-amd64"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
@@ -174,36 +173,19 @@ if ! docker buildx version >/dev/null 2>&1; then
 fi
 
 # ----------------------------------------------------------------------
-#  Forgejo source checkout
+#  Create Forgejo directory structure
 # ----------------------------------------------------------------------
-echo "[3/10] Preparing Forgejo source tree..."
-notify_webhook "provisioning" "forgejo_source" "Cloning / pulling Forgejo repo"
+echo "[3/10] Preparing Forgejo directories..."
+notify_webhook "provisioning" "forgejo_setup" "Creating directories"
 
 mkdir -p "$FORGEJO_DIR"
 cd "$FORGEJO_DIR"
-
-if [ -d ".git" ]; then
-  echo "Existing repository - pulling latest..."
-  git pull
-elif [ -n "$(ls -A . 2>/dev/null)" ]; then
-  echo "Directory not empty - backing up then cloning fresh copy"
-  mkdir -p ../forgejo_backup
-  mv ./* ../forgejo_backup/ || true
-  git clone "{forgejo_git}" .
-else
-  echo "Cloning Forgejo repository..."
-  git clone "{forgejo_git}" .
-fi
-
-# Initialise Git-LFS (required for some assets)
-git lfs install --force
-git lfs pull --force || true
+mkdir -p data config ssl
 
 # ----------------------------------------------------------------------
 #  Create a custom app.ini with LFS configuration
 # ----------------------------------------------------------------------
 echo "[4/10] Creating custom app.ini..."
-mkdir -p "$FORGEJO_DIR/config"
 cat > "$FORGEJO_DIR/config/app.ini" <<EOF_APPINI
 [server]
 LFS_START_SERVER = true
@@ -220,32 +202,15 @@ UPLOAD_FILE_MAX_SIZE = {LFS_MAX_FILE_SIZE_IN_BYTES}
 EOF_APPINI
 
 # ----------------------------------------------------------------------
-#  Build a local Forgejo Docker image
+#  Docker-Compose file (using official Forgejo image)
 # ----------------------------------------------------------------------
-echo "[5/10] Building Forgejo Docker image..."
-notify_webhook "provisioning" "docker_build" "Running docker-buildx"
-
-# Create buildx builder
-docker buildx create --use --name forgejo-builder || true
-docker buildx inspect --bootstrap
-
-# Build the image with a longer timeout
-timeout 1h docker buildx build --platform linux/amd64 -t forgejo:local --load . || {{
-  echo "Docker build failed or timed out after 1 hour"
-  notify_webhook "failed" "docker_build" "Docker build failed or timed out"
-  exit 1
-}}
-
-# ----------------------------------------------------------------------
-#  Docker-Compose file
-# ----------------------------------------------------------------------
-echo "[6/10] Generating docker-compose.yml..."
+echo "[5/10] Generating docker-compose.yml..."
 cat > docker-compose.yml <<EOF_COMPOSE
 version: "3.8"
 
 services:
   server:
-    image: forgejo:local
+    image: codeberg.org/forgejo/forgejo:latest
     container_name: forgejo
     restart: unless-stopped
     environment:
@@ -274,7 +239,7 @@ EOF_COMPOSE
 # ----------------------------------------------------------------------
 #  Start the stack (Docker-Compose)
 # ----------------------------------------------------------------------
-echo "[7/10] Starting containers..."
+echo "[6/10] Starting containers..."
 docker compose up -d
 
 # Wait until the container reports a healthy status (max ~2 min)
@@ -291,7 +256,7 @@ done
 # ----------------------------------------------------------------------
 #  Firewall (UFW)
 # ----------------------------------------------------------------------
-echo "[8/10] Configuring firewall..."
+echo "[7/10] Configuring firewall..."
 ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
@@ -301,7 +266,7 @@ ufw --force enable
 # ----------------------------------------------------------------------
 #  SSL certificate acquisition
 # ----------------------------------------------------------------------
-echo "[9/10] Obtaining Let's Encrypt certificate..."
+echo "[8/10] Obtaining Let's Encrypt certificate..."
 notify_webhook "provisioning" "ssl" "Running certbot"
 
 mkdir -p /etc/letsencrypt
@@ -333,7 +298,7 @@ fi
 # ----------------------------------------------------------------------
 #  Nginx reverse-proxy configuration
 # ----------------------------------------------------------------------
-echo "[10/10] Configuring Nginx..."
+echo "[9/10] Configuring Nginx..."
 cat > /etc/nginx/sites-available/forgejo <<EOF_NGINX
 map \$http_upgrade \$connection_upgrade {{
     default upgrade;
@@ -379,7 +344,7 @@ nginx -t && systemctl restart nginx
 # ----------------------------------------------------------------------
 #  Final verification
 # ----------------------------------------------------------------------
-echo "Performing final checks..."
+echo "[10/10] Performing final checks..."
 notify_webhook "provisioning" "verification" "Running post-install checks"
 
 if ! docker ps --filter "name=forgejo" --filter "status=running" | grep -q forgejo; then

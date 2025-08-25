@@ -11,7 +11,7 @@ def generate_setup(
 ):
     """
     Returns a Bash script that installs Forgejo behind Nginx,
-    obtains a Let’s Encrypt certificate, configures a firewall,
+    obtains a Let's Encrypt certificate, configures a firewall,
     and (optionally) reports progress to a webhook.
     """
 
@@ -73,7 +73,7 @@ EOF
     else:
         webhook_notification = '''
 notify_webhook() {
-  # No webhook configured – silently ignore
+  # No webhook configured - silently ignore
   return 0
 }
 '''
@@ -104,6 +104,15 @@ if ! [[ "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
   exit 1
 fi
 
+# ----------------------------------------------------------------------
+#  Validate the port number
+# ----------------------------------------------------------------------
+if ! [[ "{FRONTEND_PORT}" =~ ^[0-9]+$ ]] || [ "{FRONTEND_PORT}" -lt 1 ] || [ "{FRONTEND_PORT}" -gt 65535 ]; then
+  echo "ERROR: Invalid port number \"{FRONTEND_PORT}\""
+  notify_webhook "failed" "validation" "Invalid port number"
+  exit 1
+fi
+
 notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
 
 # ----------------------------------------------------------------------
@@ -117,7 +126,7 @@ FORGEJO_DIR="{forgejo_dir}"
 DNS_HOOK_SCRIPT="{DNS_HOOK_SCRIPT}"
 WEBHOOK_URL="{WEBHOOK_URL}"
 
-# Random secret for Git‑LFS JWT
+# Random secret for Git-LFS JWT
 LFS_JWT_SECRET=$(openssl rand -hex 32)
 
 # ----------------------------------------------------------------------
@@ -135,10 +144,10 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
 # ----------------------------------------------------------------------
 #  Docker (Compose + Buildx) setup
 # ----------------------------------------------------------------------
-echo "[2/10] Installing Docker‑Compose plugin & Buildx..."
+echo "[2/10] Installing Docker-Compose plugin & Buildx..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker components"
 
-# Install docker‑compose (CLI‑plugin)
+# Install docker-compose (CLI-plugin)
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
@@ -146,9 +155,12 @@ ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose 
 
 # Add current user to the docker group (so we can run docker without sudo)
 usermod -aG docker ${{SUDO_USER:-$USER}} || true
-newgrp docker 2>/dev/null || true
 
+# Start Docker service
 systemctl enable --now docker
+
+# Wait for Docker to be ready
+echo "Waiting for Docker to start..."
 until docker info >/dev/null 2>&1; do
   sleep 2
 done
@@ -171,10 +183,10 @@ mkdir -p "$FORGEJO_DIR"
 cd "$FORGEJO_DIR"
 
 if [ -d ".git" ]; then
-  echo "Existing repository – pulling latest..."
+  echo "Existing repository - pulling latest..."
   git pull
 elif [ -n "$(ls -A . 2>/dev/null)" ]; then
-  echo "Directory not empty – backing up then cloning fresh copy"
+  echo "Directory not empty - backing up then cloning fresh copy"
   mkdir -p ../forgejo_backup
   mv ./* ../forgejo_backup/ || true
   git clone "{forgejo_git}" .
@@ -183,14 +195,14 @@ else
   git clone "{forgejo_git}" .
 fi
 
-# Initialise Git‑LFS (required for some assets)
+# Initialise Git-LFS (required for some assets)
 git lfs install --force
 git lfs pull --force || true
 
 # ----------------------------------------------------------------------
 #  Create a custom app.ini with LFS configuration
 # ----------------------------------------------------------------------
-echo "[3/10] Creating custom app.ini..."
+echo "[4/10] Creating custom app.ini..."
 mkdir -p "$FORGEJO_DIR/config"
 cat > "$FORGEJO_DIR/config/app.ini" <<EOF_APPINI
 [server]
@@ -210,17 +222,24 @@ EOF_APPINI
 # ----------------------------------------------------------------------
 #  Build a local Forgejo Docker image
 # ----------------------------------------------------------------------
-echo "[4/10] Building Forgejo Docker image..."
-notify_webhook "provisioning" "docker_build" "Running docker‑buildx"
+echo "[5/10] Building Forgejo Docker image..."
+notify_webhook "provisioning" "docker_build" "Running docker-buildx"
 
+# Create buildx builder
 docker buildx create --use --name forgejo-builder || true
 docker buildx inspect --bootstrap
-docker buildx build --platform linux/amd64 -t forgejo:local --load .
+
+# Build the image with a longer timeout
+timeout 1h docker buildx build --platform linux/amd64 -t forgejo:local --load . || {{
+  echo "Docker build failed or timed out after 1 hour"
+  notify_webhook "failed" "docker_build" "Docker build failed or timed out"
+  exit 1
+}}
 
 # ----------------------------------------------------------------------
-#  Docker‑Compose file
+#  Docker-Compose file
 # ----------------------------------------------------------------------
-echo "[5/10] Generating docker‑compose.yml..."
+echo "[6/10] Generating docker-compose.yml..."
 cat > docker-compose.yml <<EOF_COMPOSE
 version: "3.8"
 
@@ -232,7 +251,7 @@ services:
     environment:
       - FORGEJO__server__DOMAIN={DOMAIN_NAME}
       - FORGEJO__server__ROOT_URL=https://{DOMAIN_NAME}
-      - FORGEJO__server__HTTP_PORT={FRONTEND_PORT}
+      - FORGEJO__server__HTTP_PORT=3000
       - FORGEJO__server__LFS_START_SERVER=true
       - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
       - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
@@ -243,22 +262,22 @@ services:
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "${FRONTEND_PORT}:{FRONTEND_PORT}"
+      - "{FRONTEND_PORT}:3000"
       - "222:22"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:{FRONTEND_PORT}"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 10s
       timeout: 5s
       retries: 6
 EOF_COMPOSE
 
 # ----------------------------------------------------------------------
-#  Start the stack (Docker‑Compose)
+#  Start the stack (Docker-Compose)
 # ----------------------------------------------------------------------
-echo "[5/10] Starting containers..."
+echo "[7/10] Starting containers..."
 docker compose up -d
 
-# Wait until the container reports a healthy status (max ~2 min)
+# Wait until the container reports a healthy status (max ~2 min)
 echo "Waiting for Forgejo container to become healthy..."
 for i in $(seq 1 60); do
   STATUS=$(docker inspect --format='{{{{.State.Health.Status}}}}' forgejo 2>/dev/null || echo "none")
@@ -272,17 +291,17 @@ done
 # ----------------------------------------------------------------------
 #  Firewall (UFW)
 # ----------------------------------------------------------------------
-echo "[6/10] Configuring firewall..."
+echo "[8/10] Configuring firewall..."
 ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
-ufw allow "${FRONTEND_PORT}/tcp"
+ufw allow "{FRONTEND_PORT}/tcp"
 ufw --force enable
 
 # ----------------------------------------------------------------------
 #  SSL certificate acquisition
 # ----------------------------------------------------------------------
-echo "[7/10] Obtaining Let’s Encrypt certificate..."
+echo "[9/10] Obtaining Let's Encrypt certificate..."
 notify_webhook "provisioning" "ssl" "Running certbot"
 
 mkdir -p /etc/letsencrypt
@@ -290,7 +309,7 @@ curl -sSf "{letsencrypt_options_url}" -o /etc/letsencrypt/options-ssl-nginx.conf
 curl -sSf "{ssl_dhparams_url}" -o /etc/letsencrypt/ssl-dhparams.pem
 
 if [ -x "$DNS_HOOK_SCRIPT" ]; then
-  echo "Using DNS‑01 challenge via hook script"
+  echo "Using DNS-01 challenge via hook script"
   chmod +x "$DNS_HOOK_SCRIPT"
   certbot certonly --manual \\
     --preferred-challenges dns \\
@@ -301,7 +320,7 @@ if [ -x "$DNS_HOOK_SCRIPT" ]; then
     --non-interactive \\
     --manual-public-ip-logging-ok
 else
-  echo "Falling back to standalone HTTP‑01 challenge"
+  echo "Falling back to standalone HTTP-01 challenge"
   systemctl stop nginx || true
   certbot certonly --standalone \\
     --preferred-challenges http \\
@@ -312,11 +331,11 @@ else
 fi
 
 # ----------------------------------------------------------------------
-#  Nginx reverse‑proxy configuration
+#  Nginx reverse-proxy configuration
 # ----------------------------------------------------------------------
-echo "[8/10] Configuring Nginx..."
+echo "[10/10] Configuring Nginx..."
 cat > /etc/nginx/sites-available/forgejo <<EOF_NGINX
-map $http_upgrade $connection_upgrade {{
+map \$http_upgrade \$connection_upgrade {{
     default upgrade;
     ''      close;
 }}
@@ -324,7 +343,7 @@ map $http_upgrade $connection_upgrade {{
 server {{
     listen 80;
     server_name {DOMAIN_NAME};
-    return 301 https://$host$request_uri;
+    return 301 https://\$host\$request_uri;
 }}
 
 server {{
@@ -340,12 +359,12 @@ server {{
 
     location / {{
         proxy_pass http://127.0.0.1:{FRONTEND_PORT};
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
         proxy_http_version 1.1;
         proxy_buffering off;
         proxy_request_buffering off;
@@ -360,8 +379,8 @@ nginx -t && systemctl restart nginx
 # ----------------------------------------------------------------------
 #  Final verification
 # ----------------------------------------------------------------------
-echo "[9/10] Performing final checks..."
-notify_webhook "provisioning" "verification" "Running post‑install checks"
+echo "Performing final checks..."
+notify_webhook "provisioning" "verification" "Running post-install checks"
 
 if ! docker ps --filter "name=forgejo" --filter "status=running" | grep -q forgejo; then
   echo "ERROR: Forgejo container is not running!"
@@ -390,18 +409,9 @@ if [[ "$HTTPS_CODE" != "200" ]]; then
 fi
 
 # ----------------------------------------------------------------------
-#  Validate the port number
+#  Wait for Forgejo's web UI to be ready
 # ----------------------------------------------------------------------
-if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-  echo "ERROR: Invalid port number \"$PORT\""
-  notify_webhook "failed" "validation" "Invalid port number"
-  exit 1
-fi
-
-# ----------------------------------------------------------------------
-#  Wait for Forgejo’s web UI to be ready
-# ----------------------------------------------------------------------
-echo "[10/10] Waiting for Forgejo UI to become ready..."
+echo "Waiting for Forgejo UI to become ready..."
 while ! curl -s http://localhost:{FRONTEND_PORT} | grep -q "Initial configuration"; do
   sleep 5
 done
@@ -423,8 +433,8 @@ cat <<EOF_FINAL
    - Certbot list   : certbot certificates
    - Firewall status: ufw status numbered
 ---------------------------------------------
-⚠️ Post‑install notes
-1️⃣  First visit https://{DOMAIN_NAME} to finish the Forgejo web‑setup.
+⚠️ Post-install notes
+1️⃣  First visit https://{DOMAIN_NAME} to finish the Forgejo web-setup.
 2️⃣  If you ever see the default Nginx page:
       sudo rm -f /etc/nginx/sites-enabled/default
       sudo systemctl restart nginx
