@@ -146,25 +146,12 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
 echo "[2/10] Installing Docker-Compose plugin & Buildx..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker components"
 
-# Install Docker using the official Docker repository
-echo "Setting up Docker repository..."
-apt-get install -y apt-transport-https ca-certificates curl software-properties-common gnupg
+# Use Ubuntu's docker.io package (more stable on Azure)
+echo "Installing Docker from Ubuntu repository..."
+apt-get install -y docker.io
 
-# Add Docker's official GPG key
-mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-
-# Add the Docker repository
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-# Update package list and install Docker
-echo "Installing Docker..."
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-# Install docker-compose (CLI-plugin) as a fallback
-echo "Installing Docker Compose as fallback..."
+# Install docker-compose (CLI-plugin)
+echo "Installing Docker Compose..."
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
@@ -177,9 +164,23 @@ usermod -aG docker ${{SUDO_USER:-$USER}} || true
 # Start Docker service with improved error handling
 echo "Starting Docker service..."
 systemctl enable docker
+
+# Check if Docker can be started
 if ! systemctl start docker; then
-    echo "ERROR: Failed to start Docker service"
-    journalctl -u docker --no-pager -n 20
+    echo "ERROR: Failed to start Docker service. Checking status..."
+    systemctl status docker --no-pager
+    journalctl -u docker --no-pager -n 30
+    
+    # Try to diagnose the issue
+    echo "Checking for existing Docker processes..."
+    ps aux | grep -i docker
+    
+    echo "Checking disk space..."
+    df -h
+    
+    echo "Checking memory..."
+    free -h
+    
     notify_webhook "failed" "docker_setup" "Docker service failed to start"
     exit 1
 fi
@@ -193,7 +194,7 @@ until docker info >/dev/null 2>&1; do
     if [ $COUNTER -gt 30 ]; then
         echo "ERROR: Docker did not start within 60 seconds"
         systemctl status docker --no-pager
-        journalctl -u docker --no-pager -n 20
+        journalctl -u docker --no-pager -n 30
         notify_webhook "failed" "docker_setup" "Docker failed to start within timeout"
         exit 1
     fi
