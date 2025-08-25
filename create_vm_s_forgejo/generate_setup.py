@@ -2,7 +2,7 @@ def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
-    PORT,
+    FRONTEND_PORT,
     DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh",
     WEBHOOK_URL="",
     ALLOW_EMBED_WEBSITE="",
@@ -112,7 +112,7 @@ notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
 DOMAIN_NAME="{DOMAIN_NAME}"
 ADMIN_EMAIL="{ADMIN_EMAIL}"
 ADMIN_PASSWORD="{ADMIN_PASSWORD}"
-PORT="{PORT}"
+PORT="{FRONTEND_PORT}"
 FORGEJO_DIR="{forgejo_dir}"
 DNS_HOOK_SCRIPT="{DNS_HOOK_SCRIPT}"
 WEBHOOK_URL="{WEBHOOK_URL}"
@@ -232,7 +232,7 @@ services:
     environment:
       - FORGEJO__server__DOMAIN={DOMAIN_NAME}
       - FORGEJO__server__ROOT_URL=https://{DOMAIN_NAME}
-      - FORGEJO__server__HTTP_PORT=3000
+      - FORGEJO__server__HTTP_PORT={FRONTEND_PORT}
       - FORGEJO__server__LFS_START_SERVER=true
       - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
       - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
@@ -243,10 +243,10 @@ services:
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "${PORT}:3000"
+      - "${FRONTEND_PORT}:{FRONTEND_PORT}"
       - "222:22"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD", "curl", "-f", "http://localhost:{FRONTEND_PORT}"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -276,7 +276,7 @@ echo "[6/10] Configuring firewall..."
 ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
-ufw allow "${PORT}/tcp"
+ufw allow "${FRONTEND_PORT}/tcp"
 ufw --force enable
 
 # ----------------------------------------------------------------------
@@ -339,7 +339,7 @@ server {{
     client_max_body_size {MAX_UPLOAD_FILE_SIZE_IN_MB}M;
 
     location / {{
-        proxy_pass http://127.0.0.1:$PORT;
+        proxy_pass http://127.0.0.1:{FRONTEND_PORT};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -390,10 +390,19 @@ if [[ "$HTTPS_CODE" != "200" ]]; then
 fi
 
 # ----------------------------------------------------------------------
+#  Validate the port number
+# ----------------------------------------------------------------------
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  echo "ERROR: Invalid port number \"$PORT\""
+  notify_webhook "failed" "validation" "Invalid port number"
+  exit 1
+fi
+
+# ----------------------------------------------------------------------
 #  Wait for Forgejo’s web UI to be ready
 # ----------------------------------------------------------------------
 echo "[10/10] Waiting for Forgejo UI to become ready..."
-while ! curl -s http://localhost:{PORT} | grep -q "Initial configuration"; do
+while ! curl -s http://localhost:{FRONTEND_PORT} | grep -q "Initial configuration"; do
   sleep 5
 done
 
