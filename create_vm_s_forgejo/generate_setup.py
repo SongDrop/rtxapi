@@ -134,38 +134,66 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
 # ----------------------------------------------------------------------
 notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
 
+# Remove any existing Docker installations to avoid conflicts
+apt-get remove -y docker docker-engine docker.io containerd runc || true
+
+# Install prerequisites
+apt-get install -yq ca-certificates curl gnupg lsb-release
+
+# Add Docker's official GPG key
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+# Set up the repository
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
+# Install Docker
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true
+DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-groupadd docker 2>/dev/null || true
-CURRENT_USER=$(whoami)
-if [ "$CURRENT_USER" != "root" ]; then
-    usermod -aG docker "$CURRENT_USER" || true
-fi
+# Add current user to docker group
+usermod -aG docker $USER
 
 # ----------------------------------------------------------------------
-#  Start Docker safely
+#  Start Docker with proper init system detection
 # ----------------------------------------------------------------------
 notify_webhook "provisioning" "docker_start" "Starting Docker service"
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable docker || true
-    systemctl start docker || true
-elif command -v service >/dev/null 2>&1; then
-    service docker start || true
+
+# Check if systemd is available
+if [ "$(ps --no-headers -o comm 1)" = "systemd" ]; then
+    systemctl enable docker
+    systemctl start docker
 else
-    nohup dockerd > /var/log/dockerd.log 2>&1 &
-    sleep 5
+    # Fallback to service command
+    service docker start
 fi
 
-if ! timeout 30s docker info >/dev/null 2>&1; then
-    echo "ERROR: Docker did not start correctly"
-    notify_webhook "failed" "docker_failed" "Docker not running"
-    cat /var/log/dockerd.log 2>/dev/null || true
-    exit 1
+# Wait for Docker to start with timeout
+echo "Waiting for Docker to start..."
+timeout=30
+while [ $timeout -gt 0 ]; do
+    if docker info >/dev/null 2>&1; then
+        echo "Docker started successfully"
+        break
+    fi
+    sleep 1
+    timeout=$((timeout - 1))
+done
+
+if [ $timeout -eq 0 ]; then
+    echo "ERROR: Docker did not start within 30 seconds"
+    notify_webhook "failed" "docker_failed" "Docker startup timeout"
+    
+    # Attempt to start manually as fallback
+    echo "Attempting manual Docker startup..."
+    nohup dockerd > /var/log/dockerd.log 2>&1 &
+    sleep 5
+    
+    if ! docker info >/dev/null 2>&1; then
+        echo "Docker manual startup also failed"
+        cat /var/log/dockerd.log 2>/dev/null || true
+        exit 1
+    fi
 fi
 
 # ----------------------------------------------------------------------
