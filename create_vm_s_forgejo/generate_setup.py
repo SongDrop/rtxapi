@@ -130,13 +130,15 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
     python3-certbot-nginx git-lfs openssl software-properties-common lsb-release gnupg
 
 # ----------------------------------------------------------------------
-#  Install latest Docker from official repo
+#  Install latest Docker & CLI plugins (Compose, Buildx)
 # ----------------------------------------------------------------------
-notify_webhook "provisioning" "docker_setup" "Installing Docker components"
+notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
 
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+    | tee /etc/apt/sources.list.d/docker.list
+
 apt-get update -qq
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
@@ -146,52 +148,23 @@ if [ "$CURRENT_USER" != "root" ]; then
     usermod -aG docker "$CURRENT_USER" || true
 fi
 
-# ----------------------------------------------------------------------
-#  Start Docker safely
-# ----------------------------------------------------------------------
-notify_webhook "provisioning" "docker_start" "Starting Docker service"
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable docker || true
-    systemctl start docker || true
-elif command -v service >/dev/null 2>&1; then
-    service docker start || true
-else
-    nohup dockerd > /var/log/dockerd.log 2>&1 &
-    sleep 5
-fi
+# Enable and start Docker service
+systemctl enable docker || true
+systemctl start docker || true
 
+# Verify Docker is running
 if ! timeout 30s docker info >/dev/null 2>&1; then
-    echo "ERROR: Docker did not start correctly"
-    notify_webhook "failed" "docker_failed" "Docker not running"
+    notify_webhook "failed" "docker_failed" "Docker did not start"
     cat /var/log/dockerd.log 2>/dev/null || true
     exit 1
 fi
 
-# ----------------------------------------------------------------------
-#  Install docker-compose & buildx
-# ----------------------------------------------------------------------
-notify_webhook "provisioning" "compose_install" "Installing Docker Compose"
-mkdir -p /usr/local/lib/docker/cli-plugins
-curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
-chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose || true
-
-notify_webhook "provisioning" "buildx_install" "Installing Docker Buildx"
-if ! docker buildx version >/dev/null 2>&1; then
-    notify_webhook "provisioning" "buildx_install" "Installing Docker Buildx"
-    BUILDX_DIR="/usr/local/lib/docker/cli-plugins"
-    mkdir -p "$BUILDX_DIR"
-    if ! curl -sSfSL "${buildx_url}" -o "$BUILDX_DIR/docker-buildx"; then
-        notify_webhook "failed" "buildx_install" "Failed to download Buildx from ${buildx_url}"
-        exit 1
-    fi
-    chmod +x "$BUILDX_DIR/docker-buildx"
-    ln -sf "$BUILDX_DIR/docker-buildx" /usr/bin/docker-buildx || true
-fi
-
+# Verify Compose & Buildx
+docker compose version || {{ notify_webhook "failed" "compose_failed" "docker compose not found"; exit 1; }}
+docker buildx version || {{ notify_webhook "failed" "buildx_failed" "docker buildx not found"; exit 1; }}
 
 docker --version
-docker-compose --version
+docker compose version
 docker buildx version
 
 # ----------------------------------------------------------------------
@@ -214,7 +187,7 @@ UPLOAD_FILE_MAX_SIZE = {LFS_MAX_FILE_SIZE_IN_BYTES}
 EOF_APPINI
 
 # ----------------------------------------------------------------------
-#  Docker Compose
+#  Docker Compose for Forgejo
 # ----------------------------------------------------------------------
 cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF_COMPOSE
 version: "3.8"
@@ -313,7 +286,7 @@ server {{
         proxy_buffering off;
         proxy_request_buffering off;
         add_header Content-Security-Policy "frame-ancestors 'self' {ALLOW_EMBED_WEBSITE}" always;
-    }}
+}}
 }}
 EOF_NGINX
 
@@ -341,12 +314,32 @@ fi
 
 notify_webhook "completed" "finished" "Forgejo deployment succeeded"
 
-echo "============================================="
-echo "✅ Forgejo Setup Complete!"
-echo "🔗 Access URL     : https://{DOMAIN_NAME}"
-echo "👤 Admin login    : {ADMIN_EMAIL}"
-echo "🔑 Admin password : {ADMIN_PASSWORD}"
-echo "============================================="
+cat <<'EOF_FINAL'
+=============================================
+✅ Forgejo Setup Complete!
+---------------------------------------------
+🔗 Access URL     : https://{DOMAIN_NAME}
+👤 Admin login    : {ADMIN_EMAIL}
+🔑 Admin password: {ADMIN_PASSWORD}
+---------------------------------------------
+⚙️ Useful commands
+   - Check container: docker ps --filter "name=forgejo"
+   - View logs      : docker logs -f forgejo
+   - Nginx status   : systemctl status nginx
+   - Certbot list   : certbot certificates
+   - Firewall status: ufw status numbered
+---------------------------------------------
+⚠️ Post‑install notes
+1️⃣  First visit https://{DOMAIN_NAME} to finish the Forgejo web‑setup.
+2️⃣  If you ever see the default Nginx page:
+      sudo rm -f /etc/nginx/sites-enabled/default
+      sudo systemctl restart nginx
+3️⃣  To renew the certificate later simply run:
+      sudo certbot renew --quiet && sudo systemctl reload nginx
+---------------------------------------------
+Enjoy your new Forgejo instance!
+=============================================
+EOF_FINAL
 """
 
     return script_template

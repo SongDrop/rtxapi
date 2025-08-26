@@ -1,38 +1,44 @@
-def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed", WEBHOOK_URL=""):
-    github_url = "https://github.com/moonlight-stream/moonlight-embedded.git"
-    
-    # Define the Moonlight Embedded directory path
-    MOONLIGHT_EMBEDDED_DIR = f"{VOLUME_DIR}/moonlight-embedded"
+import json
 
-    libnice_git_url = "https://gitlab.freedesktop.org/libnice/libnice"
-    libsrtp_tar_url = "https://github.com/cisco/libsrtp/archive/v2.2.0.tar.gz"
-    usrsctp_git_url = "https://github.com/sctplab/usrsctp"
-    libwebsockets_git_url = "https://github.com/warmcat/libwebsockets.git"
-    janus_git_url = "https://github.com/meetecho/janus-gateway.git"
+def generate_setup(
+    DOMAIN_NAME,
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    PORT,
+    VOLUME_DIR="/opt/code-server",
+    WEBHOOK_URL="",
+    location="",
+    resource_group=""
+):
+    SERVICE_USER = "coder"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
-
-    # Webhook notification function with proper JSON structure
-    webhook_notification = ""
+    
+    # Escape variables for JSON to prevent injection
+    location_escaped = json.dumps(location)
+    resource_group_escaped = json.dumps(resource_group)
+    
+    # Webhook helper
     if WEBHOOK_URL:
         webhook_notification = f'''
 notify_webhook() {{
   local status=$1
   local step=$2
   local message=$3
-  
+
   if [ -z "${{WEBHOOK_URL}}" ]; then
     return 0
   fi
-  
+
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] Notifying webhook: status=$status step=$step"
-  
-  # Prepare the JSON payload matching Azure Function expectations
+
   JSON_PAYLOAD=$(cat <<EOF
 {{
   "vm_name": "$(hostname)",
   "status": "$status",
   "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+  "location": {location_escaped},
+  "resource_group": {resource_group_escaped},
   "details": {{
     "step": "$step",
     "message": "$message"
@@ -41,7 +47,7 @@ notify_webhook() {{
 EOF
   )
 
-  curl -X POST \\
+  curl -s -X POST \\
     "${{WEBHOOK_URL}}" \\
     -H "Content-Type: application/json" \\
     -d "$JSON_PAYLOAD" \\
@@ -49,9 +55,8 @@ EOF
     --max-time 30 \\
     --retry 2 \\
     --retry-delay 5 \\
-    --silent \\
     --output /dev/null \\
-    --write-out "Webhook notification result: %{{http_code}}"
+    --write-out "Webhook result: %{{http_code}}"
 
   return $?
 }}
@@ -59,280 +64,469 @@ EOF
     else:
         webhook_notification = '''
 notify_webhook() {
-  # No webhook URL configured
+  # No webhook configured - silently ignore
   return 0
 }
 '''
 
-    script_template = f'''#!/bin/bash
-
+    script_template = f"""#!/bin/bash
 set -e
+set -o pipefail
 
-export DEBIAN_FRONTEND=noninteractive
-
-# === User config ===
-DOMAIN_NAME="{DOMAIN_NAME}"
-ADMIN_EMAIL="{ADMIN_EMAIL}"
-FRONTEND_PORT={FRONTEND_PORT}
-BACKEND_PORT={BACKEND_PORT}
-VM_IP="{VM_IP}"
-PIN_URL="{PIN_URL}"
-INSTALL_DIR="{VOLUME_DIR}"
-LOG_DIR="${{INSTALL_DIR}}/logs"
-DOCKER_IMAGE_NAME="moonlight-embed-app"
-DOCKER_CONTAINER_NAME="moonlight-embed-container"
-JANUS_INSTALL_DIR="/opt/janus"
-MOONLIGHT_EMBEDDED_DIR="{MOONLIGHT_EMBEDDED_DIR}"
-WEBHOOK_URL="{WEBHOOK_URL}"
-
+# ----------------------------------------------------------------------
+#  Helper: webhook notification
+# ----------------------------------------------------------------------
 {webhook_notification}
 
-# === Validate domain format ===
-if ! [[ "${{DOMAIN_NAME}}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
-    echo "ERROR: Invalid domain format"
+# If any command later fails we will report it
+trap 'notify_webhook "failed" "unexpected_error" "Script exited on line ${{LINENO}} with code ${{?}}."' ERR
+
+# ========== VALIDATION ==========
+echo "[1/20] Validating inputs..."
+notify_webhook "provisioning" "validation" "Validating inputs"
+LOG_FILE="/var/log/code-server-install.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+# Validate domain
+if [[ ! "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
+    echo "ERROR: Invalid domain format '{DOMAIN_NAME}'"
     notify_webhook "failed" "validation" "Invalid domain format"
     exit 1
 fi
 
-notify_webhook "provisioning" "starting" "Beginning system setup"
+# Validate port
+if [[ ! "{PORT}" =~ ^[0-9]+$ ]] || [ "{PORT}" -lt 1024 ] || [ "{PORT}" -gt 65535 ]; then
+    echo "ERROR: Invalid port number '{PORT}' (must be 1024-65535)"
+    notify_webhook "failed" "validation" "Invalid port number"
+    exit 1
+fi
 
-echo "[1/10] Updating system and installing base dependencies..."
+# Port conflict resolution
+notify_webhook "provisioning" "port_check" "Checking for port conflicts"
+if ss -tulnp | grep -q ":{PORT}"; then
+    echo "WARNING: Port {PORT} is in use, attempting to resolve..."
+    PROCESS_INFO=$(ss -tulnp | grep ":{PORT}")
+    echo "Conflict details: $PROCESS_INFO"
+    systemctl stop code-server@{SERVICE_USER} || true
+    pkill -f "code-server" || true
+    sleep 2
+    if ss -tulnp | grep -q ":{PORT}"; then
+        PID=$(ss -tulnp | grep ":{PORT}" | awk '{{print $7}}' | cut -d= -f2 | cut -d, -f1 | head -1)
+        PROCESS_NAME=$(ps -p "$PID" -o comm= 2>/dev/null || echo "unknown")
+        echo "ERROR: Could not free port {PORT}, process $PID ($PROCESS_NAME) still using it"
+        notify_webhook "failed" "port_conflict" "Could not free port {PORT}"
+        exit 1
+    else
+        echo "Successfully freed port {PORT}"
+    fi
+fi
+
+# ========== SYSTEM SETUP ==========
+echo "[2/20] Updating system and installing dependencies..."
 notify_webhook "provisioning" "system_update" "Updating system packages"
-apt-get update
-apt-get install -y --no-install-recommends \\
-    curl git nginx certbot python3-certbot-nginx \\
-    docker.io ufw build-essential cmake autoconf automake libtool pkg-config \\
-    libmicrohttpd-dev libjansson-dev libssl-dev libsofia-sip-ua-dev \\
-    libglib2.0-dev libopus-dev libogg-dev libcurl4-openssl-dev libconfig-dev \\
-    libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -q
+apt-get upgrade -y -q
+apt-get install -y -q \\
+    curl \\
+    nginx \\
+    certbot \\
+    python3-certbot-nginx \\
+    ufw \\
+    git \\
+    build-essential \\
+    sudo \\
+    cron \\
+    python3 \\
+    python3-pip \\
+    gnupg \\
+    software-properties-common \\
+    libssl-dev \\
+    zlib1g-dev \\
+    libbz2-dev \\
+    libreadline-dev \\
+    libsqlite3-dev \\
+    libffi-dev
 
-echo "[2/10] Installing libsrtp..."
-notify_webhook "provisioning" "install_libsrtp" "Installing libsrtp"
-cd /tmp
-wget {libsrtp_tar_url} -O libsrtp.tar.gz
-tar xzf libsrtp.tar.gz
-cd libsrtp-2.2.0
-./configure --prefix=/usr --enable-openssl
-make shared_library && make install
-ldconfig
-cd -
+# ========== NODE.JS INSTALLATION ==========
+echo "[3/20] Installing Node.js LTS..."
+notify_webhook "provisioning" "nodejs" "Installing Node.js"
+apt-get remove -y nodejs npm || true
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y -q nodejs
 
-echo "[3/10] Installing usrsctp..."
-notify_webhook "provisioning" "install_usrsctp" "Installing usrsctp"
-cd /tmp
-git clone {usrsctp_git_url}
-cd usrsctp
-./bootstrap
-./configure --prefix=/usr
-make && make install
-ldconfig
-cd -
+NODE_VERSION=$(node --version)
+echo "Node.js version: $NODE_VERSION"
 
-echo "[4/10] Installing libwebsockets..."
-notify_webhook "provisioning" "install_libwebsockets" "Installing libwebsockets"
-cd /tmp
-git clone {libwebsockets_git_url}
-cd libwebsockets
-git checkout v4.3-stable
-mkdir build
-cd build
-cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS="-fpic" ..
-make && make install
-ldconfig
-cd -
+npm install -g npm@latest
 
-echo "[5/10] Installing libnice..."
-notify_webhook "provisioning" "install_libnice" "Installing libnice"
-cd /tmp
-git clone {libnice_git_url}
-cd libnice
-./autogen.sh
-./configure --prefix=/usr
-make && make install
-ldconfig
-cd -
+# ========== DEVELOPMENT TOOLS ==========
+echo "[4/20] Installing development tools..."
+notify_webhook "provisioning" "dev_tools" "Installing development tools"
 
-echo "[6/10] Setting up installation directory..."
-notify_webhook "provisioning" "setup_directories" "Creating installation directories"
-mkdir -p "${{INSTALL_DIR}}"
-mkdir -p "${{LOG_DIR}}"
-cd "${{INSTALL_DIR}}"
+echo "Installing Azure CLI..."
+curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
-echo "[7/10] Installing Moonlight Embedded..."
-notify_webhook "provisioning" "install_moonlight" "Installing Moonlight Embedded"
-mkdir -p "${{MOONLIGHT_EMBEDDED_DIR}}"
-if [ ! -d "${{MOONLIGHT_EMBEDDED_DIR}}/.git" ]; then
-    git clone {github_url} "${{MOONLIGHT_EMBEDDED_DIR}}"
+echo "Installing Netlify CLI..."
+npm install -g netlify-cli --force 2>&1 | while read line; do echo "[npm] $line"; done
+
+echo "Installing Yarn..."
+npm install -g yarn
+
+# ========== PYTHON ==========
+echo "[5/20] Installing pyenv and Python..."
+notify_webhook "provisioning" "python" "Installing Python with pyenv"
+export HOME=/root
+if [ -d "$HOME/.pyenv" ]; then
+    echo "Found existing pyenv installation, updating..."
+    cd "$HOME/.pyenv" && git pull
+else
+    echo "Installing fresh pyenv..."
+    curl -fsSL https://pyenv.run | bash
 fi
 
-cd "${{MOONLIGHT_EMBEDDED_DIR}}"
-git pull
-mkdir -p build
-cd build
-cmake .. && make -j$(nproc) && make install
+# Setup pyenv environment for root
+cat >> ~/.bashrc <<'EOF'
 
-echo "[8/10] Installing Janus Gateway..."
-notify_webhook "provisioning" "install_janus" "Installing Janus Gateway"
-if [ ! -d "${{JANUS_INSTALL_DIR}}" ]; then
-    git clone {janus_git_url} /tmp/janus-gateway
-    cd /tmp/janus-gateway
-    sh autogen.sh
-    ./configure --prefix="${{JANUS_INSTALL_DIR}}" --enable-post-processing \\
-        --enable-data-channels --enable-websockets --enable-rest \\
-        --enable-plugin-streaming
-    make
-    make install
-    make configs
-    
-    # Configure Janus for Moonlight streaming
-    cat > ${{JANUS_INSTALL_DIR}}/etc/janus/janus.plugin.streaming.jcfg <<EOF
-streaming: {{
-    enabled: true,
-    type: "rtp",
-    audio: true,
-    video: true,
-    videoport: 5004,
-    videopt: 96,
-    videortpmap: "H264/90000",
-    audiopt: 111,
-    audiortpmap: "opus/48000/2",
-    secret: "moonlightstream",
-    permanent: true
-}}
-EOF
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+if command -v pyenv 1>/dev/null 2>&1; then
+    eval "$(pyenv init --path)"
+    eval "$(pyenv init -)"
 fi
-
-echo "[9/10] Setting up systemd services..."
-notify_webhook "provisioning" "setup_services" "Configuring system services"
-
-# Janus service
-cat > /etc/systemd/system/janus.service <<EOF
-[Unit]
-Description=Janus WebRTC Server
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=${{JANUS_INSTALL_DIR}}/bin/janus
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
 EOF
 
-# Moonlight streaming service
-cat > /etc/systemd/system/moonlight-stream.service <<EOF
-[Unit]
-Description=Moonlight to Janus Streaming Service
-After=network.target janus.service
+# Source bashrc to get pyenv available in this shell session
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init --path)"
+eval "$(pyenv init -)")
 
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/moonlight stream ${{VM_IP}} -app Steam -codec h264 -bitrate 20000 -fps 60 -unsupported -remote -rtp 127.0.0.1 5004 5005
-Restart=on-failure
-RestartSec=5
+apt-get install -y -q make build-essential libssl-dev zlib1g-dev \\
+    libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm \\
+    libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev
 
-[Install]
-WantedBy=multi-user.target
+if ! pyenv versions | grep -q 3.9.7; then
+    pyenv install 3.9.7 --verbose
+fi
+pyenv global 3.9.7
+
+PYTHON_VERSION=$(python --version)
+echo "Python version: $PYTHON_VERSION"
+
+# ========== ELECTRON ==========
+echo "[6/20] Installing Electron dependencies..."
+notify_webhook "provisioning" "electron" "Installing Electron dependencies"
+add-apt-repository universe || true
+apt-get update -q
+apt-get install -y -q \\
+    libgtk-3-0 \\
+    libnotify4 \\
+    libnss3 \\
+    libxss1 \\
+    libasound2-data \\
+    libasound2-plugins \\
+    libxtst6 \\
+    xauth \\
+    xvfb
+npm install electron --save-dev
+
+# ========== DOCKER ==========
+echo "[7/20] Installing Docker..."
+notify_webhook "provisioning" "docker" "Installing Docker"
+curl -fsSL https://get.docker.com | sh
+usermod -aG docker {SERVICE_USER} || true
+
+# ========== KUBERNETES ==========
+echo "[8/20] Installing kubectl..."
+notify_webhook "provisioning" "kubectl" "Installing Kubernetes CLI"
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+rm kubectl
+
+# ========== TERRAFORM ==========
+echo "[9/20] Installing Terraform..."
+notify_webhook "provisioning" "terraform" "Installing Terraform"
+curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor --batch --yes -o /usr/share/keyrings/hashicorp.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list
+apt-get update -q && apt-get install -y terraform
+
+# ========== CODE-SERVER ==========
+echo "[10/20] Installing code-server..."
+notify_webhook "provisioning" "code_server" "Installing code-server"
+curl -fsSL https://code-server.dev/install.sh | HOME=/root sh
+
+# ========== USER SETUP ==========
+echo "[11/20] Creating user '{SERVICE_USER}'..."
+notify_webhook "provisioning" "user_setup" "Creating service user"
+id -u {SERVICE_USER} &>/dev/null || useradd -m -s /bin/bash {SERVICE_USER}
+echo "{SERVICE_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/{SERVICE_USER}
+chmod 440 /etc/sudoers.d/{SERVICE_USER}
+
+# Install pyenv for the service user
+su - {SERVICE_USER} -c 'curl -fsSL https://pyenv.run | bash'
+su - {SERVICE_USER} -c 'echo '\''export PYENV_ROOT="$HOME/.pyenv"'\'' >> ~/.bashrc'
+su - {SERVICE_USER} -c 'echo '\''export PATH="$PYENV_ROOT/bin:$PATH"'\'' >> ~/.bashrc'
+su - {SERVICE_USER} -c 'echo '\''eval "$(pyenv init --path)"'\'' >> ~/.bashrc'
+su - {SERVICE_USER} -c 'echo '\''eval "$(pyenv init -)"'\'' >> ~/.bashrc'
+
+# Install Python for the service user
+su - {SERVICE_USER} -c 'export PYENV_ROOT="$HOME/.pyenv"; export PATH="$PYENV_ROOT/bin:$PATH"; eval "$(pyenv init --path)"; eval "$(pyenv init -)"; pyenv install -s 3.9.7; pyenv global 3.9.7'
+
+# ========== CONFIG ==========
+echo "[12/20] Configuring code-server..."
+notify_webhook "provisioning" "config" "Configuring code-server"
+mkdir -p {VOLUME_DIR}/config
+cat > {VOLUME_DIR}/config/config.yaml <<EOF
+bind-addr: 0.0.0.0:{PORT}
+auth: password
+password: {ADMIN_PASSWORD}
+cert: false
 EOF
 
+chown -R {SERVICE_USER}:{SERVICE_USER} {VOLUME_DIR}
+chmod 700 {VOLUME_DIR}/config
+chmod 600 {VOLUME_DIR}/config/config.yaml
+mkdir -p /home/{SERVICE_USER}/.config
+ln -sf {VOLUME_DIR}/config /home/{SERVICE_USER}/.config/code-server
+
+# ========== EXTENSIONS ==========
+echo "[13/20] Installing VSCode extensions..."
+notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
+
+extensions=(
+    "ms-azuretools.vscode-azureterraform"
+    "ms-azuretools.vscode-azureappservice"
+    "ms-azuretools.vscode-azurefunctions"
+    "ms-azuretools.vscode-azurestaticwebapps"
+    "ms-azuretools.vscode-azurestorage"
+    "ms-azuretools.vscode-cosmosdb"
+    "ms-azuretools.vscode-docker"
+    "ms-kubernetes-tools.vscode-kubernetes-tools"
+    "netlify.netlify-vscode"
+    "dbaeumer.vscode-eslint"
+    "esbenp.prettier-vscode"
+    "ms-vscode.vscode-typescript-next"
+    "eamodio.gitlens"
+    "ms-vscode-remote.remote-containers"
+    "ms-vscode-remote.remote-ssh"
+    "ms-vscode.powershell"
+    "ms-python.python"
+    "ms-toolsai.jupyter"
+    "hashicorp.terraform"
+    "redhat.vscode-yaml"
+    "EliotVU.uc"
+    "stefan-h-at.source-engine-support"
+    "LionDoge.vscript-debug"
+    "NilsSoderman.ue-python"
+    "mjxcode.vscode-q3shader"
+    "shd101wyy.markdown-preview-enhanced"
+    "formulahendry.code-runner"
+    "donjayamanne.githistory"
+    "humao.rest-client"
+    "streetsidesoftware.code-spell-checker"
+    "Cardinal90.multi-cursor-case-preserve"
+    "alefragnani.Bookmarks"
+    "WallabyJs.quokka-vscode"
+    "ritwickdey.LiveServer"
+    "WallabyJs.console-ninja"
+    "Monish.regexsnippets"
+    "GitHub.copilot"
+    "JayBarnes.chatgpt-vscode-plugin"
+    "pnp.polacode"
+    "Codeium.codeium"
+    "oouo-diogo-perdigao.docthis"
+    "johnpapa.vscode-peacock"
+    "Postman.postman-for-vscode"
+)
+
+# Ensure extension and user data directories are correctly set
+EXT_DIR="{VOLUME_DIR}/data/extensions"
+USER_DATA_DIR="{VOLUME_DIR}/data"
+mkdir -p "$EXT_DIR"
+mkdir -p "$USER_DATA_DIR"
+chown -R {SERVICE_USER}:{SERVICE_USER} "$USER_DATA_DIR"
+
+# Install extensions one by one with error handling
+for extension in "${{extensions[@]}}"; do
+    echo "Installing extension: $extension"
+    if ! su - {SERVICE_USER} -c "code-server --install-extension $extension --extensions-dir=$EXT_DIR --user-data-dir=$USER_DATA_DIR 2>&1"; then
+        echo "WARNING: Failed to install extension $extension"
+        notify_webhook "warning" "extension_install" "Failed to install extension $extension"
+    fi
+done
+
+# ========== SYSTEMD ==========
+echo "[14/20] Configuring systemd service..."
+notify_webhook "provisioning" "systemd" "Configuring systemd service"
+mkdir -p /etc/systemd/system/code-server@.service.d
+cat > /etc/systemd/system/code-server@.service.d/override.conf <<EOF
+[Service]
+Restart=on-failure
+RestartSec=5s
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/{SERVICE_USER}/.pyenv/shims:/home/{SERVICE_USER}/.pyenv/bin"
+EOF
+
+systemctl daemon-reexec
 systemctl daemon-reload
-systemctl enable janus.service moonlight-stream.service
-systemctl start janus.service moonlight-stream.service
+systemctl enable --now code-server@{SERVICE_USER}
 
-echo "[10/10] Configuring firewall and SSL..."
-notify_webhook "provisioning" "security_setup" "Configuring firewall and SSL"
+# Wait for code-server to start
+sleep 5
+if ! systemctl is-active --quiet code-server@{SERVICE_USER}; then
+    echo "ERROR: code-server service failed to start"
+    journalctl -u code-server@{SERVICE_USER} --no-pager -n 20
+    notify_webhook "failed" "service_start" "code-server service failed to start"
+    exit 1
+fi
+
+# ========== FIREWALL ==========
+echo "[15/20] Configuring firewall..."
+notify_webhook "provisioning" "firewall" "Configuring firewall"
 ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
-ufw allow 5004:5005/udp
-ufw allow 7088/tcp
-ufw allow 8088/tcp
-ufw allow 10000-10200/udp
+ufw allow {PORT}/tcp
 ufw --force enable
 
-mkdir -p /etc/letsencrypt
-curl -s {letsencrypt_options_url} > /etc/letsencrypt/options-ssl-nginx.conf
-curl -s {ssl_dhparams_url} > /etc/letsencrypt/ssl-dhparams.pem
+# ========== NGINX ==========
+echo "[16/20] Configuring Nginx..."
+notify_webhook "provisioning" "nginx" "Configuring Nginx"
 
-notify_webhook "provisioning" "ssl_setup" "Requesting SSL certificates"
-certbot --nginx -d "${{DOMAIN_NAME}}" --staging --agree-tos --email "${{ADMIN_EMAIL}}" --redirect --no-eff-email
-
+# Remove default nginx config if exists
 rm -f /etc/nginx/sites-enabled/default
+rm -f /etc/nginx/sites-available/default
 
-cat > /etc/nginx/sites-available/moonlightembed <<EOF
+# Create vscode nginx config 
+cat > /etc/nginx/sites-available/vscode <<EOF
 server {{
     listen 80;
     server_name {DOMAIN_NAME};
-    return 301 https://$host$request_uri;
+    return 301 https://\\$host\\$request_uri;
 }}
 
 server {{
-    listen 443 ssl http2;
+    listen 443 ssl;
     server_name {DOMAIN_NAME};
-
     ssl_certificate /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{DOMAIN_NAME}/privkey.pem;
-    include /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-
+    
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384;
+    ssl_prefer_server_ciphers off;
+    
     location / {{
-        proxy_pass http://localhost:8088;
-        proxy_set_header Host \$host;
+        proxy_pass http://localhost:{PORT}/;
+        proxy_set_header Host \\$host;
+        proxy_set_header Upgrade \\$http_upgrade;
+        proxy_set_header Connection upgrade;
+        proxy_set_header Accept-Encoding gzip;
+        proxy_set_header X-Real-IP \\$remote_addr;
+        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \\$scheme;
+        
+        # WebSocket support
+        proxy_set_header Connection "Upgrade";
+        proxy_read_timeout 86400;
     }}
-
-    location /janus-ws {{
-        proxy_pass http://localhost:7088;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }}
-
-    client_max_body_size 1024M;
 }}
 EOF
 
-ln -sf /etc/nginx/sites-available/moonlightembed /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/vscode /etc/nginx/sites-enabled/vscode
 nginx -t && systemctl restart nginx
 
-notify_webhook "completed" "finished" "Setup completed successfully"
+# ========== SSL ==========
+echo "[17/20] Setting up SSL..."
+notify_webhook "provisioning" "ssl" "Setting up SSL with Let's Encrypt"
+mkdir -p /etc/letsencrypt
+curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
+curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
 
-echo "============================================================"
-echo "✅ Moonlight to Browser Streaming Setup Complete!"
-echo "============================================================"
-echo ""
-echo "🌐 Connection Information:"
-echo "------------------------------------------------------------"
-echo "🔗 Moonlight PIN Service: https://pin.{DOMAIN_NAME}"
-echo "🔑 PIN: {ADMIN_PASSWORD}"
-echo "------------------------------------------------------------"
-echo ""
-echo "🎥 Streaming Access:"
-echo "------------------------------------------------------------"
-echo "1. Open https://{DOMAIN_NAME}/janus/streaming/test.html"
-echo "2. Use these settings:"
-echo "   - Video: H.264"
-echo "   - Audio: Opus"
-echo "   - Port: 5004"
-echo "   - Secret: moonlightstream"
-echo "------------------------------------------------------------"
-echo ""
-echo "⚙️ Service Status Commands:"
-echo "------------------------------------------------------------"
-echo "Janus Gateway: systemctl status janus.service"
-echo "Moonlight Stream: systemctl status moonlight-stream.service"
-echo "Nginx: systemctl status nginx"
-echo "------------------------------------------------------------"
-echo ""
-echo "🔧 IMPORTANT Setup Notes:"
-echo "------------------------------------------------------------"
-echo "1. On your Windows 10 machine:"
-echo "   - Install Sunshine from https://github.com/LizardByte/Sunshine"
-echo "   - Use PIN: {ADMIN_PASSWORD} when pairing"
-echo "2. The stream will be available at the Janus test page"
-echo "============================================================"
-'''
+# Stop nginx temporarily for certbot standalone verification
+systemctl stop nginx
+
+# Obtain SSL certificate
+if certbot certonly --standalone -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL}; then
+    echo "SSL certificate obtained successfully"
+else
+    echo "WARNING: Failed to obtain SSL certificate with standalone method, trying webroot method"
+    systemctl start nginx
+    certbot certonly --webroot -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL} -w /var/www/html
+fi
+
+# Restart nginx
+systemctl start nginx
+
+# Verify certificate exists
+if [ -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
+    echo "SSL certificate verified: /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem"
+else
+    echo "ERROR: SSL certificate not found at /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem"
+    notify_webhook "failed" "ssl" "SSL certificate not found"
+    exit 1
+fi
+
+# ========== RENEWAL ==========
+echo "[18/20] Setting certbot auto-renewal..."
+notify_webhook "provisioning" "renewal" "Setting up certificate renewal"
+CRON_CMD="0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'"
+( crontab -l 2>/dev/null | grep -v -F "$CRON_CMD" ; echo "$CRON_CMD" ) | crontab -
+
+# ========== FINALIZE ==========
+echo "[19/20] Verifying installation..."
+notify_webhook "provisioning" "verification" "Verifying installation"
+
+if ! nginx -t; then
+    echo "ERROR: Nginx config test failed"
+    notify_webhook "failed" "verification" "Nginx config test failed"
+    exit 1
+fi
+
+if [ ! -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
+    echo "ERROR: SSL cert not found!"
+    notify_webhook "failed" "verification" "SSL certificate not found"
+    exit 1
+fi
+
+# Test code-server accessibility
+if ! curl -s -o /dev/null -w "%{{http_code}}" http://localhost:{PORT} | grep -q 200; then
+    echo "WARNING: Cannot access code-server on port {PORT}, but continuing..."
+    notify_webhook "warning" "verification" "Cannot access code-server directly on port {PORT}"
+fi
+
+# Test HTTPS accessibility
+HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{{http_code}}" https://{DOMAIN_NAME} || echo "000")
+if [[ "$HTTPS_RESPONSE" != "200" ]]; then
+    echo "WARNING: HTTPS check returned $HTTPS_RESPONSE (expected 200)"
+    notify_webhook "warning" "verification" "HTTPS endpoint returned $HTTPS_RESPONSE"
+else
+    echo "✅ HTTPS access verified"
+fi
+
+echo "[20/20] Setup complete!"
+notify_webhook "completed" "finished" "Code-server setup completed successfully"
+
+cat <<EOF_FINAL
+=============================================
+✅ Code Server Setup Complete!
+---------------------------------------------
+🔗 Access URL     : https://{DOMAIN_NAME}
+👤 Admin password : {ADMIN_PASSWORD}
+---------------------------------------------
+⚙️ Useful commands
+   - Check status: systemctl status code-server@{SERVICE_USER}
+   - View logs   : journalctl -u code-server@{SERVICE_USER} -f
+   - Restart     : systemctl restart code-server@{SERVICE_USER}
+   - Nginx status: systemctl status nginx
+---------------------------------------------
+⚠️ Post-install notes
+1️⃣  First visit https://{DOMAIN_NAME} to access your code server
+2️⃣  To renew SSL certificates: certbot renew --quiet
+3️⃣  Extensions installed in: {VOLUME_DIR}/data/extensions
+---------------------------------------------
+Enjoy your new code server!
+=============================================
+EOF_FINAL
+"""
     return script_template
