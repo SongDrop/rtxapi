@@ -320,7 +320,7 @@ server {{
         proxy_buffering off;
         proxy_request_buffering off;
         add_header Content-Security-Policy "frame-ancestors 'self' {ALLOW_EMBED_WEBSITE}" always;
-}}
+    }}
 }}
 EOF_NGINX
 
