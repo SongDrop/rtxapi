@@ -143,58 +143,49 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
 # ----------------------------------------------------------------------
 #  Docker (Compose + Buildx) setup
 # ----------------------------------------------------------------------
-echo "[2/10] Installing Docker-Compose plugin & Buildx..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker components"
 
 # Use the most basic Docker installation approach
-echo "Installing Docker from Ubuntu repository..."
-apt-get install -y docker.io
-
-# Create docker group and add user (in case the package doesn't do this)
-echo "Creating docker group and adding user..."
-groupadd docker 2>/dev/null || true
-usermod -aG docker ${{SUDO_USER:-$USER}} 2>/dev/null || true
-
-# Start Docker with the most basic approach
-echo "Starting Docker service..."
-systemctl enable docker
-
-# Try multiple approaches to start Docker
-if ! systemctl start docker; then
-    echo "Trying alternative approach to start Docker..."
-    # Sometimes the service file might be different
-    service docker start 2>/dev/null || true
-    sleep 5
+notify_webhook "provisioning" "docker_install" "Installing Docker from Ubuntu repository"
+if ! apt-get install -y docker.io; then
+    notify_webhook "failed" "docker_install" "Failed to install docker.io package"
+    exit 1
 fi
 
-# Check if Docker is running with multiple approaches
-echo "Checking if Docker is running..."
-if ! systemctl is-active --quiet docker && ! service docker status >/dev/null 2>&1; then
-    echo "ERROR: Docker is not running. Attempting to diagnose..."
+# Create docker group and add user
+notify_webhook "provisioning" "docker_setup" "Creating docker group and adding user"
+groupadd docker 2>/dev/null || true
+usermod -aG docker ${SUDO_USER:-$USER} 2>/dev/null || true
+
+# Start Docker with the most basic approach
+notify_webhook "provisioning" "docker_start" "Starting Docker service"
+systemctl enable docker
+
+# Try to start Docker with multiple approaches
+notify_webhook "provisioning" "docker_start" "Attempting to start Docker service"
+if ! systemctl start docker; then
+    notify_webhook "warning" "docker_start" "systemctl start docker failed, trying service command"
+    service docker start || true
+    sleep 3
+fi
+
+# Check if Docker is running
+notify_webhook "provisioning" "docker_check" "Checking if Docker is running"
+if ! systemctl is-active --quiet docker; then
+    notify_webhook "failed" "docker_start" "Docker is not running. Checking status and logs"
+    systemctl status docker --no-pager || true
+    journalctl -u docker --no-pager -n 20 || true
     
-    # Check if the docker binary exists
-    if ! command -v docker >/dev/null 2>&1; then
-        echo "ERROR: Docker binary not found!"
-        notify_webhook "failed" "docker_setup" "Docker binary not found after installation"
-        exit 1
-    fi
-    
-    # Check if the service exists
-    if ! systemctl list-unit-files | grep -q docker.service; then
-        echo "ERROR: Docker service unit file not found!"
-        notify_webhook "failed" "docker_setup" "Docker service unit file not found"
-        exit 1
-    fi
-    
-    # Try to manually start the daemon as a last resort
-    echo "Attempting to start Docker daemon manually..."
+    # Try to start Docker manually as a last resort
+    notify_webhook "provisioning" "docker_manual" "Attempting to start Docker daemon manually"
     nohup dockerd > /var/log/dockerd.log 2>&1 &
     sleep 5
 fi
 
 # Final check if Docker is working
+notify_webhook "provisioning" "docker_check" "Final check if Docker is working"
 if ! docker info >/dev/null 2>&1; then
-    echo "ERROR: Docker is not working. Checking logs..."
+    notify_webhook "failed" "docker_failed" "Docker is not working. Detailed diagnostics"
     journalctl -u docker --no-pager -n 30 2>/dev/null || \
     cat /var/log/dockerd.log 2>/dev/null || \
     echo "No Docker logs available"
@@ -203,27 +194,26 @@ if ! docker info >/dev/null 2>&1; then
     uname -a
     lsb_release -a
     
-    notify_webhook "failed" "docker_setup" "Docker failed to start after multiple attempts"
     exit 1
 fi
 
 # Install docker-compose (CLI-plugin)
-echo "Installing Docker Compose..."
+notify_webhook "provisioning" "compose_install" "Installing Docker Compose"
 mkdir -p /usr/local/lib/docker/cli-plugins
-curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
+curl -sSfSL "${docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose || true
 
 # Install Buildx if missing
+notify_webhook "provisioning" "buildx_install" "Installing Docker Buildx"
 if ! docker buildx version >/dev/null 2>&1; then
-    echo "Installing Docker Buildx..."
     mkdir -p ~/.docker/cli-plugins
-    curl -sSfSL "{buildx_url}" -o ~/.docker/cli-plugins/docker-buildx
+    curl -sSfSL "${buildx_url}" -o ~/.docker/cli-plugins/docker-buildx
     chmod +x ~/.docker/cli-plugins/docker-buildx
 fi
 
 # Debug: Show Docker information
-echo "Docker installation completed successfully:"
+notify_webhook "provisioning" "docker_success" "Docker installation completed successfully"
 docker --version
 docker-compose --version
 docker buildx version
