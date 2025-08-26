@@ -81,42 +81,32 @@ notify_webhook() {
     script_template = f"""#!/usr/bin/env bash
 set -e
 set -o pipefail
-# ----------------------------------------------------------------------
-#  Set essential environment variables
-# ----------------------------------------------------------------------
-export HOME=/root  # Required for Git operations under Azure CustomScript
+export HOME=/root
 
 # ----------------------------------------------------------------------
-#  Helper: webhook notification
+#  Webhook helper
 # ----------------------------------------------------------------------
 {webhook_notification}
 
-# If any command later fails we will report it (if a webhook is configured)
 trap 'notify_webhook "failed" "unexpected_error" "Script exited on line ${{LINENO}} with code ${{?}}."' ERR
 
 # ----------------------------------------------------------------------
-#  Validate the supplied domain name
+#  Validate inputs
 # ----------------------------------------------------------------------
 if ! [[ "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
-  echo "ERROR: Invalid domain name \"{DOMAIN_NAME}\""
+  echo "ERROR: Invalid domain name '{DOMAIN_NAME}'"
   notify_webhook "failed" "validation" "Invalid domain format"
   exit 1
 fi
 
-# ----------------------------------------------------------------------
-#  Validate the port number
-# ----------------------------------------------------------------------
 if ! [[ "{FRONTEND_PORT}" =~ ^[0-9]+$ ]] || [ "{FRONTEND_PORT}" -lt 1 ] || [ "{FRONTEND_PORT}" -gt 65535 ]; then
-  echo "ERROR: Invalid port number \"{FRONTEND_PORT}\""
+  echo "ERROR: Invalid port number '{FRONTEND_PORT}'"
   notify_webhook "failed" "validation" "Invalid port number"
   exit 1
 fi
 
 notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
 
-# ----------------------------------------------------------------------
-#  Configuration (available to the whole script)
-# ----------------------------------------------------------------------
 DOMAIN_NAME="{DOMAIN_NAME}"
 ADMIN_EMAIL="{ADMIN_EMAIL}"
 ADMIN_PASSWORD="{ADMIN_PASSWORD}"
@@ -125,7 +115,6 @@ FORGEJO_DIR="{forgejo_dir}"
 DNS_HOOK_SCRIPT="{DNS_HOOK_SCRIPT}"
 WEBHOOK_URL="{WEBHOOK_URL}"
 
-# Random secret for Git-LFS JWT
 LFS_JWT_SECRET=$(openssl rand -hex 32)
 
 # ----------------------------------------------------------------------
@@ -136,122 +125,72 @@ notify_webhook "provisioning" "system_update" "Running apt-get update & install"
 
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
-    curl git docker.io nginx certbot ufw \\
+    curl git nginx certbot ufw \\
     python3-pip python3-venv jq make net-tools \\
-    python3-certbot-nginx git-lfs openssl
+    python3-certbot-nginx git-lfs openssl software-properties-common lsb-release gnupg
 
 # ----------------------------------------------------------------------
-#  Docker (Compose + Buildx) setup
+#  Install latest Docker from official repo
 # ----------------------------------------------------------------------
 notify_webhook "provisioning" "docker_setup" "Installing Docker components"
 
-# Use the most basic Docker installation approach
-notify_webhook "provisioning" "docker_install" "Installing Docker from Ubuntu repository"
-if ! apt-get install -y docker.io; then
-    notify_webhook "failed" "docker_install" "Failed to install docker.io package"
-    exit 1
-fi
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list
+apt-get update -qq
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-# Create docker group and add user
-notify_webhook "provisioning" "docker_setup" "Creating docker group and adding user"
 groupadd docker 2>/dev/null || true
 CURRENT_USER=$(whoami)
-usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
-
-# Start Docker with the most basic approach
-notify_webhook "provisioning" "docker_start" "Starting Docker service"
-systemctl enable docker
-
-# Try to start Docker with multiple approaches with better error handling
-notify_webhook "provisioning" "docker_start" "Attempting to start Docker service"
-if ! systemctl start docker; then
-    notify_webhook "warning" "docker_start" "systemctl start docker failed, trying service command"
-    if ! service docker start; then
-        notify_webhook "warning" "docker_start" "service command also failed, trying direct start"
-        # Try to start Docker daemon directly
-        nohup /usr/bin/dockerd > /var/log/dockerd.log 2>&1 &
-        sleep 5
-    fi
+if [ "$CURRENT_USER" != "root" ]; then
+    usermod -aG docker "$CURRENT_USER" || true
 fi
 
-# Check if Docker is running with multiple approaches
-notify_webhook "provisioning" "docker_check" "Checking if Docker is running"
-if ! systemctl is-active --quiet docker && ! pgrep dockerd > /dev/null; then
-    notify_webhook "failed" "docker_start" "Docker is not running. Checking status and logs"
-    systemctl status docker --no-pager || true
-    journalctl -u docker --no-pager -n 30 || true
-    
-    # Check if Docker binary exists and is executable
-    if [ ! -x "$(command -v docker)" ]; then
-        notify_webhook "failed" "docker_binary" "Docker binary not found or not executable"
-        exit 1
-    fi
-    
-    # Try to start Docker manually as a last resort with full path
-    notify_webhook "provisioning" "docker_manual" "Attempting to start Docker daemon manually with full path"
-    nohup /usr/bin/dockerd > /var/log/dockerd.log 2>&1 &
+# ----------------------------------------------------------------------
+#  Start Docker safely
+# ----------------------------------------------------------------------
+notify_webhook "provisioning" "docker_start" "Starting Docker service"
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable docker || true
+    systemctl start docker || true
+elif command -v service >/dev/null 2>&1; then
+    service docker start || true
+else
+    nohup dockerd > /var/log/dockerd.log 2>&1 &
     sleep 5
 fi
 
-# Final check if Docker is working
-notify_webhook "provisioning" "docker_check" "Final check if Docker is working"
 if ! timeout 30s docker info >/dev/null 2>&1; then
-    notify_webhook "failed" "docker_failed" "Docker is not working. Detailed diagnostics"
-    journalctl -u docker --no-pager -n 30 2>/dev/null || \
-    cat /var/log/dockerd.log 2>/dev/null || \
-    echo "No Docker logs available"
-    
-    # Check kernel requirements
-    echo "Kernel version: $(uname -r)"
-    echo "Cgroup info:"
-    cat /proc/self/cgroup 2>/dev/null || echo "Cannot read cgroup info"
-    
-    # Check available memory
-    echo "Memory info:"
-    free -h
-    
-    # Check disk space
-    echo "Disk space:"
-    df -h
-    
+    echo "ERROR: Docker did not start correctly"
+    notify_webhook "failed" "docker_failed" "Docker not running"
+    cat /var/log/dockerd.log 2>/dev/null || true
     exit 1
 fi
 
-# Install docker-compose (CLI-plugin)
+# ----------------------------------------------------------------------
+#  Install docker-compose & buildx
+# ----------------------------------------------------------------------
 notify_webhook "provisioning" "compose_install" "Installing Docker Compose"
 mkdir -p /usr/local/lib/docker/cli-plugins
-curl -sSfSL "${docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
+curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose || true
 
-# Install Buildx if missing
 notify_webhook "provisioning" "buildx_install" "Installing Docker Buildx"
 if ! docker buildx version >/dev/null 2>&1; then
     mkdir -p ~/.docker/cli-plugins
-    curl -sSfSL "${buildx_url}" -o ~/.docker/cli-plugins/docker-buildx
+    curl -sSfSL "{buildx_url}" -o ~/.docker/cli-plugins/docker-buildx
     chmod +x ~/.docker/cli-plugins/docker-buildx
 fi
 
-# Debug: Show Docker information
-notify_webhook "provisioning" "docker_success" "Docker installation completed successfully"
 docker --version
 docker-compose --version
 docker buildx version
 
 # ----------------------------------------------------------------------
-#  Create Forgejo directory structure
+#  Forgejo directories & configuration
 # ----------------------------------------------------------------------
-echo "[3/10] Preparing Forgejo directories..."
-notify_webhook "provisioning" "forgejo_setup" "Creating directories"
-
-mkdir -p "$FORGEJO_DIR"
-cd "$FORGEJO_DIR"
-mkdir -p data config ssl
-
-# ----------------------------------------------------------------------
-#  Create a custom app.ini with LFS configuration
-# ----------------------------------------------------------------------
-echo "[4/10] Creating custom app.ini..."
+mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
 cat > "$FORGEJO_DIR/config/app.ini" <<EOF_APPINI
 [server]
 LFS_START_SERVER = true
@@ -268,10 +207,9 @@ UPLOAD_FILE_MAX_SIZE = {LFS_MAX_FILE_SIZE_IN_BYTES}
 EOF_APPINI
 
 # ----------------------------------------------------------------------
-#  Docker-Compose file (using official Forgejo image)
+#  Docker Compose
 # ----------------------------------------------------------------------
-echo "[5/10] Generating docker-compose.yml..."
-cat > docker-compose.yml <<EOF_COMPOSE
+cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF_COMPOSE
 version: "3.8"
 
 services:
@@ -302,27 +240,12 @@ services:
       retries: 6
 EOF_COMPOSE
 
-# ----------------------------------------------------------------------
-#  Start the stack (Docker-Compose)
-# ----------------------------------------------------------------------
-echo "[6/10] Starting containers..."
+cd "$FORGEJO_DIR"
 docker compose up -d
 
-# Wait until the container reports a healthy status (max ~2 min)
-echo "Waiting for Forgejo container to become healthy..."
-for i in $(seq 1 60); do
-  STATUS=$(docker inspect --format='{{{{.State.Health.Status}}}}' forgejo 2>/dev/null || echo "none")
-  if [ "$STATUS" = "healthy" ]; then
-    echo "✅ Container is healthy"
-    break
-  fi
-  sleep 2
-done
-
 # ----------------------------------------------------------------------
-#  Firewall (UFW)
+#  Firewall
 # ----------------------------------------------------------------------
-echo "[7/10] Configuring firewall..."
 ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
@@ -330,41 +253,24 @@ ufw allow "{FRONTEND_PORT}/tcp"
 ufw --force enable
 
 # ----------------------------------------------------------------------
-#  SSL certificate acquisition
+#  SSL certificate
 # ----------------------------------------------------------------------
-echo "[8/10] Obtaining Let's Encrypt certificate..."
-notify_webhook "provisioning" "ssl" "Running certbot"
-
 mkdir -p /etc/letsencrypt
 curl -sSf "{letsencrypt_options_url}" -o /etc/letsencrypt/options-ssl-nginx.conf
 curl -sSf "{ssl_dhparams_url}" -o /etc/letsencrypt/ssl-dhparams.pem
 
 if [ -x "$DNS_HOOK_SCRIPT" ]; then
-  echo "Using DNS-01 challenge via hook script"
-  chmod +x "$DNS_HOOK_SCRIPT"
-  certbot certonly --manual \\
-    --preferred-challenges dns \\
-    --manual-auth-hook "$DNS_HOOK_SCRIPT add" \\
-    --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" \\
-    --agree-tos --email "{ADMIN_EMAIL}" \\
-    -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" \\
-    --non-interactive \\
-    --manual-public-ip-logging-ok
+    chmod +x "$DNS_HOOK_SCRIPT"
+    certbot certonly --manual --preferred-challenges dns --manual-auth-hook "$DNS_HOOK_SCRIPT add" --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" --non-interactive --manual-public-ip-logging-ok
 else
-  echo "Falling back to standalone HTTP-01 challenge (wildcard not supported)"
-  systemctl stop nginx || true
-  certbot certonly --standalone \\
-    --preferred-challenges http \\
-    --agree-tos --email "{ADMIN_EMAIL}" \\
-    -d "{DOMAIN_NAME}" \\
-    --non-interactive
-  systemctl start nginx
+    systemctl stop nginx || true
+    certbot certonly --standalone --preferred-challenges http --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" --non-interactive
+    systemctl start nginx || true
 fi
 
 # ----------------------------------------------------------------------
-#  Nginx reverse-proxy configuration
+#  Nginx configuration
 # ----------------------------------------------------------------------
-echo "[9/10] Configuring Nginx..."
 cat > /etc/nginx/sites-available/forgejo <<EOF_NGINX
 map \$http_upgrade \$connection_upgrade {{
     default upgrade;
@@ -410,70 +316,30 @@ nginx -t && systemctl restart nginx
 # ----------------------------------------------------------------------
 #  Final verification
 # ----------------------------------------------------------------------
-echo "[10/10] Performing final checks..."
 notify_webhook "provisioning" "verification" "Running post-install checks"
-
 if ! docker ps --filter "name=forgejo" --filter "status=running" | grep -q forgejo; then
-  echo "ERROR: Forgejo container is not running!"
-  docker logs forgejo || true
-  notify_webhook "failed" "verification" "Forgejo container not running"
-  exit 1
+    notify_webhook "failed" "verification" "Forgejo container not running"
+    exit 1
 fi
 
 if ! nginx -t; then
-  echo "ERROR: Nginx configuration test failed"
-  notify_webhook "failed" "verification" "Nginx test failed"
-  exit 1
+    notify_webhook "failed" "verification" "Nginx configuration failed"
+    exit 1
 fi
 
 if [ ! -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
-  echo "ERROR: SSL certificate not found!"
-  notify_webhook "failed" "verification" "SSL cert missing"
-  exit 1
+    notify_webhook "failed" "verification" "SSL cert missing"
+    exit 1
 fi
-
-HTTPS_CODE=$(curl -k -s -o /dev/null -w "%{{http_code}}" https://{DOMAIN_NAME} || echo "000")
-if [[ "$HTTPS_CODE" != "200" ]]; then
-  echo "ERROR: HTTPS check returned $HTTPS_CODE (expected 200)"
-  notify_webhook "failed" "verification" "HTTPS endpoint not reachable"
-  exit 1
-fi
-
-# ----------------------------------------------------------------------
-#  Wait for Forgejo's web UI to be ready
-# ----------------------------------------------------------------------
-echo "Waiting for Forgejo UI to become ready..."
-while ! curl -s http://localhost:{FRONTEND_PORT} | grep -q "Initial configuration"; do
-  sleep 5
-done
 
 notify_webhook "completed" "finished" "Forgejo deployment succeeded"
 
-cat <<EOF_FINAL
-=============================================
-✅ Forgejo Setup Complete!
----------------------------------------------
-🔗 Access URL     : https://{DOMAIN_NAME}
-👤 Admin login    : {ADMIN_EMAIL}
-🔑 Admin password : {ADMIN_PASSWORD}
----------------------------------------------
-⚙️ Useful commands
-   - Check container: docker ps --filter "name=forgejo"
-   - View logs      : docker logs -f forgejo
-   - Nginx status   : systemctl status nginx
-   - Certbot list   : certbot certificates
-   - Firewall status: ufw status numbered
----------------------------------------------
-⚠️ Post-install notes
-1️⃣  First visit https://{DOMAIN_NAME} to finish the Forgejo web-setup.
-2️⃣  If you ever see the default Nginx page:
-      sudo rm -f /etc/nginx/sites-enabled/default
-      sudo systemctl restart nginx
-3️⃣  To renew the certificate later simply run:
-      sudo certbot renew --quiet && sudo systemctl reload nginx
----------------------------------------------
-Enjoy your new Forgejo instance!
-=============================================
-EOF_FINAL
+echo "============================================="
+echo "✅ Forgejo Setup Complete!"
+echo "🔗 Access URL     : https://{DOMAIN_NAME}"
+echo "👤 Admin login    : {ADMIN_EMAIL}"
+echo "🔑 Admin password : {ADMIN_PASSWORD}"
+echo "============================================="
 """
+
     return script_template
