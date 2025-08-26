@@ -152,7 +152,10 @@ apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 # Add current user to docker group
-usermod -aG docker $USER
+CURRENT_USER=$(whoami)
+if [ "$CURRENT_USER" != "root" ]; then
+    usermod -aG docker "$CURRENT_USER" || true
+fi
 
 # ----------------------------------------------------------------------
 #  Start Docker with proper init system detection
