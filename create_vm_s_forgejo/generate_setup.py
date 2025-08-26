@@ -146,9 +146,66 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
 echo "[2/10] Installing Docker-Compose plugin & Buildx..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker components"
 
-# Use Ubuntu's docker.io package (more stable on Azure)
+# Use the most basic Docker installation approach
 echo "Installing Docker from Ubuntu repository..."
 apt-get install -y docker.io
+
+# Create docker group and add user (in case the package doesn't do this)
+echo "Creating docker group and adding user..."
+groupadd docker 2>/dev/null || true
+usermod -aG docker ${{SUDO_USER:-$USER}} 2>/dev/null || true
+
+# Start Docker with the most basic approach
+echo "Starting Docker service..."
+systemctl enable docker
+
+# Try multiple approaches to start Docker
+if ! systemctl start docker; then
+    echo "Trying alternative approach to start Docker..."
+    # Sometimes the service file might be different
+    service docker start 2>/dev/null || true
+    sleep 5
+fi
+
+# Check if Docker is running with multiple approaches
+echo "Checking if Docker is running..."
+if ! systemctl is-active --quiet docker && ! service docker status >/dev/null 2>&1; then
+    echo "ERROR: Docker is not running. Attempting to diagnose..."
+    
+    # Check if the docker binary exists
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "ERROR: Docker binary not found!"
+        notify_webhook "failed" "docker_setup" "Docker binary not found after installation"
+        exit 1
+    fi
+    
+    # Check if the service exists
+    if ! systemctl list-unit-files | grep -q docker.service; then
+        echo "ERROR: Docker service unit file not found!"
+        notify_webhook "failed" "docker_setup" "Docker service unit file not found"
+        exit 1
+    fi
+    
+    # Try to manually start the daemon as a last resort
+    echo "Attempting to start Docker daemon manually..."
+    nohup dockerd > /var/log/dockerd.log 2>&1 &
+    sleep 5
+fi
+
+# Final check if Docker is working
+if ! docker info >/dev/null 2>&1; then
+    echo "ERROR: Docker is not working. Checking logs..."
+    journalctl -u docker --no-pager -n 30 2>/dev/null || \
+    cat /var/log/dockerd.log 2>/dev/null || \
+    echo "No Docker logs available"
+    
+    echo "System information:"
+    uname -a
+    lsb_release -a
+    
+    notify_webhook "failed" "docker_setup" "Docker failed to start after multiple attempts"
+    exit 1
+fi
 
 # Install docker-compose (CLI-plugin)
 echo "Installing Docker Compose..."
@@ -156,49 +213,6 @@ mkdir -p /usr/local/lib/docker/cli-plugins
 curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose || true
-
-# Add current user to the docker group
-echo "Adding user to docker group..."
-usermod -aG docker ${{SUDO_USER:-$USER}} || true
-
-# Start Docker service with improved error handling
-echo "Starting Docker service..."
-systemctl enable docker
-
-# Check if Docker can be started
-if ! systemctl start docker; then
-    echo "ERROR: Failed to start Docker service. Checking status..."
-    systemctl status docker --no-pager
-    journalctl -u docker --no-pager -n 30
-    
-    # Try to diagnose the issue
-    echo "Checking for existing Docker processes..."
-    ps aux | grep -i docker
-    
-    echo "Checking disk space..."
-    df -h
-    
-    echo "Checking memory..."
-    free -h
-    
-    notify_webhook "failed" "docker_setup" "Docker service failed to start"
-    exit 1
-fi
-
-# Wait for Docker to be ready with timeout
-echo "Waiting for Docker to start..."
-COUNTER=0
-until docker info >/dev/null 2>&1; do
-    sleep 2
-    COUNTER=$((COUNTER + 1))
-    if [ $COUNTER -gt 30 ]; then
-        echo "ERROR: Docker did not start within 60 seconds"
-        systemctl status docker --no-pager
-        journalctl -u docker --no-pager -n 30
-        notify_webhook "failed" "docker_setup" "Docker failed to start within timeout"
-        exit 1
-    fi
-done
 
 # Install Buildx if missing
 if ! docker buildx version >/dev/null 2>&1; then
