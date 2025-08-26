@@ -155,7 +155,9 @@ fi
 # Create docker group and add user
 notify_webhook "provisioning" "docker_setup" "Creating docker group and adding user"
 groupadd docker 2>/dev/null || true
-usermod -aG docker ${SUDO_USER:-$USER} 2>/dev/null || true
+# Use whoami to get the current user instead of SUDO_USER
+CURRENT_USER=$(whoami)
+usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
 
 # Start Docker with the most basic approach
 notify_webhook "provisioning" "docker_start" "Starting Docker service"
