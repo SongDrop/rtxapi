@@ -155,7 +155,6 @@ fi
 # Create docker group and add user
 notify_webhook "provisioning" "docker_setup" "Creating docker group and adding user"
 groupadd docker 2>/dev/null || true
-# Use whoami to get the current user instead of SUDO_USER
 CURRENT_USER=$(whoami)
 usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
 
@@ -163,38 +162,57 @@ usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
 notify_webhook "provisioning" "docker_start" "Starting Docker service"
 systemctl enable docker
 
-# Try to start Docker with multiple approaches
+# Try to start Docker with multiple approaches with better error handling
 notify_webhook "provisioning" "docker_start" "Attempting to start Docker service"
 if ! systemctl start docker; then
     notify_webhook "warning" "docker_start" "systemctl start docker failed, trying service command"
-    service docker start || true
-    sleep 3
+    if ! service docker start; then
+        notify_webhook "warning" "docker_start" "service command also failed, trying direct start"
+        # Try to start Docker daemon directly
+        nohup /usr/bin/dockerd > /var/log/dockerd.log 2>&1 &
+        sleep 5
+    fi
 fi
 
-# Check if Docker is running
+# Check if Docker is running with multiple approaches
 notify_webhook "provisioning" "docker_check" "Checking if Docker is running"
-if ! systemctl is-active --quiet docker; then
+if ! systemctl is-active --quiet docker && ! pgrep dockerd > /dev/null; then
     notify_webhook "failed" "docker_start" "Docker is not running. Checking status and logs"
     systemctl status docker --no-pager || true
-    journalctl -u docker --no-pager -n 20 || true
+    journalctl -u docker --no-pager -n 30 || true
     
-    # Try to start Docker manually as a last resort
-    notify_webhook "provisioning" "docker_manual" "Attempting to start Docker daemon manually"
-    nohup dockerd > /var/log/dockerd.log 2>&1 &
+    # Check if Docker binary exists and is executable
+    if [ ! -x "$(command -v docker)" ]; then
+        notify_webhook "failed" "docker_binary" "Docker binary not found or not executable"
+        exit 1
+    fi
+    
+    # Try to start Docker manually as a last resort with full path
+    notify_webhook "provisioning" "docker_manual" "Attempting to start Docker daemon manually with full path"
+    nohup /usr/bin/dockerd > /var/log/dockerd.log 2>&1 &
     sleep 5
 fi
 
 # Final check if Docker is working
 notify_webhook "provisioning" "docker_check" "Final check if Docker is working"
-if ! docker info >/dev/null 2>&1; then
+if ! timeout 30s docker info >/dev/null 2>&1; then
     notify_webhook "failed" "docker_failed" "Docker is not working. Detailed diagnostics"
     journalctl -u docker --no-pager -n 30 2>/dev/null || \
     cat /var/log/dockerd.log 2>/dev/null || \
     echo "No Docker logs available"
     
-    echo "System information:"
-    uname -a
-    lsb_release -a
+    # Check kernel requirements
+    echo "Kernel version: $(uname -r)"
+    echo "Cgroup info:"
+    cat /proc/self/cgroup 2>/dev/null || echo "Cannot read cgroup info"
+    
+    # Check available memory
+    echo "Memory info:"
+    free -h
+    
+    # Check disk space
+    echo "Disk space:"
+    df -h
     
     exit 1
 fi
