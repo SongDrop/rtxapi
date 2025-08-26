@@ -178,10 +178,17 @@ ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose 
 
 notify_webhook "provisioning" "buildx_install" "Installing Docker Buildx"
 if ! docker buildx version >/dev/null 2>&1; then
-    mkdir -p ~/.docker/cli-plugins
-    curl -sSfSL "{buildx_url}" -o ~/.docker/cli-plugins/docker-buildx
-    chmod +x ~/.docker/cli-plugins/docker-buildx
+    notify_webhook "provisioning" "buildx_install" "Installing Docker Buildx"
+    BUILDX_DIR="/usr/local/lib/docker/cli-plugins"
+    mkdir -p "$BUILDX_DIR"
+    if ! curl -sSfSL "${buildx_url}" -o "$BUILDX_DIR/docker-buildx"; then
+        notify_webhook "failed" "buildx_install" "Failed to download Buildx from ${buildx_url}"
+        exit 1
+    fi
+    chmod +x "$BUILDX_DIR/docker-buildx"
+    ln -sf "$BUILDX_DIR/docker-buildx" /usr/bin/docker-buildx || true
 fi
+
 
 docker --version
 docker-compose --version
