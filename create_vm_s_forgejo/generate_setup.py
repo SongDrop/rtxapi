@@ -130,26 +130,13 @@ DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
     python3-certbot-nginx git-lfs openssl
 
 # ----------------------------------------------------------------------
-#  Install Docker from official repo
+#  Install Docker using the official Docker script
 # ----------------------------------------------------------------------
 notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
 
-# Remove any existing Docker installations to avoid conflicts
-apt-get remove -y docker docker-engine docker.io containerd runc || true
-
-# Install prerequisites
-apt-get install -yq ca-certificates curl gnupg lsb-release
-
-# Add Docker's official GPG key
-mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-
-# Set up the repository
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-# Install Docker
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+# Install Docker using the official Docker script (more reliable)
+curl -fsSL https://get.docker.com -o get-docker.sh
+sh get-docker.sh
 
 # Add current user to docker group
 CURRENT_USER=$(whoami)
@@ -158,17 +145,19 @@ if [ "$CURRENT_USER" != "root" ]; then
 fi
 
 # ----------------------------------------------------------------------
-#  Start Docker with proper init system detection
+#  Start Docker
 # ----------------------------------------------------------------------
 notify_webhook "provisioning" "docker_start" "Starting Docker service"
 
-# Check if systemd is available
-if [ "$(ps --no-headers -o comm 1)" = "systemd" ]; then
+# Start Docker service
+if command -v systemctl >/dev/null 2>&1; then
     systemctl enable docker
     systemctl start docker
-else
-    # Fallback to service command
+elif command -v service >/dev/null 2>&1; then
     service docker start
+else
+    # Fallback to direct start
+    nohup dockerd > /var/log/dockerd.log 2>&1 &
 fi
 
 # Wait for Docker to start with timeout
@@ -186,43 +175,27 @@ done
 if [ $timeout -eq 0 ]; then
     echo "ERROR: Docker did not start within 30 seconds"
     notify_webhook "failed" "docker_failed" "Docker startup timeout"
-    
-    # Attempt to start manually as fallback
-    echo "Attempting manual Docker startup..."
-    nohup dockerd > /var/log/dockerd.log 2>&1 &
-    sleep 5
-    
-    if ! docker info >/dev/null 2>&1; then
-        echo "Docker manual startup also failed"
-        cat /var/log/dockerd.log 2>/dev/null || true
-        exit 1
-    fi
+    exit 1
 fi
 
 # ----------------------------------------------------------------------
-#  Docker Compose & Buildx
+#  Install Docker Compose
 # ----------------------------------------------------------------------
 notify_webhook "provisioning" "compose_install" "Installing Docker Compose"
+
+# Install Docker Compose
+DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+mkdir -p $DOCKER_CONFIG/cli-plugins
+curl -SL "{docker_compose_url}" -o $DOCKER_CONFIG/cli-plugins/docker-compose
+chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
+
+# Also install to system path for compatibility
 mkdir -p /usr/local/lib/docker/cli-plugins
-curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
-chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
-
-# Install Docker Compose plugin as well for compatibility
-apt-get install -yq docker-compose-plugin
-
-notify_webhook "provisioning" "buildx_install" "Installing Docker Buildx"
-if ! docker buildx version >/dev/null 2>&1; then
-    BUILDX_DIR="/usr/local/lib/docker/cli-plugins"
-    mkdir -p "$BUILDX_DIR"
-    curl -sSfSL "{buildx_url}" -o "$BUILDX_DIR/docker-buildx"
-    chmod +x "$BUILDX_DIR/docker-buildx"
-    ln -sf "$BUILDX_DIR/docker-buildx" /usr/bin/docker-buildx
-fi
+cp $DOCKER_CONFIG/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/
+ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
 
 docker --version
 docker-compose --version
-docker buildx version
 
 # ----------------------------------------------------------------------
 #  Forgejo directories & configuration
