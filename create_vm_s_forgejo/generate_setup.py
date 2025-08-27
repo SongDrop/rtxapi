@@ -114,55 +114,33 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \\
     python3-certbot-nginx \\
     git git-lfs openssl
 
-# -----------------------------
-# 1️⃣ Install Docker (official script)
-# -----------------------------
-notify_webhook "provisioning" "docker_step" "Downloading and running Docker install script"
-echo "Downloading and running Docker install script..."
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-notify_webhook "provisioning" "docker_step" "Docker installed successfully"
+# ========== DOCKER SETUP ==========
+echo "[2/9] Configuring Docker..."
+notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
 
-# -----------------------------
-# 2️⃣ Add current user to docker group
-# -----------------------------
-notify_webhook "provisioning" "docker_step" "Adding user to docker group"
+# Install Docker from Ubuntu repositories (more stable)
+apt-get install -y docker.io
+
+# Add current user to docker group
 CURRENT_USER=$(whoami)
 if [ "$CURRENT_USER" != "root" ]; then
-    echo "Adding $CURRENT_USER to docker group..."
-    sudo usermod -aG docker "$CURRENT_USER"
-    echo "Switching to docker group in current shell session..."
-    newgrp docker <<'EOF'
-echo "Docker group applied in current shell session."
-EOF
+    usermod -aG docker "$CURRENT_USER" || true
 fi
-notify_webhook "provisioning" "docker_step" "User added to docker group"
 
-# -----------------------------
-# 3️⃣ Start Docker service
-# -----------------------------
-notify_webhook "provisioning" "docker_step" "Starting Docker service"
-echo "Starting Docker service..."
+# Start Docker service
 if command -v systemctl >/dev/null 2>&1; then
-    sudo systemctl enable docker
-    sudo systemctl start docker
+    systemctl enable docker
+    systemctl start docker
 elif command -v service >/dev/null 2>&1; then
-    sudo service docker start
-else
-    sudo nohup dockerd > /var/log/dockerd.log 2>&1 &
+    service docker start
 fi
-notify_webhook "provisioning" "docker_step" "Docker service start attempted"
 
-# -----------------------------
-# 4️⃣ Wait for Docker to become ready
-# -----------------------------
-notify_webhook "provisioning" "docker_step" "Waiting for Docker to start"
+# Wait for Docker to start
 echo "Waiting for Docker to start..."
-timeout=60
+timeout=30
 while [ $timeout -gt 0 ]; do
     if docker info >/dev/null 2>&1; then
-        echo "Docker started successfully ✅"
-        notify_webhook "provisioning" "docker_step" "Docker started successfully"
+        echo "Docker started successfully"
         break
     fi
     sleep 1
@@ -170,33 +148,28 @@ while [ $timeout -gt 0 ]; do
 done
 
 if [ $timeout -eq 0 ]; then
-    echo "ERROR: Docker did not start within 60 seconds ❌"
+    echo "ERROR: Docker did not start within 30 seconds"
     notify_webhook "failed" "docker_failed" "Docker startup timeout"
     exit 1
 fi
 
-# -----------------------------
-# 5️⃣ Install Docker Compose CLI plugin
-# -----------------------------
-notify_webhook "provisioning" "docker_step" "Installing Docker Compose CLI plugin"
-echo "Installing Docker Compose..."
-sudo mkdir -p /usr/local/lib/docker/cli-plugins
+# Install Docker Compose
+mkdir -p /usr/local/lib/docker/cli-plugins
 curl -SL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
-sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-sudo ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
-notify_webhook "provisioning" "docker_step" "Docker Compose installed successfully"
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
 
-# -----------------------------
-# 6️⃣ Verify installation
-# -----------------------------
-notify_webhook "provisioning" "docker_step" "Verifying Docker and Docker Compose installation"
-echo "Verifying Docker and Docker Compose installation..."
+# Install Docker Buildx
+echo "Installing Docker Buildx..."
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -SL "{buildx_url}" -o /usr/local/lib/docker/cli-plugins/docker-buildx
+chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+ln -sf /usr/local/lib/docker/cli-plugins/docker-buildx /usr/bin/docker-buildx
+
+# Verify Docker tools are working
 docker --version
-docker compose version
-notify_webhook "provisioning" "docker_step" "Docker & Compose verification complete"
-
-echo "✅ Docker and Docker Compose are installed and ready!"
-notify_webhook "provisioning" "docker_setup" "Docker & CLI plugins setup completed"
+docker-compose --version
+docker buildx version
 
 # ========== FORGEJO SETUP ==========
 echo "[3/9] Setting up Forgejo..."
@@ -404,7 +377,7 @@ echo "============================================"
 echo "✅ Forgejo Setup Complete!"
 echo ""
 echo "🔗 Access: https://{DOMAIN_NAME}"
-echo "👤 Admin: {ADMIN_EMAIL}"
+echo "👤 Admin: {ADMIN_EMAIL}
 echo "🔒 Password: {ADMIN_PASSWORD}"
 echo ""
 echo "⚙️ Verification:"
