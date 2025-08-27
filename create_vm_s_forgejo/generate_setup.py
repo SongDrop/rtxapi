@@ -2,26 +2,20 @@ def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
-    FRONTEND_PORT,
+    PORT,
     DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh",
     WEBHOOK_URL="",
     ALLOW_EMBED_WEBSITE="",
     location="",
     resource_group=""
 ):
-    """
-    Returns a Bash script that installs Forgejo behind Nginx,
-    obtains a Let's Encrypt certificate, configures a firewall,
-    and (optionally) reports progress to a webhook.
-    """
-
-    # ---------- URLs ----------
+    # ========== CONFIGURABLE URLs ==========
     docker_compose_url = "https://github.com/docker/compose/releases/download/v2.38.1/docker-compose-linux-x86_64"
     buildx_url = "https://github.com/docker/buildx/releases/download/v0.11.2/buildx-v0.11.2.linux-amd64"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
-
-    # ---------- Constants ----------
+    # =======================================
+    
     MAX_UPLOAD_FILE_SIZE_IN_MB = 1024
     LFS_MAX_FILE_SIZE_IN_BYTES = MAX_UPLOAD_FILE_SIZE_IN_MB * 1024 * 1024
     forgejo_dir = "/opt/forgejo"
@@ -76,8 +70,8 @@ notify_webhook() {
 }
 '''
 
-    # ---------- Bash script ----------
-    script_template = f"""#!/usr/bin/env bash
+    script_template = f"""#!/bin/bash
+
 set -e
 set -o pipefail
 export HOME=/root
@@ -89,52 +83,42 @@ export HOME=/root
 
 trap 'notify_webhook "failed" "unexpected_error" "Script exited on line ${{LINENO}} with code ${{?}}."' ERR
 
-# ----------------------------------------------------------------------
-#  Validate inputs
-# ----------------------------------------------------------------------
+# Validate domain
 if ! [[ "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
-  echo "ERROR: Invalid domain name '{DOMAIN_NAME}'"
-  notify_webhook "failed" "validation" "Invalid domain format"
-  exit 1
+    echo "ERROR: Invalid domain format"
+    notify_webhook "failed" "validation" "Invalid domain format"
+    exit 1
 fi
 
-if ! [[ "{FRONTEND_PORT}" =~ ^[0-9]+$ ]] || [ "{FRONTEND_PORT}" -lt 1 ] || [ "{FRONTEND_PORT}" -gt 65535 ]; then
-  echo "ERROR: Invalid port number '{FRONTEND_PORT}'"
-  notify_webhook "failed" "validation" "Invalid port number"
-  exit 1
-fi
-
-notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
-
+# Configuration
 DOMAIN_NAME="{DOMAIN_NAME}"
 ADMIN_EMAIL="{ADMIN_EMAIL}"
 ADMIN_PASSWORD="{ADMIN_PASSWORD}"
-PORT="{FRONTEND_PORT}"
+PORT="{PORT}"
 FORGEJO_DIR="{forgejo_dir}"
 DNS_HOOK_SCRIPT="{DNS_HOOK_SCRIPT}"
 WEBHOOK_URL="{WEBHOOK_URL}"
 
 LFS_JWT_SECRET=$(openssl rand -hex 32)
 
-# ----------------------------------------------------------------------
-#  System updates & required packages
-# ----------------------------------------------------------------------
-echo "[1/10] Updating system & installing dependencies..."
+notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
+
+# ========== SYSTEM SETUP ==========
+echo "[1/9] System updates and dependencies..."
 notify_webhook "provisioning" "system_update" "Running apt-get update & install"
 
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -yq \\
-    curl gnupg lsb-release software-properties-common \\
-    git nginx certbot ufw \\
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y \\
+    curl git nginx certbot \\
     python3-pip python3-venv jq make net-tools \\
-    python3-certbot-nginx git-lfs openssl
+    python3-certbot-nginx \\
+    git git-lfs openssl
 
-# ----------------------------------------------------------------------
-#  Install Docker using the official Docker script
-# ----------------------------------------------------------------------
+# ========== DOCKER SETUP ==========
+echo "[2/9] Configuring Docker..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
 
-# Install Docker using the official Docker script (more reliable)
+# Install Docker using the official script (more reliable)
 curl -fsSL https://get.docker.com -o get-docker.sh
 sh get-docker.sh
 
@@ -143,11 +127,6 @@ CURRENT_USER=$(whoami)
 if [ "$CURRENT_USER" != "root" ]; then
     usermod -aG docker "$CURRENT_USER" || true
 fi
-
-# ----------------------------------------------------------------------
-#  Start Docker
-# ----------------------------------------------------------------------
-notify_webhook "provisioning" "docker_start" "Starting Docker service"
 
 # Start Docker service
 if command -v systemctl >/dev/null 2>&1; then
@@ -160,7 +139,7 @@ else
     nohup dockerd > /var/log/dockerd.log 2>&1 &
 fi
 
-# Wait for Docker to start with timeout
+# Wait for Docker to start
 echo "Waiting for Docker to start..."
 timeout=30
 while [ $timeout -gt 0 ]; do
@@ -178,29 +157,20 @@ if [ $timeout -eq 0 ]; then
     exit 1
 fi
 
-# ----------------------------------------------------------------------
-#  Install Docker Compose
-# ----------------------------------------------------------------------
-notify_webhook "provisioning" "compose_install" "Installing Docker Compose"
-
 # Install Docker Compose
-DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
-mkdir -p $DOCKER_CONFIG/cli-plugins
-curl -SL "{docker_compose_url}" -o $DOCKER_CONFIG/cli-plugins/docker-compose
-chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
-
-# Also install to system path for compatibility
 mkdir -p /usr/local/lib/docker/cli-plugins
-cp $DOCKER_CONFIG/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/
-ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+curl -SL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
 
-docker --version
-docker-compose --version
+# ========== FORGEJO SETUP ==========
+echo "[3/9] Setting up Forgejo..."
+notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-# ----------------------------------------------------------------------
-#  Forgejo directories & configuration
-# ----------------------------------------------------------------------
 mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
+cd "$FORGEJO_DIR"
+
+# Create app.ini with LFS support
 cat > "$FORGEJO_DIR/config/app.ini" <<EOF_APPINI
 [server]
 LFS_START_SERVER = true
@@ -216,10 +186,11 @@ UPLOAD_ENABLED = true
 UPLOAD_FILE_MAX_SIZE = {LFS_MAX_FILE_SIZE_IN_BYTES}
 EOF_APPINI
 
-# ----------------------------------------------------------------------
-#  Docker Compose file
-# ----------------------------------------------------------------------
-cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF_COMPOSE
+# ========== DOCKER COMPOSE ==========
+echo "[4/9] Configuring Docker Compose..."
+notify_webhook "provisioning" "compose_setup" "Configuring Docker Compose"
+
+cat > docker-compose.yml <<EOF
 version: "3.8"
 
 services:
@@ -241,27 +212,16 @@ services:
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "{FRONTEND_PORT}:3000"
+      - "{PORT}:3000"
       - "222:22"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 10s
       timeout: 5s
       retries: 12
-EOF_COMPOSE
+EOF
 
-cd "$FORGEJO_DIR"
-
-# Try both docker compose and docker-compose commands
-if command -v docker-compose >/dev/null 2>&1; then
-    docker-compose up -d
-elif docker compose version >/dev/null 2>&1; then
-    docker compose up -d
-else
-    echo "ERROR: Neither docker-compose nor docker compose command found"
-    notify_webhook "failed" "compose_failed" "Docker Compose not available"
-    exit 1
-fi
+docker compose up -d
 
 # Wait for Forgejo container to be healthy
 echo "Waiting for Forgejo container health..."
@@ -274,38 +234,57 @@ for i in $(seq 1 60); do
     sleep 2
 done
 
-# ----------------------------------------------------------------------
-#  Firewall
-# ----------------------------------------------------------------------
+# ========== NETWORK SECURITY ==========
+echo "[5/9] Configuring firewall..."
+notify_webhook "provisioning" "firewall_setup" "Configuring firewall"
+
 ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
-ufw allow "{FRONTEND_PORT}/tcp"
+ufw allow "{PORT}/tcp"
 ufw --force enable
 
-# ----------------------------------------------------------------------
-#  SSL certificate
-# ----------------------------------------------------------------------
-mkdir -p /etc/letsencrypt
-curl -sSf "{letsencrypt_options_url}" -o /etc/letsencrypt/options-ssl-nginx.conf
-curl -sSf "{ssl_dhparams_url}" -o /etc/letsencrypt/ssl-dhparams.pem
+# ========== SSL CERTIFICATE ==========
+echo "[6/9] Setting up SSL certificate..."
+notify_webhook "provisioning" "ssl_setup" "Setting up SSL certificate"
 
-if [ -x "$DNS_HOOK_SCRIPT" ]; then
+# Download Let's Encrypt configuration files
+mkdir -p /etc/letsencrypt
+curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
+curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
+
+if [ -f "$DNS_HOOK_SCRIPT" ]; then
+    echo "Using DNS hook script at $DNS_HOOK_SCRIPT"
     chmod +x "$DNS_HOOK_SCRIPT"
-    certbot certonly --manual --preferred-challenges dns --manual-auth-hook "$DNS_HOOK_SCRIPT add" --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" --non-interactive --manual-public-ip-logging-ok
+    
+    # Obtain certificate
+    certbot certonly --manual \\
+        --preferred-challenges=dns \\
+        --manual-auth-hook "$DNS_HOOK_SCRIPT add" \\
+        --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" \\
+        --agree-tos --email "{ADMIN_EMAIL}" \\
+        -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" \\
+        --non-interactive \\
+        --manual-public-ip-logging-ok
 else
+    echo "Warning: No DNS hook script found at $DNS_HOOK_SCRIPT"
+    echo "Falling back to standard certificate"
     systemctl stop nginx || true
     certbot certonly --standalone --preferred-challenges http --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" --non-interactive
     systemctl start nginx || true
 fi
 
-# ----------------------------------------------------------------------
-#  Nginx configuration
-# ----------------------------------------------------------------------
-cat > /etc/nginx/sites-available/forgejo <<EOF_NGINX
+# ========== NGINX CONFIG ==========
+echo "[7/9] Configuring Nginx..."
+notify_webhook "provisioning" "nginx_setup" "Configuring Nginx"
+
+# Remove default Nginx config
+rm -f /etc/nginx/sites-enabled/default
+
+cat > /etc/nginx/sites-available/forgejo <<EOF
 map \$http_upgrade \$connection_upgrade {{
     default upgrade;
-    ''      close;
+    '' close;
 }}
 
 server {{
@@ -326,7 +305,7 @@ server {{
     client_max_body_size {MAX_UPLOAD_FILE_SIZE_IN_MB}M;
 
     location / {{
-        proxy_pass http://127.0.0.1:{FRONTEND_PORT};
+        proxy_pass http://localhost:{PORT};
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -339,38 +318,73 @@ server {{
         add_header Content-Security-Policy "frame-ancestors 'self' {ALLOW_EMBED_WEBSITE}" always;
     }}
 }}
-EOF_NGINX
+EOF
 
 ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
 
-# ----------------------------------------------------------------------
-#  Final verification
-# ----------------------------------------------------------------------
+# ========== VERIFICATION ==========
+echo "[8/9] Verifying setup..."
 notify_webhook "provisioning" "verification" "Running post-install checks"
+
+# Verify container is running
 if ! docker ps --filter "name=forgejo" --filter "status=running" | grep -q forgejo; then
+    echo "ERROR: Forgejo container is not running!"
     notify_webhook "failed" "verification" "Forgejo container not running"
+    docker logs forgejo
     exit 1
 fi
 
+# Verify Nginx config
 if ! nginx -t; then
+    echo "ERROR: Nginx configuration test failed"
     notify_webhook "failed" "verification" "Nginx configuration failed"
     exit 1
 fi
 
+# Verify SSL certificate
 if [ ! -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
+    echo "ERROR: SSL certificate not found!"
     notify_webhook "failed" "verification" "SSL cert missing"
     exit 1
 fi
 
+# ========== FINAL CONFIG ==========
+echo "[9/9] Final configuration..."
+notify_webhook "provisioning" "final_config" "Final configuration"
+
+echo "Creating admin user..."
+sleep 30  # Wait for Forgejo initialization
+
+# Try to create admin user (may fail if already exists)
+docker exec forgejo forgejo admin user create \\
+    --username admin \\
+    --password "{ADMIN_PASSWORD}" \\
+    --email "{ADMIN_EMAIL}" \\
+    --admin || echo "Admin user may already exist"
+
 notify_webhook "completed" "finished" "Forgejo deployment succeeded"
 
-echo "============================================="
+echo "============================================"
 echo "✅ Forgejo Setup Complete!"
-echo "🔗 Access URL     : https://{DOMAIN_NAME}"
-echo "👤 Admin login    : {ADMIN_EMAIL}"
-echo "🔑 Admin password : {ADMIN_PASSWORD}"
-echo "============================================="
+echo ""
+echo "🔗 Access: https://{DOMAIN_NAME}"
+echo "👤 Admin: {ADMIN_EMAIL}"
+echo "🔒 Password: {ADMIN_PASSWORD}"
+echo ""
+echo "⚙️ Verification:"
+echo "   - Container status: docker ps"
+echo "   - Nginx status: systemctl status nginx"
+echo "   - SSL certificate: certbot certificates"
+echo "   - Port accessibility: curl -v http://localhost:{PORT}"
+echo ""
+echo "⚠️ Important:"
+echo "1. If you see Nginx default page:"
+echo "   sudo rm -f /etc/nginx/sites-enabled/default"
+echo "   sudo systemctl restart nginx"
+echo "2. If SSL fails:"
+echo "   sudo certbot --nginx -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL} --redirect"
+echo "3. First-time setup may require visiting https://{DOMAIN_NAME} to complete installation"
+echo "============================================"
 """
-
     return script_template
