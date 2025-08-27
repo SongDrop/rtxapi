@@ -114,37 +114,55 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \\
     python3-certbot-nginx \\
     git git-lfs openssl
 
-# ========== DOCKER SETUP ==========
-echo "[2/9] Configuring Docker..."
-notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
-
-# Install Docker using the official script (more reliable)
+# -----------------------------
+# 1️⃣ Install Docker (official script)
+# -----------------------------
+notify_webhook "provisioning" "docker_step" "Downloading and running Docker install script"
+echo "Downloading and running Docker install script..."
 curl -fsSL https://get.docker.com -o get-docker.sh
-sh get-docker.sh
+sudo sh get-docker.sh
+notify_webhook "provisioning" "docker_step" "Docker installed successfully"
 
-# Add current user to docker group
+# -----------------------------
+# 2️⃣ Add current user to docker group
+# -----------------------------
+notify_webhook "provisioning" "docker_step" "Adding user to docker group"
 CURRENT_USER=$(whoami)
 if [ "$CURRENT_USER" != "root" ]; then
-    usermod -aG docker "$CURRENT_USER" || true
+    echo "Adding $CURRENT_USER to docker group..."
+    sudo usermod -aG docker "$CURRENT_USER"
+    echo "Switching to docker group in current shell session..."
+    newgrp docker <<'EOF'
+echo "Docker group applied in current shell session."
+EOF
 fi
+notify_webhook "provisioning" "docker_step" "User added to docker group"
 
-# Start Docker service
+# -----------------------------
+# 3️⃣ Start Docker service
+# -----------------------------
+notify_webhook "provisioning" "docker_step" "Starting Docker service"
+echo "Starting Docker service..."
 if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable docker
-    systemctl start docker
+    sudo systemctl enable docker
+    sudo systemctl start docker
 elif command -v service >/dev/null 2>&1; then
-    service docker start
+    sudo service docker start
 else
-    # Fallback to direct start
-    nohup dockerd > /var/log/dockerd.log 2>&1 &
+    sudo nohup dockerd > /var/log/dockerd.log 2>&1 &
 fi
+notify_webhook "provisioning" "docker_step" "Docker service start attempted"
 
-# Wait for Docker to start
+# -----------------------------
+# 4️⃣ Wait for Docker to become ready
+# -----------------------------
+notify_webhook "provisioning" "docker_step" "Waiting for Docker to start"
 echo "Waiting for Docker to start..."
-timeout=30
+timeout=60
 while [ $timeout -gt 0 ]; do
     if docker info >/dev/null 2>&1; then
-        echo "Docker started successfully"
+        echo "Docker started successfully ✅"
+        notify_webhook "provisioning" "docker_step" "Docker started successfully"
         break
     fi
     sleep 1
@@ -152,16 +170,33 @@ while [ $timeout -gt 0 ]; do
 done
 
 if [ $timeout -eq 0 ]; then
-    echo "ERROR: Docker did not start within 30 seconds"
+    echo "ERROR: Docker did not start within 60 seconds ❌"
     notify_webhook "failed" "docker_failed" "Docker startup timeout"
     exit 1
 fi
 
-# Install Docker Compose
-mkdir -p /usr/local/lib/docker/cli-plugins
+# -----------------------------
+# 5️⃣ Install Docker Compose CLI plugin
+# -----------------------------
+notify_webhook "provisioning" "docker_step" "Installing Docker Compose CLI plugin"
+echo "Installing Docker Compose..."
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
 curl -SL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
-chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+sudo ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
+notify_webhook "provisioning" "docker_step" "Docker Compose installed successfully"
+
+# -----------------------------
+# 6️⃣ Verify installation
+# -----------------------------
+notify_webhook "provisioning" "docker_step" "Verifying Docker and Docker Compose installation"
+echo "Verifying Docker and Docker Compose installation..."
+docker --version
+docker compose version
+notify_webhook "provisioning" "docker_step" "Docker & Compose verification complete"
+
+echo "✅ Docker and Docker Compose are installed and ready!"
+notify_webhook "provisioning" "docker_setup" "Docker & CLI plugins setup completed"
 
 # ========== FORGEJO SETUP ==========
 echo "[3/9] Setting up Forgejo..."
