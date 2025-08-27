@@ -76,6 +76,21 @@ set -e
 set -o pipefail
 export HOME=/root
 
+# Enable debug mode if DEBUG environment variable is set
+if [ -n "$DEBUG" ]; then
+    set -x
+fi
+
+# Set up logging
+LOG_FILE="/var/log/forgejo_setup.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "============================================"
+echo "Starting Forgejo installation script"
+echo "Timestamp: $(date)"
+echo "Log file: $LOG_FILE"
+echo "============================================"
+
 # ----------------------------------------------------------------------
 #  Webhook helper
 # ----------------------------------------------------------------------
@@ -107,19 +122,55 @@ notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
 echo "[1/9] System updates and dependencies..."
 notify_webhook "provisioning" "system_update" "Running apt-get update & install"
 
-apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y \\
-    curl git nginx certbot \\
-    python3-pip python3-venv jq make net-tools \\
-    python3-certbot-nginx \\
-    git git-lfs openssl
+# Update package lists with retries
+for i in {1..5}; do
+    if apt-get update; then
+        break
+    fi
+    echo "apt-get update failed (attempt $i/5), retrying in 10 seconds..."
+    sleep 10
+    if [ $i -eq 5 ]; then
+        echo "ERROR: Failed to update package lists after 5 attempts"
+        notify_webhook "failed" "system_update" "Failed to update package lists"
+        exit 1
+    fi
+done
+
+# Install dependencies with retries
+for i in {1..5}; do
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y \\
+        curl git nginx certbot \\
+        python3-pip python3-venv jq make net-tools \\
+        python3-certbot-nginx \\
+        git git-lfs openssl; then
+        break
+    fi
+    echo "Package installation failed (attempt $i/5), retrying in 10 seconds..."
+    sleep 10
+    if [ $i -eq 5 ]; then
+        echo "ERROR: Failed to install packages after 5 attempts"
+        notify_webhook "failed" "system_update" "Failed to install packages"
+        exit 1
+    fi
+done
 
 # ========== DOCKER SETUP ==========
 echo "[2/9] Configuring Docker..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
 
 # Install Docker from Ubuntu repositories (more stable)
-apt-get install -y docker.io
+for i in {1..5}; do
+    if apt-get install -y docker.io; then
+        break
+    fi
+    echo "Docker installation failed (attempt $i/5), retrying in 10 seconds..."
+    sleep 10
+    if [ $i -eq 5 ]; then
+        echo "ERROR: Failed to install Docker after 5 attempts"
+        notify_webhook "failed" "docker_setup" "Failed to install Docker"
+        exit 1
+    fi
+done
 
 # Add current user to docker group
 CURRENT_USER=$(whoami)
@@ -127,55 +178,86 @@ if [ "$CURRENT_USER" != "root" ]; then
     usermod -aG docker "$CURRENT_USER" || true
 fi
 
-# Start Docker service
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable docker
-    systemctl start docker
-elif command -v service >/dev/null 2>&1; then
-    service docker start
-fi
+# Start Docker service with retries
+echo "Starting Docker service..."
+for i in {1..10}; do
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl enable docker
+        if systemctl start docker; then
+            break
+        fi
+    elif command -v service >/dev/null 2>&1; then
+        if service docker start; then
+            break
+        fi
+    else
+        # Fallback to direct start
+        nohup dockerd > /var/log/dockerd.log 2>&1 &
+    fi
+    
+    if [ $i -eq 10 ]; then
+        echo "ERROR: Failed to start Docker after 10 attempts"
+        notify_webhook "failed" "docker_start" "Failed to start Docker"
+        exit 1
+    fi
+    sleep 5
+done
 
-# Wait for Docker to start
+# Wait for Docker to start with longer timeout
 echo "Waiting for Docker to start..."
-timeout=60  # Increased timeout to 60 seconds
+timeout=120  # 2 minutes
 while [ $timeout -gt 0 ]; do
     if docker info >/dev/null 2>&1; then
         echo "Docker started successfully"
         break
     fi
-    sleep 2  # Increased sleep time
-    timeout=$((timeout - 2))
+    sleep 5
+    timeout=$((timeout - 5))
 done
 
 if [ $timeout -eq 0 ]; then
-    echo "ERROR: Docker did not start within 60 seconds"
+    echo "ERROR: Docker did not start within 120 seconds"
+    echo "Docker daemon logs:"
+    cat /var/log/dockerd.log 2>/dev/null || echo "No dockerd.log found"
     notify_webhook "failed" "docker_failed" "Docker startup timeout"
     exit 1
 fi
 
-# Install Docker Compose with better error handling
+# Install Docker Compose with retries
 echo "Installing Docker Compose..."
-mkdir -p /usr/local/lib/docker/cli-plugins
-if curl -SL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose; then
-    chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-    ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
-else
-    echo "ERROR: Failed to download Docker Compose"
-    notify_webhook "failed" "compose_install" "Failed to download Docker Compose"
-    exit 1
-fi
+for i in {1..5}; do
+    mkdir -p /usr/local/lib/docker/cli-plugins
+    if curl -fSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose; then
+        chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+        ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
+        break
+    fi
+    echo "Docker Compose download failed (attempt $i/5), retrying in 10 seconds..."
+    sleep 10
+    if [ $i -eq 5 ]; then
+        echo "ERROR: Failed to download Docker Compose after 5 attempts"
+        notify_webhook "failed" "compose_install" "Failed to download Docker Compose"
+        exit 1
+    fi
+done
 
-# Install Docker Buildx with better error handling
+# Install Docker Buildx with retries
 echo "Installing Docker Buildx..."
-mkdir -p /usr/local/lib/docker/cli-plugins
-if curl -SL "{buildx_url}" -o /usr/local/lib/docker/cli-plugins/docker-buildx; then
-    chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
-    ln -sf /usr/local/lib/docker/cli-plugins/docker-buildx /usr/bin/docker-buildx
-else
-    echo "ERROR: Failed to download Docker Buildx"
-    notify_webhook "failed" "buildx_install" "Failed to download Docker Buildx"
-    exit 1
-fi
+for i in {1..5}; do
+    mkdir -p /usr/local/lib/docker/cli-plugins
+    if curl -fSL "{buildx_url}" -o /usr/local/lib/docker/cli-plugins/docker-buildx; then
+        chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+        ln -sf /usr/local/lib/docker/cli-plugins/docker-buildx /usr/bin/docker-buildx
+        break
+    fi
+    echo "Docker Buildx download failed (attempt $i/5), retrying in 10 seconds..."
+    sleep 10
+    if [ $i -eq 5 ]; then
+        echo "ERROR: Failed to download Docker Buildx after 5 attempts"
+        notify_webhook "failed" "buildx_install" "Failed to download Docker Buildx"
+        exit 1
+    fi
+done
 
 # Verify Docker tools are working
 echo "Verifying Docker installation..."
@@ -416,5 +498,8 @@ echo "2. If SSL fails:"
 echo "   sudo certbot --nginx -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL} --redirect"
 echo "3. First-time setup may require visiting https://{DOMAIN_NAME} to complete installation"
 echo "============================================"
+
+# Save the log file location for debugging
+echo "Installation log saved to: $LOG_FILE"
 """
     return script_template
