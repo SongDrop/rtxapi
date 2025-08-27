@@ -123,7 +123,7 @@ echo "[1/9] System updates and dependencies..."
 notify_webhook "provisioning" "system_update" "Running apt-get update & install"
 
 # Update package lists with retries
-for i in {1..5}; do
+for i in {{1..5}}; do
     if apt-get update; then
         break
     fi
@@ -137,7 +137,7 @@ for i in {1..5}; do
 done
 
 # Install dependencies with retries
-for i in {1..5}; do
+for i in {{1..5}}; do
     if DEBIAN_FRONTEND=noninteractive apt-get install -y \\
         curl git nginx certbot \\
         python3-pip python3-venv jq make net-tools \\
@@ -159,7 +159,7 @@ echo "[2/9] Configuring Docker..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
 
 # Install Docker from Ubuntu repositories (more stable)
-for i in {1..5}; do
+for i in {{1..5}}; do
     if apt-get install -y docker.io; then
         break
     fi
@@ -180,7 +180,7 @@ fi
 
 # Start Docker service with retries
 echo "Starting Docker service..."
-for i in {1..10}; do
+for i in {{1..10}}; do
     if command -v systemctl >/dev/null 2>&1; then
         systemctl enable docker
         if systemctl start docker; then
@@ -225,7 +225,7 @@ fi
 
 # Install Docker Compose with retries
 echo "Installing Docker Compose..."
-for i in {1..5}; do
+for i in {{1..5}}; do
     mkdir -p /usr/local/lib/docker/cli-plugins
     if curl -fSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose; then
         chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
@@ -243,7 +243,7 @@ done
 
 # Install Docker Buildx with retries
 echo "Installing Docker Buildx..."
-for i in {1..5}; do
+for i in {{1..5}}; do
     mkdir -p /usr/local/lib/docker/cli-plugins
     if curl -fSL "{buildx_url}" -o /usr/local/lib/docker/cli-plugins/docker-buildx; then
         chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
