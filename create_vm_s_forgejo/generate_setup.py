@@ -149,7 +149,7 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 
 # Install Docker
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin
 
 # Add current user to docker group
 CURRENT_USER=$(whoami)
@@ -206,7 +206,10 @@ notify_webhook "provisioning" "compose_install" "Installing Docker Compose"
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -sSfSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose || true
+ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
+
+# Install Docker Compose plugin as well for compatibility
+apt-get install -yq docker-compose-plugin
 
 notify_webhook "provisioning" "buildx_install" "Installing Docker Buildx"
 if ! docker buildx version >/dev/null 2>&1; then
@@ -214,7 +217,7 @@ if ! docker buildx version >/dev/null 2>&1; then
     mkdir -p "$BUILDX_DIR"
     curl -sSfSL "{buildx_url}" -o "$BUILDX_DIR/docker-buildx"
     chmod +x "$BUILDX_DIR/docker-buildx"
-    ln -sf "$BUILDX_DIR/docker-buildx" /usr/bin/docker-buildx || true
+    ln -sf "$BUILDX_DIR/docker-buildx" /usr/bin/docker-buildx
 fi
 
 docker --version
@@ -275,7 +278,17 @@ services:
 EOF_COMPOSE
 
 cd "$FORGEJO_DIR"
-docker compose up -d
+
+# Try both docker compose and docker-compose commands
+if command -v docker-compose >/dev/null 2>&1; then
+    docker-compose up -d
+elif docker compose version >/dev/null 2>&1; then
+    docker compose up -d
+else
+    echo "ERROR: Neither docker-compose nor docker compose command found"
+    notify_webhook "failed" "compose_failed" "Docker Compose not available"
+    exit 1
+fi
 
 # Wait for Forgejo container to be healthy
 echo "Waiting for Forgejo container health..."
