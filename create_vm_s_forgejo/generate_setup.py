@@ -137,39 +137,51 @@ fi
 
 # Wait for Docker to start
 echo "Waiting for Docker to start..."
-timeout=30
+timeout=60  # Increased timeout to 60 seconds
 while [ $timeout -gt 0 ]; do
     if docker info >/dev/null 2>&1; then
         echo "Docker started successfully"
         break
     fi
-    sleep 1
-    timeout=$((timeout - 1))
+    sleep 2  # Increased sleep time
+    timeout=$((timeout - 2))
 done
 
 if [ $timeout -eq 0 ]; then
-    echo "ERROR: Docker did not start within 30 seconds"
+    echo "ERROR: Docker did not start within 60 seconds"
     notify_webhook "failed" "docker_failed" "Docker startup timeout"
     exit 1
 fi
 
-# Install Docker Compose
+# Install Docker Compose with better error handling
+echo "Installing Docker Compose..."
 mkdir -p /usr/local/lib/docker/cli-plugins
-curl -SL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
-chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
+if curl -SL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose; then
+    chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+    ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
+else
+    echo "ERROR: Failed to download Docker Compose"
+    notify_webhook "failed" "compose_install" "Failed to download Docker Compose"
+    exit 1
+fi
 
-# Install Docker Buildx
+# Install Docker Buildx with better error handling
 echo "Installing Docker Buildx..."
 mkdir -p /usr/local/lib/docker/cli-plugins
-curl -SL "{buildx_url}" -o /usr/local/lib/docker/cli-plugins/docker-buildx
-chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
-ln -sf /usr/local/lib/docker/cli-plugins/docker-buildx /usr/bin/docker-buildx
+if curl -SL "{buildx_url}" -o /usr/local/lib/docker/cli-plugins/docker-buildx; then
+    chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+    ln -sf /usr/local/lib/docker/cli-plugins/docker-buildx /usr/bin/docker-buildx
+else
+    echo "ERROR: Failed to download Docker Buildx"
+    notify_webhook "failed" "buildx_install" "Failed to download Docker Buildx"
+    exit 1
+fi
 
 # Verify Docker tools are working
-docker --version
-docker-compose --version
-docker buildx version
+echo "Verifying Docker installation..."
+docker --version || (echo "ERROR: Docker not working" && exit 1)
+docker-compose --version || (echo "ERROR: Docker Compose not working" && exit 1)
+docker buildx version || (echo "ERROR: Docker Buildx not working" && exit 1)
 
 # ========== FORGEJO SETUP ==========
 echo "[3/9] Setting up Forgejo..."
@@ -229,7 +241,17 @@ services:
       retries: 12
 EOF
 
-docker compose up -d
+# Try both docker compose and docker-compose commands with error handling
+echo "Starting Forgejo container..."
+if command -v docker-compose >/dev/null 2>&1; then
+    docker-compose up -d
+elif docker compose version >/dev/null 2>&1; then
+    docker compose up -d
+else
+    echo "ERROR: Neither docker-compose nor docker compose command found"
+    notify_webhook "failed" "compose_failed" "Docker Compose not available"
+    exit 1
+fi
 
 # Wait for Forgejo container to be healthy
 echo "Waiting for Forgejo container health..."
@@ -377,7 +399,7 @@ echo "============================================"
 echo "✅ Forgejo Setup Complete!"
 echo ""
 echo "🔗 Access: https://{DOMAIN_NAME}"
-echo "👤 Admin: {ADMIN_EMAIL}
+echo "👤 Admin: {ADMIN_EMAIL}"
 echo "🔒 Password: {ADMIN_PASSWORD}"
 echo ""
 echo "⚙️ Verification:"
