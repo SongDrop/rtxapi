@@ -163,18 +163,6 @@ curl -SL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-comp
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
 
-# Install Docker Buildx
-echo "Installing Docker Buildx..."
-mkdir -p /usr/local/lib/docker/cli-plugins
-curl -SL "{buildx_url}" -o /usr/local/lib/docker/cli-plugins/docker-buildx
-chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
-ln -sf /usr/local/lib/docker/cli-plugins/docker-buildx /usr/bin/docker-buildx
-
-# Verify Docker tools are working
-docker --version
-docker-compose --version
-docker buildx version
-
 # ========== FORGEJO SETUP ==========
 echo "[3/9] Setting up Forgejo..."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
