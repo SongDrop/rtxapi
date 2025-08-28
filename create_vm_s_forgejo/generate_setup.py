@@ -269,9 +269,7 @@ docker buildx version || (echo "ERROR: Docker Buildx not working" && exit 1)
 echo "[3/9] Setting up Forgejo..."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-mkdir -p "$FORGEJO_DIR/data"
-mkdir -p "$FORGEJO_DIR/config"
-mkdir -p "$FORGEJO_DIR/ssl"
+mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
 cd "$FORGEJO_DIR"
 
 # Create app.ini with LFS support
