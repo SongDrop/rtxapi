@@ -139,14 +139,15 @@ services:
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "${{PORT}}:3000"
+      - "${PORT}:3000"
       - "222:22"
     healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:3000"]
-    interval: 15s
-    timeout: 10s
-    retries: 40
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
 EOF
+
 
 # Ensure Docker socket is usable
 if ! docker ps >/dev/null 2>&1; then
@@ -182,7 +183,7 @@ if [ $attempt -gt $max_attempts ]; then
 fi
 
 # Wait for Forgejo container to become healthy
-for i in {{1..60}}; do
+for i in {{1..90}}; do
     STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
     if [ "$STATUS" = "healthy" ]; then
         notify_webhook "prvisioning" "forgejo_healthy" "✅ Forgejo is healthy"
