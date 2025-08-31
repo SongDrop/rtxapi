@@ -108,6 +108,43 @@ fi
 
 notify_webhook "provisioning" "docker_setup_complete" "Docker installed successfully"
 
+# ---------------- DOCKER HEALTHCHECK ----------------
+notify_webhook "provisioning" "docker_healthcheck" "Verifying Docker installation and connectivity"
+
+# Check Docker daemon status
+if ! systemctl is-active --quiet docker; then
+    notify_webhook "failed" "docker_service" "Docker service is not running. Starting..."
+    systemctl enable docker && systemctl start docker
+    sleep 5
+    if ! systemctl is-active --quiet docker; then
+        notify_webhook "failed" "docker_service" "Docker service failed to start"
+        exit 1
+    fi
+fi
+
+# Check Docker info
+if ! docker info >/dev/null 2>&1; then
+    notify_webhook "failed" "docker_info" "Docker daemon not responding or insufficient permissions"
+    ls -l /var/run/docker.sock | notify_webhook "docker_socket" "Docker socket info"
+    exit 1
+fi
+
+# Run test container
+if ! docker run --rm hello-world >/dev/null 2>&1; then
+    LOGS=$(docker run --rm hello-world 2>&1 || echo "No logs available")
+    notify_webhook "failed" "docker_test_container" "Failed to run test container. Logs: $LOGS"
+    exit 1
+fi
+
+# Check Docker Compose availability
+if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+    notify_webhook "failed" "docker_compose" "Neither docker-compose nor docker compose CLI is available"
+    exit 1
+fi
+
+notify_webhook "provisioning" "docker_healthcheck_passed" "Docker is ready for Forgejo deployment"
+
+
 # ---------------- FORGEJO SETUP ----------------
 echo "[3/9] Setting up Forgejo..."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
@@ -178,9 +215,11 @@ while [ $attempt -le $max_attempts ]; do
 done
 
 if [ $attempt -gt $max_attempts ]; then
-    notify_webhook "failed" "forgejo_start_failed" "Forgejo failed to start after $max_attempts attempts"
+    LOGS=$(docker logs forgejo 2>&1 || echo "No logs available")
+    notify_webhook "failed" "forgejo_start_failed" "Forgejo failed to start after $max_attempts attempts. Logs: $LOGS"
     exit 1
 fi
+
 
 # Wait for Forgejo container to become healthy
 for i in {{1..90}}; do
@@ -191,6 +230,12 @@ for i in {{1..90}}; do
     fi
     sleep 2
 done
+
+if [ "$STATUS" != "healthy" ]; then
+    LOGS=$(docker logs forgejo 2>&1 || echo "No logs available")
+    notify_webhook "failed" "forgejo_unhealthy" "Forgejo container never became healthy. Logs: $LOGS"
+    exit 1
+fi
 
 # ---------------- NETWORK SECURITY ----------------
 notify_webhook "provisioning" "firewall_setup" "Configuring firewall"
