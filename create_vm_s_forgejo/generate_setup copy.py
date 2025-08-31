@@ -149,11 +149,23 @@ notify_webhook "provisioning" "docker_healthcheck_passed" "Docker is ready for F
 echo "[3/9] Setting up Forgejo..."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
-chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config
-mkdir -p "$FORGEJO_DIR/data/gitea/lfs"
-chown -R 1000:1000 "$FORGEJO_DIR/data/gitea"
-cd "$FORGEJO_DIR"
+# Create directories
+mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}} || \
+    notify_webhook "failed" "directories_creation" "Failed to create Forgejo directories" && exit 1
+notify_webhook "provisioning" "directories_created" "Forgejo directories created"
+
+# Set ownership
+chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config || \
+    notify_webhook "failed" "permissions" "Failed to set directory ownership" && exit 1
+notify_webhook "provisioning" "ownership_set_data_config" "Ownership set for data and config"
+
+mkdir -p "$FORGEJO_DIR/data/gitea/lfs" || \
+    notify_webhook "failed" "directories_creation" "Failed to create LFS directory" && exit 1
+chown -R 1000:1000 "$FORGEJO_DIR/data/gitea" || \
+    notify_webhook "failed" "permissions" "Failed to set gitea ownership" && exit 1
+notify_webhook "provisioning" "ownership_set_gitea" "Ownership set for gitea directories"
+
+cd "$FORGEJO_DIR" || {{ notify_webhook "failed" "cd_failed" "Cannot cd into $FORGEJO_DIR"; exit 1; }}
 
 # Docker Compose for Forgejo
 cat > docker-compose.yml <<EOF
@@ -185,17 +197,23 @@ services:
       retries: 40
 EOF
 
+notify_webhook "provisioning" "docker_compose_created" "docker-compose.yml created"
+docker_compose_content=$(cat docker-compose.yml)
+notify_webhook "provisioning" "docker_compose_content" "$docker_compose_content"
 
 # Ensure Docker socket is usable
 if ! docker ps >/dev/null 2>&1; then
-    notify_webhook "failed" "docker_error" "⚠️ Docker socket not accessible. Trying to fix permissions..."
+    notify_webhook "failed" "docker_error" "Docker socket not accessible. Trying to fix permissions..."
     chmod 666 /var/run/docker.sock || true
 fi
+notify_webhook "provisioning" "docker_socket_checked" "$(ls -l /var/run/docker.sock)"
 
+# Check port availability
 if lsof -i:"$PORT" >/dev/null; then
     notify_webhook "failed" "port_error" "Port $PORT is already in use. Exiting..."
     exit 1
 fi
+notify_webhook "provisioning" "port_free" "Port $PORT is available"
 
 # Start Forgejo with retries
 attempt=1
@@ -219,13 +237,14 @@ if [ $attempt -gt $max_attempts ]; then
     notify_webhook "failed" "forgejo_start_failed" "Forgejo failed to start after $max_attempts attempts. Logs: $LOGS"
     exit 1
 fi
-
+notify_webhook "provisioning" "forgejo_started" "Forgejo container started"
 
 # Wait for Forgejo container to become healthy
 for i in {{1..90}}; do
     STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
+    notify_webhook "provisioning" "container_health_check" "Current container status: $STATUS"
     if [ "$STATUS" = "healthy" ]; then
-        notify_webhook "prvisioning" "forgejo_healthy" "✅ Forgejo is healthy"
+        notify_webhook "provisioning" "forgejo_healthy" "✅ Forgejo is healthy"
         break
     fi
     sleep 2
@@ -236,6 +255,8 @@ if [ "$STATUS" != "healthy" ]; then
     notify_webhook "failed" "forgejo_unhealthy" "Forgejo container never became healthy. Logs: $LOGS"
     exit 1
 fi
+notify_webhook "provisioning" "forgejo_healthcheck_done" "Forgejo healthcheck passed"
+
 
 # ---------------- NETWORK SECURITY ----------------
 notify_webhook "provisioning" "firewall_setup" "Configuring firewall"
