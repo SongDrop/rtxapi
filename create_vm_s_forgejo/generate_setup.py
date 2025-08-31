@@ -110,8 +110,9 @@ fi
 notify_webhook "provisioning" "docker_setup_complete" "Docker installed successfully"
 
 # ---------------- FORGEJO SETUP ----------------
-notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and docker-compose"
-mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}} || exit 1
+notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
+
+mkdir -p "$FORGEJO_DIR"/{data,config,ssl} || exit 1
 cd "$FORGEJO_DIR" || exit 1
 
 if docker ps -a --format '{{.Names}}' | grep -q "^forgejo\$"; then
@@ -126,29 +127,48 @@ services:
     container_name: forgejo
     restart: unless-stopped
     environment:
-      - FORGEJO__server__DOMAIN={DOMAIN_NAME}
-      - FORGEJO__server__ROOT_URL=https://{DOMAIN_NAME}
+      - FORGEJO__server__DOMAIN=${DOMAIN_NAME}
+      - FORGEJO__server__ROOT_URL=https://${DOMAIN_NAME}
       - FORGEJO__server__HTTP_PORT=3000
       - FORGEJO__server__LFS_START_SERVER=true
       - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
-      - FORGEJO__server__LFS_JWT_SECRET={LFS_JWT_SECRET}
-      - FORGEJO__server__LFS_MAX_FILE_SIZE={LFS_MAX_FILE_SIZE_IN_BYTES}
+      - FORGEJO__server__LFS_JWT_SECRET=${LFS_JWT_SECRET}
+      - FORGEJO__server__LFS_MAX_FILE_SIZE=${LFS_MAX_FILE_SIZE_IN_BYTES}
     volumes:
       - ./data:/data
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "{PORT}:3000"
+      - "${PORT}:3000"
       - "222:22"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 10s
       timeout: 5s
       retries: 12
+    # Install Git LFS inside the container at startup
+    command: >
+      /bin/sh -c "
+        curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash &&
+        apt-get update &&
+        apt-get install -y git-lfs &&
+        git lfs install &&
+        /usr/bin/forgejo web
+      "
 EOF
 
-docker compose up -d
-notify_webhook "provisioning" "forgejo_setup_complete" "Forgejo container started"
+for i in {1..3}; do
+    if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d && break
+    elif docker compose version >/dev/null 2>&1; then docker compose up -d && break
+    else notify_webhook "failed" "compose_failed" "Docker Compose not available"; exit 1; fi
+    sleep 5
+    if [ $i -eq 3 ]; then
+        docker logs forgejo --tail 50 || true
+        notify_webhook "failed" "compose_failed" "docker compose up failed after 3 attempts"
+        exit 1
+    fi
+done
+
 
 # ---------------- NETWORK SECURITY ----------------
 notify_webhook "provisioning" "firewall_setup" "Configuring firewall"
