@@ -216,9 +216,15 @@ echo "Docker setup complete ✅"
 echo "[3/9] Setting up Forgejo..."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-# Create directories safely
+# Ensure clean directories
 mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}} || {{ echo "Failed to create Forgejo directories"; exit 1; }}
 cd "$FORGEJO_DIR" || {{ echo "Cannot cd to $FORGEJO_DIR"; exit 1; }}
+
+# Remove any previous container
+if docker ps -a --format '{{.Names}}' | grep -q "^forgejo\$"; then
+    echo "Removing existing Forgejo container..."
+    docker rm -f forgejo || true
+fi
 
 # Write Docker Compose file safely
 cat > docker-compose.yml <<EOF
@@ -251,16 +257,25 @@ services:
       retries: 12
 EOF
 
-# Start Forgejo container
+# Retry loop for starting container
 echo "Starting Forgejo container..."
-if command -v docker-compose >/dev/null 2>&1; then
-    docker-compose up -d || {{ notify_webhook "failed" "compose_failed" "docker-compose up failed"; exit 1; }}
-elif docker compose version >/dev/null 2>&1; then
-    docker compose up -d || {{ notify_webhook "failed" "compose_failed" "docker compose up failed"; exit 1; }}
-else
-    notify_webhook "failed" "compose_failed" "Docker Compose not available"
-    exit 1
-fi
+for i in {{1..3}}; do
+    if command -v docker-compose >/dev/null 2>&1; then
+        docker-compose up -d && break
+    elif docker compose version >/dev/null 2>&1; then
+        docker compose up -d && break
+    else
+        notify_webhook "failed" "compose_failed" "Docker Compose not available"
+        exit 1
+    fi
+    echo "docker compose up failed (attempt $i/3), retrying in 5s..."
+    sleep 5
+    if [ $i -eq 3 ]; then
+        notify_webhook "failed" "compose_failed" "docker compose up failed after 3 attempts"
+        docker logs forgejo --tail 50 || true
+        exit 1
+    fi
+done
 
 # Wait for container to exist
 echo "Waiting for Forgejo container to be created..."
@@ -283,7 +298,7 @@ for i in {{1..60}}; do
     sleep 2
 done
 
-# If not healthy after waiting
+# Check final health
 STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
 if [ "$STATUS" != "healthy" ]; then
     echo "❌ Forgejo container failed to become healthy"
