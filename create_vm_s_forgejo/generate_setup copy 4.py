@@ -69,7 +69,7 @@ PORT="{PORT}"
 FORGEJO_DIR="{forgejo_dir}"
 DNS_HOOK_SCRIPT="{DNS_HOOK_SCRIPT}"
 WEBHOOK_URL="{WEBHOOK_URL}"
-LFS_JWT_SECRET=$(openssl rand -hex 32)
+LFS_JWT_SECRET=$(openssl rand -hex 32) || {{ notify_webhook "failed" "failed" "Failed to generate LFS secret"; exit 1; }}
 
 notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
 
@@ -113,6 +113,7 @@ echo "[3/9] Setting up Forgejo..."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
 mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
+chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config
 cd "$FORGEJO_DIR"
 
 # Docker Compose for Forgejo
@@ -142,7 +143,7 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 10s
       timeout: 5s
-      retries: 12
+      retries: 30
 EOF
 
 # Ensure Docker socket is usable
