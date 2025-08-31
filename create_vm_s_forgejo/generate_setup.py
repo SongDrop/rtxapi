@@ -123,12 +123,12 @@ chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config "$FORGEJO_DIR"/data
 
 cd "$FORGEJO_DIR" || {{"notify_webhook \"failed\" \"cd_failed\" \"Cannot cd into $FORGEJO_DIR\"; exit 1"}}
 
-# Docker Compose for Forgejo
+# Docker Compose for Forgejo from forgejo
 cat > docker-compose.yml <<EOF
 version: "3.8"
 services:
   server:
-    image: codeberg.org/forgejo/forgejo:latest
+    image: forgejo/forgejo:latest
     container_name: forgejo
     restart: unless-stopped
     environment:
