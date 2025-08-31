@@ -110,15 +110,14 @@ fi
 notify_webhook "provisioning" "docker_setup_complete" "Docker installed successfully"
 
 # ---------------- FORGEJO SETUP ----------------
+# ---------------- FORGEJO SETUP ----------------
+echo "[3/9] Setting up Forgejo..."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}} || exit 1
-cd "$FORGEJO_DIR" || exit 1
+mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
+cd "$FORGEJO_DIR"
 
-if docker ps -a --format '{{.Names}}' | grep -q "^forgejo\$"; then
-    docker rm -f forgejo || true
-fi
-
+# Docker Compose for Forgejo
 cat > docker-compose.yml <<EOF
 version: "3.8"
 services:
@@ -146,28 +145,46 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-    # Install Git LFS inside the container at startup
-    command: >
-      /bin/sh -c "
-        curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash &&
-        apt-get update &&
-        apt-get install -y git-lfs &&
-        git lfs install &&
-        /usr/bin/forgejo web
-      "
 EOF
 
-for i in {{1..3}}; do
-    if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d && break
-    elif docker compose version >/dev/null 2>&1; then docker compose up -d && break
-    else notify_webhook "failed" "compose_failed" "Docker Compose not available"; exit 1; fi
-    sleep 5
-    if [ $i -eq 3 ]; then
-        docker logs forgejo --tail 50 || true
-        notify_webhook "failed" "compose_failed" "docker compose up failed after 3 attempts"
+# Ensure Docker socket is usable
+if ! docker ps >/dev/null 2>&1; then
+    echo "⚠️ Docker socket not accessible. Trying to fix permissions..."
+    sudo chmod 666 /var/run/docker.sock || true
+fi
+
+# Start Forgejo with retries
+attempt=1
+max_attempts=3
+while [ $attempt -le $max_attempts ]; do
+    echo "Starting Forgejo (attempt $attempt/$max_attempts)..."
+    if command -v docker-compose >/dev/null 2>&1; then
+        docker-compose up -d && break
+    elif docker compose version >/dev/null 2>&1; then
+        docker compose up -d && break
+    else
+        notify_webhook "failed" "compose_failed" "Docker Compose not available"
         exit 1
     fi
+    attempt=$((attempt+1))
+    sleep 5
 done
+
+if [ $attempt -gt $max_attempts ]; then
+    notify_webhook "failed" "forgejo_start_failed" "Forgejo failed to start after $max_attempts attempts"
+    exit 1
+fi
+
+# Wait for Forgejo container to become healthy
+for i in {{1..60}}; do
+    STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
+    if [ "$STATUS" = "healthy" ]; then
+        echo "✅ Forgejo is healthy"
+        break
+    fi
+    sleep 2
+done
+
 
 
 # ---------------- NETWORK SECURITY ----------------
