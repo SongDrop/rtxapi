@@ -10,7 +10,8 @@ def generate_setup(
     resource_group=""
 ):
     # ========== CONFIGURABLE URLs ==========
-    docker_compose_url = "https://github.com/docker/compose/releases/download/v2.38.1/docker-compose-linux-x86_64"
+    docker_gpg_url = "https://download.docker.com/linux/ubuntu/gpg"
+    docker_repo = "https://download.docker.com/linux/ubuntu"
     buildx_url = "https://github.com/docker/buildx/releases/download/v0.11.2/buildx-v0.11.2.linux-amd64"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
@@ -127,7 +128,7 @@ for i in {{1..5}}; do
     if DEBIAN_FRONTEND=noninteractive apt-get install -y \
         curl git nginx certbot \
         python3-pip python3-venv jq make net-tools \
-        python3-certbot-nginx git git-lfs openssl ufw; then
+        python3-certbot-nginx git git-lfs openssl ufw ca-certificates lsb-release gnupg; then
         break
     fi
     sleep 10
@@ -138,19 +139,23 @@ for i in {{1..5}}; do
 done
 
 # ========== DOCKER SETUP ==========
-echo "[2/9] Configuring Docker..."
+echo "[2/9] Installing Docker (official repo)..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
 
-for i in {{1..5}}; do
-    if apt-get install -y docker.io docker-compose-plugin; then
-        break
-    fi
-    sleep 10
-    if [ $i -eq 5 ]; then
-        notify_webhook "failed" "docker_setup" "Failed to install Docker"
-        exit 1
-    fi
-done
+# Remove old versions
+apt-get remove -y docker docker-engine docker.io containerd runc || true
+
+# Add Docker’s official GPG key
+mkdir -p /etc/apt/keyrings
+curl -fsSL {docker_gpg_url} | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+# Add Docker repository
+ARCH=$(dpkg --print-architecture)
+CODENAME=$(lsb_release -cs)
+echo \"deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] {docker_repo} $CODENAME stable\" > /etc/apt/sources.list.d/docker.list
+
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 CURRENT_USER=$(whoami)
 if [ "$CURRENT_USER" != "root" ]; then
@@ -191,13 +196,6 @@ if [ $timeout -eq 0 ]; then
     notify_webhook "failed" "docker_failed" "Docker startup timeout"
     exit 1
 fi
-
-mkdir -p /usr/lib/docker/cli-plugins
-curl -fSL "{docker_compose_url}" -o /usr/lib/docker/cli-plugins/docker-compose
-chmod +x /usr/lib/docker/cli-plugins/docker-compose
-
-curl -fSL "{buildx_url}" -o /usr/lib/docker/cli-plugins/docker-buildx
-chmod +x /usr/lib/docker/cli-plugins/docker-buildx
 
 echo "Verifying Docker installation..."
 docker --version || (echo "ERROR: Docker not working" && exit 1)
