@@ -123,28 +123,27 @@ chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config "$FORGEJO_DIR"/data
 
 cd "$FORGEJO_DIR" || {{"notify_webhook \"failed\" \"cd_failed\" \"Cannot cd into $FORGEJO_DIR\"; exit 1"}}
 
-# Docker Compose for Forgejo from forgejo
+# Docker Compose for Forgejo from codeberg.org
 cat > docker-compose.yml <<EOF
-version: "3.8"
 services:
-  server:
+  forgejo:
     image: codeberg.org/forgejo/forgejo:12.0.1
     container_name: forgejo
     restart: unless-stopped
     environment:
-      - FORGEJO__server__DOMAIN=$DOMAIN_NAME
-      - FORGEJO__server__ROOT_URL=https://$DOMAIN_NAME
-      - FORGEJO__server__HTTP_PORT=3000
-      - FORGEJO__server__LFS_START_SERVER=true
-      - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
-      - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
-      - FORGEJO__server__LFS_MAX_FILE_SIZE={LFS_MAX_FILE_SIZE_IN_BYTES}
+      FORGEJO__server__DOMAIN: "$DOMAIN_NAME"
+      FORGEJO__server__ROOT_URL: "https://$DOMAIN_NAME"
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__LFS_START_SERVER: "true"
+      FORGEJO__server__LFS_CONTENT_PATH: "/data/gitea/lfs"
+      FORGEJO__server__LFS_JWT_SECRET: "$LFS_JWT_SECRET"
+      FORGEJO__server__LFS_MAX_FILE_SIZE: ${LFS_MAX_FILE_SIZE_IN_BYTES}
     volumes:
       - ./data:/data
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "{PORT}:3000"
+      - "$PORT:3000"
       - "222:22"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
@@ -152,6 +151,7 @@ services:
       timeout: 10s
       retries: 40
 EOF
+
 
 notify_webhook "provisioning" "docker_compose_created" "docker-compose.yml created"
 
