@@ -132,7 +132,7 @@ services:
       - FORGEJO__server__HTTP_PORT=3000
       - FORGEJO__server__LFS_START_SERVER=true
       - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
-      - FORGEJO__server__LFS_JWT_SECRET=${LFS_JWT_SECRET}
+      - FORGEJO__server__LFS_JWT_SECRET=${{LFS_JWT_SECRET}}
       - FORGEJO__server__LFS_MAX_FILE_SIZE=${LFS_MAX_FILE_SIZE_IN_BYTES}
     volumes:
       - ./data:/data
