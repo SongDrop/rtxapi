@@ -110,7 +110,7 @@ fi
 notify_webhook "provisioning" "docker_setup_complete" "Docker installed successfully"
 
 # ---------------- FORGEJO SETUP ----------------
-echo "[3/9] Setting up Forgejo..."
+echo "[3/9] Setting up Forgejo...."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
 # Create directories
