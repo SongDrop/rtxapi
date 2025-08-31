@@ -150,7 +150,7 @@ echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.d
 apt-get update
 
 # Install Docker packages with retries
-for i in {1..5}; do
+for i in {{1..5}}; do
     if apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
         break
     fi
@@ -170,7 +170,7 @@ fi
 
 # Start Docker service with retries
 echo "Starting Docker service..."
-for i in {1..10}; do
+for i in {{1..10}}; do
     if systemctl enable docker && systemctl start docker; then
         echo "Docker started via systemctl"
         break
