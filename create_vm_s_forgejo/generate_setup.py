@@ -27,11 +27,7 @@ notify_webhook() {{
   local status=$1
   local step=$2
   local message=$3
-
-  if [ -z "${{WEBHOOK_URL}}" ]; then
-    return 0
-  fi
-
+  if [ -z "${{WEBHOOK_URL}}" ]; then return 0; fi
   JSON_PAYLOAD=$(cat <<EOF
 {{
   "vm_name": "$(hostname)",
@@ -46,19 +42,7 @@ notify_webhook() {{
 }}
 EOF
   )
-
-  curl -s -X POST \
-    "${{WEBHOOK_URL}}" \
-    -H "Content-Type: application/json" \
-    -d "$JSON_PAYLOAD" \
-    --connect-timeout 10 \
-    --max-time 30 \
-    --retry 2 \
-    --retry-delay 5 \
-    --output /dev/null \
-    --write-out "Webhook result: %{{http_code}}"
-
-  return $?
+  curl -s -X POST "${{WEBHOOK_URL}}" -H "Content-Type: application/json" -d "$JSON_PAYLOAD" --connect-timeout 10 --max-time 30 --retry 2 --retry-delay 5 --output /dev/null
 }}
 '''
     else:
@@ -68,6 +52,7 @@ notify_webhook() {
 }
 '''
 
+    # ========== Full Bash Script Template ==========
     script_template = f"""#!/bin/bash
 
 set -e
@@ -91,6 +76,7 @@ echo "============================================"
 
 trap 'notify_webhook "failed" "unexpected_error" "Script exited on line ${{LINENO}} with code ${{?}}."' ERR
 
+# Validate domain
 if ! [[ "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
     echo "ERROR: Invalid domain format"
     notify_webhook "failed" "validation" "Invalid domain format"
@@ -106,29 +92,13 @@ DNS_HOOK_SCRIPT="{DNS_HOOK_SCRIPT}"
 WEBHOOK_URL="{WEBHOOK_URL}"
 
 LFS_JWT_SECRET=$(openssl rand -hex 32)
-
 notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
 
 # ========== SYSTEM SETUP ==========
-echo "[1/9] System updates and dependencies..."
-notify_webhook "provisioning" "system_update" "Running apt-get update & install"
-
+echo "[1/9] Updating system and installing dependencies..."
 for i in {{1..5}}; do
-    if apt-get update; then
-        break
-    fi
-    sleep 10
-    if [ $i -eq 5 ]; then
-        notify_webhook "failed" "system_update" "Failed to update package lists"
-        exit 1
-    fi
-done
-
-for i in {{1..5}}; do
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        curl git nginx certbot \
-        python3-pip python3-venv jq make net-tools \
-        python3-certbot-nginx git git-lfs openssl ufw ca-certificates lsb-release gnupg; then
+    if apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \\
+        curl git nginx certbot python3-pip python3-venv jq make net-tools python3-certbot-nginx git-lfs openssl ufw ca-certificates lsb-release gnupg; then
         break
     fi
     sleep 10
@@ -139,84 +109,37 @@ for i in {{1..5}}; do
 done
 
 # ========== DOCKER SETUP ==========
-echo "[2/9] Installing Docker (official repo)..."
-notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
-
-# Remove old versions
+echo "[2/9] Installing Docker from official repo..."
 apt-get remove -y docker docker-engine docker.io containerd runc || true
-
-# Add Docker’s official GPG key
 mkdir -p /etc/apt/keyrings
 curl -fsSL {docker_gpg_url} | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-
-# Add Docker repository
 ARCH=$(dpkg --print-architecture)
 CODENAME=$(lsb_release -cs)
-echo \"deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] {docker_repo} $CODENAME stable\" > /etc/apt/sources.list.d/docker.list
-
+echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] {docker_repo} $CODENAME stable" > /etc/apt/sources.list.d/docker.list
 apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 CURRENT_USER=$(whoami)
-if [ "$CURRENT_USER" != "root" ]; then
-    usermod -aG docker "$CURRENT_USER" || true
-fi
+if [ "$CURRENT_USER" != "root" ]; then usermod -aG docker "$CURRENT_USER" || true; fi
 
-echo "Starting Docker service..."
-for i in {{1..10}}; do
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl enable docker
-        if systemctl start docker; then
-            break
-        fi
-    elif command -v service >/dev/null 2>&1; then
-        if service docker start; then
-            break
-        fi
-    else
-        nohup dockerd > /var/log/dockerd.log 2>&1 &
-    fi
-    if [ $i -eq 10 ]; then
-        notify_webhook "failed" "docker_start" "Failed to start Docker"
-        exit 1
-    fi
-    sleep 5
-done
-
+systemctl enable docker
+systemctl start docker
 timeout=120
 while [ $timeout -gt 0 ]; do
-    if docker info >/dev/null 2>&1; then
-        break
-    fi
+    if docker info >/dev/null 2>&1; then break; fi
     sleep 5
-    timeout=$((timeout - 5))
+    timeout=$((timeout-5))
 done
+if [ $timeout -eq 0 ]; then notify_webhook "failed" "docker_failed" "Docker did not start"; exit 1; fi
 
-if [ $timeout -eq 0 ]; then
-    notify_webhook "failed" "docker_failed" "Docker startup timeout"
-    exit 1
-fi
-
-echo "Verifying Docker installation..."
-docker --version || (echo "ERROR: Docker not working" && exit 1)
-
-if command -v docker-compose >/dev/null 2>&1; then
-    docker-compose --version || (echo "ERROR: docker-compose v1 not working" && exit 1)
-elif docker compose version >/dev/null 2>&1; then
-    docker compose version || (echo "ERROR: docker compose v2 not working" && exit 1)
-else
-    echo "ERROR: Neither docker-compose nor docker compose found"
-    exit 1
-fi
-
-docker buildx version || (echo "ERROR: Docker Buildx not working" && exit 1)
+docker --version
+if command -v docker-compose >/dev/null 2>&1; then docker-compose --version; else docker compose version; fi
+docker buildx version
 
 # ========== FORGEJO SETUP ==========
-echo "[3/9] Setting up Forgejo..."
-notify_webhook "provisioning" "forgejo_setup" "Configuring Forgejo"
-
+echo "[3/9] Setting up Forgejo directories and Docker Compose..."
 mkdir -p "$FORGEJO_DIR"
-cat > "$FORGEJO_DIR/docker-compose.yml" <<EOL
+cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF
 version: '3'
 services:
   db:
@@ -244,89 +167,68 @@ services:
       DB_NAME: forgejo
       DB_USER: forgejo
       DB_PASSWD: forgejopassword
-      LFS_JWT_SECRET: ${{LFS_JWT_SECRET}}
-      MAX_UPLOAD_FILE_SIZE: {MAX_UPLOAD_FILE_SIZE_IN_MB}
-      LFS_MAX_FILE_SIZE: {LFS_MAX_FILE_SIZE_IN_BYTES}
+      LFS_JWT_SECRET: $LFS_JWT_SECRET
     volumes:
       - forgejo-data:/data
 
 volumes:
   db-data:
   forgejo-data:
-EOL
+EOF
 
 cd "$FORGEJO_DIR"
 docker compose up -d
 
-# ========== NGINX CONFIGURATION ==========
+# ========== NGINX ==========
 echo "[4/9] Configuring Nginx..."
-notify_webhook "provisioning" "nginx_setup" "Setting up reverse proxy"
-
-cat > /etc/nginx/sites-available/forgejo <<EOL
-server {{
+cat > /etc/nginx/sites-available/forgejo <<EOF
+server {
     listen 80;
-    server_name ${{DOMAIN_NAME}};
+    server_name $DOMAIN_NAME;
 
-    location / {{
-        proxy_pass http://127.0.0.1:${{PORT}};
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }}
-}}
-EOL
-
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
 ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
 nginx -t && systemctl reload nginx
 
-# ========== SSL CONFIGURATION ==========
+# ========== SSL ==========
 echo "[5/9] Obtaining SSL certificates..."
-notify_webhook "provisioning" "ssl_setup" "Requesting Let's Encrypt cert"
-
 mkdir -p /etc/letsencrypt
 curl -o /etc/letsencrypt/options-ssl-nginx.conf {letsencrypt_options_url}
 curl -o /etc/letsencrypt/ssl-dhparams.pem {ssl_dhparams_url}
-
 certbot --nginx --non-interactive --agree-tos -m "$ADMIN_EMAIL" -d "$DOMAIN_NAME"
 
 # ========== FIREWALL ==========
 echo "[6/9] Configuring firewall..."
-notify_webhook "provisioning" "firewall_setup" "Configuring ufw"
-
 ufw allow OpenSSH
 ufw allow 'Nginx Full'
 echo "y" | ufw enable || true
 
 # ========== VERIFY ==========
 echo "[7/9] Verifying deployment..."
-notify_webhook "provisioning" "verification" "Checking service status"
-
 sleep 20
-if ! curl -fs "https://${{DOMAIN_NAME}}/" >/dev/null; then
-    notify_webhook "failed" "verification" "Forgejo not reachable"
-    exit 1
-fi
+curl -fs "https://$DOMAIN_NAME/" || notify_webhook "failed" "verification" "Forgejo not reachable"
 
 # ========== ADMIN USER ==========
 echo "[8/9] Creating admin user..."
-notify_webhook "provisioning" "admin_setup" "Creating admin account"
-
-for i in {{1..10}}; do
-    docker compose exec -T forgejo bash -c "gitea admin user create --username admin --password '${{ADMIN_PASSWORD}}' --email '${{ADMIN_EMAIL}}' --admin || true"
-    if [ $? -eq 0 ]; then
-        break
-    fi
+for i in {1..10}; do
+    docker compose exec -T forgejo bash -c "gitea admin user create --username admin --password '$ADMIN_PASSWORD' --email '$ADMIN_EMAIL' --admin || true"
+    if [ $? -eq 0 ]; then break; fi
     sleep 10
 done
 
-# ========== DONE ==========
-echo "[9/9] Setup complete!"
+# ========== COMPLETION ==========
+echo "[9/9] Forgejo setup complete!"
 notify_webhook "succeeded" "completed" "Forgejo installation finished"
-
-echo "Forgejo is ready at: https://${{DOMAIN_NAME}}"
-echo "Admin user: admin / ${{ADMIN_PASSWORD}}"
-
-echo "Installation log saved to: $LOG_FILE"
+echo "Forgejo is ready at: https://$DOMAIN_NAME"
+echo "Admin user: admin / $ADMIN_PASSWORD"
+echo "Installation log: $LOG_FILE"
 """
     return script_template
