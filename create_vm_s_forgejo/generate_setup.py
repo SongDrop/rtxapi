@@ -216,33 +216,33 @@ echo "Docker setup complete ✅"
 echo "[3/9] Setting up Forgejo..."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-mkdir -p "$FORGEJO_DIR"/data
-mkdir -p "$FORGEJO_DIR"/config
-mkdir -p "$FORGEJO_DIR"/ssl
-cd "$FORGEJO_DIR"
+# Create directories safely
+mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}} || {{ echo "Failed to create Forgejo directories"; exit 1; }}
+cd "$FORGEJO_DIR" || {{ echo "Cannot cd to $FORGEJO_DIR"; exit 1; }}
 
-# Docker Compose for Forgejo
+# Write Docker Compose file safely
 cat > docker-compose.yml <<EOF
 version: "3.8"
+
 services:
   server:
     image: codeberg.org/forgejo/forgejo:latest
     container_name: forgejo
     restart: unless-stopped
     environment:
-      - FORGEJO__server__DOMAIN={DOMAIN_NAME}
-      - FORGEJO__server__ROOT_URL=https://{DOMAIN_NAME}
+      - FORGEJO__server__DOMAIN=${DOMAIN_NAME}
+      - FORGEJO__server__ROOT_URL=https://${DOMAIN_NAME}
       - FORGEJO__server__HTTP_PORT=3000
       - FORGEJO__server__LFS_START_SERVER=true
       - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
-      - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
-      - FORGEJO__server__LFS_MAX_FILE_SIZE={LFS_MAX_FILE_SIZE_IN_BYTES}
+      - FORGEJO__server__LFS_JWT_SECRET=${{LFS_JWT_SECRET}}
+      - FORGEJO__server__LFS_MAX_FILE_SIZE=${LFS_MAX_FILE_SIZE_IN_BYTES}
     volumes:
       - ./data:/data
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "{PORT}:3000"
+      - "${PORT}:3000"
       - "222:22"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
@@ -251,22 +251,47 @@ services:
       retries: 12
 EOF
 
-# Start Forgejo
+# Start Forgejo container
+echo "Starting Forgejo container..."
 if command -v docker-compose >/dev/null 2>&1; then
-    docker-compose up -d
+    docker-compose up -d || {{ notify_webhook "failed" "compose_failed" "docker-compose up failed"; exit 1; }}
 elif docker compose version >/dev/null 2>&1; then
-    docker compose up -d
+    docker compose up -d || {{ notify_webhook "failed" "compose_failed" "docker compose up failed"; exit 1; }}
 else
     notify_webhook "failed" "compose_failed" "Docker Compose not available"
     exit 1
 fi
 
-# Wait for container healthy
-for i in {{1..60}}; do
-    STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
-    if [ "$STATUS" = "healthy" ]; then break; fi
+# Wait for container to exist
+echo "Waiting for Forgejo container to be created..."
+for i in {{1..30}}; do
+    if docker ps -a --format '{{.Names}}' | grep -q "^forgejo\$"; then
+        echo "Forgejo container exists"
+        break
+    fi
     sleep 2
 done
+
+# Wait for container health
+echo "Waiting for Forgejo container to become healthy..."
+for i in {{1..60}}; do
+    STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
+    if [ "$STATUS" = "healthy" ]; then
+        echo "✅ Forgejo container is healthy"
+        break
+    fi
+    sleep 2
+done
+
+# If not healthy after waiting
+STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
+if [ "$STATUS" != "healthy" ]; then
+    echo "❌ Forgejo container failed to become healthy"
+    docker logs forgejo --tail 50
+    notify_webhook "failed" "forgejo_health" "Forgejo container not healthy after 2 minutes"
+    exit 1
+fi
+
 
 # ---------------- NETWORK SECURITY ----------------
 echo "[4/9] Configuring firewall..."
