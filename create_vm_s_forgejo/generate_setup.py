@@ -112,7 +112,7 @@ notify_webhook "provisioning" "docker_setup_complete" "Docker installed successf
 # ---------------- FORGEJO SETUP ----------------
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-mkdir -p "$FORGEJO_DIR"/{data,config,ssl} || exit 1
+mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}} || exit 1
 cd "$FORGEJO_DIR" || exit 1
 
 if docker ps -a --format '{{.Names}}' | grep -q "^forgejo\$"; then
@@ -157,7 +157,7 @@ services:
       "
 EOF
 
-for i in {1..3}; do
+for i in {{1..3}}; do
     if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d && break
     elif docker compose version >/dev/null 2>&1; then docker compose up -d && break
     else notify_webhook "failed" "compose_failed" "Docker Compose not available"; exit 1; fi
