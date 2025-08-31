@@ -144,7 +144,7 @@ services:
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "{PORT}:3000"
+      - "3000:3000"
       - "222:22"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
@@ -154,6 +154,8 @@ services:
 EOF
 
 notify_webhook "provisioning" "docker_compose_created" "docker-compose.yml created"
+
+docker-compose up -d
 
 # ---------------- NETWORK SECURITY ----------------
 notify_webhook "provisioning" "firewall_setup" "Configuring firewall"
@@ -185,7 +187,13 @@ fi
 
 # ---------------- NGINX ----------------
 notify_webhook "provisioning" "nginx_setup" "Configuring Nginx"
+
+# Remove default sites and configs
 rm -f /etc/nginx/sites-enabled/default
+rm -f /etc/nginx/sites-available/default
+rm -f /etc/nginx/conf.d/*.conf
+
+# Forgejo Nginx site
 cat > /etc/nginx/sites-available/forgejo <<EOF
 server {{
     listen 80;
@@ -201,7 +209,7 @@ server {{
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
     client_max_body_size {MAX_UPLOAD_FILE_SIZE_IN_MB}M;
     location / {{
-        proxy_pass http://localhost:{PORT};
+        proxy_pass http://localhost:3000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -217,11 +225,10 @@ server {{
 EOF
 
 ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
-nginx -t && systemctl restart nginx
+nginx -t && systemctl reload nginx
 
 # ---------------- FINAL CONFIG ----------------
-sleep 30
-docker exec forgejo forgejo admin user create --username admin --password "{ADMIN_PASSWORD}" --email "{ADMIN_EMAIL}" --admin || true
+sleep 5
 notify_webhook "completed" "finished" "Forgejo deployment succeeded"
 """
     return script_template
