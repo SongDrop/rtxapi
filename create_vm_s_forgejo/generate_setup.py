@@ -128,64 +128,97 @@ for i in {{1..5}}; do
     sleep 10
 done
 
-# ---------------- DOCKER SETUP ----------------
-echo "[2/9] Configuring Docker..."
+# ========== DOCKER SETUP ==========
+echo "[2/9] Installing and starting Docker..."
 notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
 
-for i in {{1..5}}; do
-    if apt-get install -y docker.io; then break; fi
-    echo "Docker install failed (attempt $i/5)"
-    sleep 10
-done
+# Remove old versions if any
+apt-get remove -y docker docker-engine docker.io containerd runc || true
 
-CURRENT_USER=$(whoami)
-if [ "$CURRENT_USER" != "root" ]; then usermod -aG docker "$CURRENT_USER" || true; fi
+# Install dependencies for Docker repo
+apt-get update
+apt-get install -y ca-certificates curl gnupg lsb-release
 
-echo "Starting Docker service..."
-for i in {{1..10}}; do
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl enable docker
-        if systemctl start docker; then break; fi
-    elif command -v service >/dev/null 2>&1; then
-        if service docker start; then break; fi
-    else
-        nohup dockerd > /var/log/dockerd.log 2>&1 &
+# Add Docker’s official GPG key and repository
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+ARCH=$(dpkg --print-architecture)
+CODENAME=$(lsb_release -cs)
+echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" \
+    > /etc/apt/sources.list.d/docker.list
+
+apt-get update
+
+# Install Docker packages with retries
+for i in {1..5}; do
+    if apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+        break
     fi
-    sleep 5
+    echo "Docker package installation failed (attempt $i/5), retrying in 10s..."
+    sleep 10
+    if [ $i -eq 5 ]; then
+        notify_webhook "failed" "docker_setup" "Failed to install Docker packages"
+        exit 1
+    fi
 done
 
-timeout=120
+# Add current user to docker group if not root
+CURRENT_USER=$(whoami)
+if [ "$CURRENT_USER" != "root" ]; then
+    usermod -aG docker "$CURRENT_USER" || true
+fi
+
+# Start Docker service with retries
+echo "Starting Docker service..."
+for i in {1..10}; do
+    if systemctl enable docker && systemctl start docker; then
+        echo "Docker started via systemctl"
+        break
+    fi
+    echo "Docker service failed to start (attempt $i/10), retrying in 5s..."
+    sleep 5
+    if [ $i -eq 10 ]; then
+        echo "Docker failed to start after 10 attempts. Last 50 lines of journalctl:"
+        journalctl -u docker -n 50 --no-pager
+        notify_webhook "failed" "docker_start" "Docker service failed to start"
+        exit 1
+    fi
+done
+
+# Wait for Docker to respond
+echo "Waiting for Docker daemon to be ready..."
+timeout=180  # 3 minutes
 while [ $timeout -gt 0 ]; do
-    if docker info >/dev/null 2>&1; then break; fi
+    if docker info >/dev/null 2>&1; then
+        echo "Docker daemon is ready"
+        break
+    fi
     sleep 5
     timeout=$((timeout - 5))
 done
+
 if [ $timeout -eq 0 ]; then
-    notify_webhook "failed" "docker_failed" "Docker startup timeout"
+    echo "Docker did not become ready within 3 minutes"
+    journalctl -u docker -n 50 --no-pager
+    notify_webhook "failed" "docker_failed" "Docker daemon startup timeout"
     exit 1
 fi
 
-# Docker Compose & Buildx
-echo "Installing Docker Compose..."
-mkdir -p /usr/local/lib/docker/cli-plugins
-curl -fsSL "{docker_compose_url}" -o /usr/local/lib/docker/cli-plugins/docker-compose
-chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose
+# Verify Docker CLI tools
+docker --version || (echo "ERROR: Docker CLI not working" && exit 1)
+docker compose version || (echo "ERROR: Docker Compose not working" && exit 1)
+docker buildx version || (echo "ERROR: Docker Buildx not working" && exit 1)
 
-echo "Installing Docker Buildx..."
-curl -fsSL "{buildx_url}" -o /usr/local/lib/docker/cli-plugins/docker-buildx
-chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
-ln -sf /usr/local/lib/docker/cli-plugins/docker-buildx /usr/bin/docker-buildx
-
-docker --version
-docker-compose --version
-docker buildx version
+notify_webhook "provisioning" "docker_setup_complete" "Docker & CLI plugins installed successfully"
+echo "Docker setup complete ✅"
 
 # ---------------- FORGEJO SETUP ----------------
 echo "[3/9] Setting up Forgejo..."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
+mkdir -p "$FORGEJO_DIR"/data
+mkdir -p "$FORGEJO_DIR"/config
+mkdir -p "$FORGEJO_DIR"/ssl
 cd "$FORGEJO_DIR"
 
 # Docker Compose for Forgejo
