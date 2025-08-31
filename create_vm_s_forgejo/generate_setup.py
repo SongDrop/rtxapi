@@ -169,8 +169,19 @@ mkdir -p /etc/letsencrypt
 curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
 curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
 
-# Use Certbot Nginx plugin instead of standalone
-certbot --nginx --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" -n
+if [ -f "$DNS_HOOK_SCRIPT" ]; then
+    chmod +x "$DNS_HOOK_SCRIPT"
+    certbot certonly --manual --preferred-challenges=dns \
+        --manual-auth-hook "$DNS_HOOK_SCRIPT add" \
+        --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" \
+        --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" \
+        --non-interactive --manual-public-ip-logging-ok
+else
+    systemctl stop nginx || true
+    certbot certonly --standalone --preferred-challenges http \
+        --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" --non-interactive
+    systemctl start nginx || true
+fi
 
 # ---------------- NGINX ----------------
 notify_webhook "provisioning" "nginx_setup" "Configuring Nginx"
