@@ -128,7 +128,7 @@ cat > docker-compose.yml <<EOF
 version: "3.8"
 services:
   server:
-    image: forgejo/forgejo:latest
+    image: codeberg.org/forgejo/forgejo:12.0.1
     container_name: forgejo
     restart: unless-stopped
     environment:
