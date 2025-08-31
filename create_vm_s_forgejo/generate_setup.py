@@ -20,11 +20,11 @@ def generate_setup(
     if WEBHOOK_URL:
         webhook_notification = f'''
 notify_webhook() {{
-  local status=$1
-  local step=$2
-  local message=$3
-  if [ -z "${{WEBHOOK_URL}}" ]; then return 0; fi
-  JSON_PAYLOAD=$(cat <<EOF
+    local status=$1
+    local step=$2
+    local message=$3
+    if [ -z "${{WEBHOOK_URL}}" ]; then return 0; fi
+    JSON_PAYLOAD=$(cat <<EOF
 {{
   "vm_name": "$(hostname)",
   "status": "$status",
@@ -37,8 +37,8 @@ notify_webhook() {{
   }}
 }}
 EOF
-  )
-  curl -s -X POST "${{WEBHOOK_URL}}" -H "Content-Type: application/json" -d "$JSON_PAYLOAD" --connect-timeout 10 --max-time 30 --retry 2 --retry-delay 5 --output /dev/null
+    )
+    curl -s -X POST "${{WEBHOOK_URL}}" -H "Content-Type: application/json" -d "$JSON_PAYLOAD" --connect-timeout 10 --max-time 30 --retry 2 --retry-delay 5 --output /dev/null
 }}
 '''
     else:
@@ -90,10 +90,13 @@ ARCH=$(dpkg --print-architecture)
 CODENAME=$(lsb_release -cs)
 echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list
 apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 CURRENT_USER=$(whoami)
-if [ "$CURRENT_USER" != "root" ]; then usermod -aG docker "$CURRENT_USER" || true; fi
+if [ "$CURRENT_USER" != "root" ]; then
+    usermod -aG docker "$CURRENT_USER" || true
+fi
+
 systemctl enable docker && systemctl start docker
 
 timeout=180
@@ -113,12 +116,10 @@ notify_webhook "provisioning" "docker_setup_complete" "Docker installed successf
 echo "[3/9] Setting up Forgejo...."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-# Create directories
 mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}} || \
     notify_webhook "failed" "directories_creation" "Failed to create Forgejo directories" && exit 1
 notify_webhook "provisioning" "directories_created" "Forgejo directories created"
 
-# Set ownership
 chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config || \
     notify_webhook "failed" "permissions" "Failed to set directory ownership" && exit 1
 notify_webhook "provisioning" "ownership_set_data_config" "Ownership set for data and config"
@@ -162,64 +163,6 @@ services:
 EOF
 
 notify_webhook "provisioning" "docker_compose_created" "docker-compose.yml created"
-docker_compose_content=$(cat docker-compose.yml)
-notify_webhook "provisioning" "docker_compose_content" "$docker_compose_content"
-
-# Ensure Docker socket is usable
-if ! docker ps >/dev/null 2>&1; then
-    notify_webhook "failed" "docker_error" "Docker socket not accessible. Trying to fix permissions..."
-    chmod 666 /var/run/docker.sock || true
-fi
-notify_webhook "provisioning" "docker_socket_checked" "$(ls -l /var/run/docker.sock)"
-
-# Check port availability
-if lsof -i:"$PORT" >/dev/null; then
-    notify_webhook "failed" "port_error" "Port $PORT is already in use. Exiting..."
-    exit 1
-fi
-notify_webhook "provisioning" "port_free" "Port $PORT is available"
-
-# Start Forgejo with retries
-attempt=1
-max_attempts=3
-while [ $attempt -le $max_attempts ]; do
-    notify_webhook "provisioning" "starting_forgejo" "Starting Forgejo (attempt $attempt/$max_attempts)..."
-    if command -v docker-compose >/dev/null 2>&1; then
-        docker-compose up -d && break
-    elif docker compose version >/dev/null 2>&1; then
-        docker compose up -d && break
-    else
-        notify_webhook "failed" "compose_failed" "Docker Compose not available"
-        exit 1
-    fi
-    attempt=$((attempt+1))
-    sleep 5
-done
-
-if [ $attempt -gt $max_attempts ]; then
-    LOGS=$(docker logs forgejo 2>&1 || echo "No logs available")
-    notify_webhook "failed" "forgejo_start_failed" "Forgejo failed to start after $max_attempts attempts. Logs: $LOGS"
-    exit 1
-fi
-notify_webhook "provisioning" "forgejo_started" "Forgejo container started"
-
-# Wait for Forgejo container to become healthy
-for i in {{1..90}}; do
-    STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
-    notify_webhook "provisioning" "container_health_check" "Current container status: $STATUS"
-    if [ "$STATUS" = "healthy" ]; then
-        notify_webhook "provisioning" "forgejo_healthy" "✅ Forgejo is healthy"
-        break
-    fi
-    sleep 2
-done
-
-if [ "$STATUS" != "healthy" ]; then
-    LOGS=$(docker logs forgejo 2>&1 || echo "No logs available")
-    notify_webhook "failed" "forgejo_unhealthy" "Forgejo container never became healthy. Logs: $LOGS"
-    exit 1
-fi
-notify_webhook "provisioning" "forgejo_healthcheck_done" "Forgejo healthcheck passed"
 
 # ---------------- NETWORK SECURITY ----------------
 notify_webhook "provisioning" "firewall_setup" "Configuring firewall"
@@ -237,10 +180,15 @@ curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
 
 if [ -f "$DNS_HOOK_SCRIPT" ]; then
     chmod +x "$DNS_HOOK_SCRIPT"
-    certbot certonly --manual --preferred-challenges=dns --manual-auth-hook "$DNS_HOOK_SCRIPT add" --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" --non-interactive --manual-public-ip-logging-ok
+    certbot certonly --manual --preferred-challenges=dns \
+        --manual-auth-hook "$DNS_HOOK_SCRIPT add" \
+        --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" \
+        --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" \
+        --non-interactive --manual-public-ip-logging-ok
 else
     systemctl stop nginx || true
-    certbot certonly --standalone --preferred-challenges http --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" --non-interactive
+    certbot certonly --standalone --preferred-challenges http \
+        --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" --non-interactive
     systemctl start nginx || true
 fi
 
@@ -273,7 +221,7 @@ server {{
         proxy_buffering off;
         proxy_request_buffering off;
         add_header Content-Security-Policy "frame-ancestors 'self' {ALLOW_EMBED_WEBSITE}" always;
-}}
+    }}
 }}
 EOF
 ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
