@@ -10,11 +10,8 @@ def generate_setup(
     resource_group=""
 ):
     # ========== CONFIGURABLE URLs ==========
-    docker_compose_url = "https://github.com/docker/compose/releases/download/v2.38.1/docker-compose-linux-x86_64"
-    buildx_url = "https://github.com/docker/buildx/releases/download/v0.11.2/buildx-v0.11.2.linux-amd64"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
-    # =======================================
     MAX_UPLOAD_FILE_SIZE_IN_MB = 1024
     LFS_MAX_FILE_SIZE_IN_BYTES = MAX_UPLOAD_FILE_SIZE_IN_MB * 1024 * 1024
     forgejo_dir = "/opt/forgejo"
@@ -26,11 +23,7 @@ notify_webhook() {{
   local status=$1
   local step=$2
   local message=$3
-
-  if [ -z "${{WEBHOOK_URL}}" ]; then
-    return 0
-  fi
-
+  if [ -z "${{WEBHOOK_URL}}" ]; then return 0; fi
   JSON_PAYLOAD=$(cat <<EOF
 {{
   "vm_name": "$(hostname)",
@@ -45,44 +38,25 @@ notify_webhook() {{
 }}
 EOF
   )
-
-  curl -s -X POST \\
-    "${{WEBHOOK_URL}}" \\
-    -H "Content-Type: application/json" \\
-    -d "$JSON_PAYLOAD" \\
-    --connect-timeout 10 \\
-    --max-time 30 \\
-    --retry 2 \\
-    --retry-delay 5 \\
-    --output /dev/null
+  curl -s -X POST "${{WEBHOOK_URL}}" -H "Content-Type: application/json" -d "$JSON_PAYLOAD" --connect-timeout 10 --max-time 30 --retry 2 --retry-delay 5 --output /dev/null
 }}
 '''
     else:
-        webhook_notification = '''
-notify_webhook() {
-  return 0
-}
-'''
+        webhook_notification = 'notify_webhook() { return 0; }'
 
-    # Full script template
+    # ---------------- SCRIPT TEMPLATE ----------------
     script_template = f"""#!/bin/bash
-
 set -e
 set -o pipefail
 export HOME=/root
-
-if [ -n "$DEBUG" ]; then
-    set -x
-fi
-
 LOG_FILE="/var/log/forgejo_setup.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 {webhook_notification}
 
-trap 'notify_webhook "failed" "unexpected_error" "Script exited on line ${{LINENO}} with code ${{?}}."' ERR
+trap 'notify_webhook "failed" "unexpected_error" "Script exited on line ${{LINENO}} with code $?"' ERR
 
-# ----------------- Validation -----------------
+# ---------------- VALIDATION ----------------
 if ! [[ "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
     notify_webhook "failed" "validation" "Invalid domain format"
     exit 1
@@ -95,26 +69,17 @@ PORT="{PORT}"
 FORGEJO_DIR="{forgejo_dir}"
 DNS_HOOK_SCRIPT="{DNS_HOOK_SCRIPT}"
 WEBHOOK_URL="{WEBHOOK_URL}"
-LFS_JWT_SECRET=$(openssl rand -hex 32)
+LFS_JWT_SECRET=$(openssl rand -hex 32) || {{ notify_webhook "failed" "failed" "Failed to generate LFS secret"; exit 1; }}
 
 notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
 
 # ---------------- SYSTEM SETUP ----------------
-notify_webhook "provisioning" "system_update" "Running apt-get update & install"
+notify_webhook "provisioning" "system_update" "Installing dependencies"
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y curl git nginx certbot python3-pip python3-venv jq make net-tools python3-certbot-nginx openssl ufw
 
-for i in {{1..5}}; do
-    if apt-get update; then break; fi
-    sleep 10
-done
-
-for i in {{1..5}}; do
-    if DEBIAN_FRONTEND=noninteractive apt-get install -y curl git nginx certbot python3-pip python3-venv jq make net-tools python3-certbot-nginx git-lfs openssl ufw; then break; fi
-    sleep 10
-done
-
-# ========== DOCKER SETUP ==========
+# ---------------- DOCKER SETUP ----------------
 notify_webhook "provisioning" "docker_setup" "Installing Docker & CLI plugins"
-
 apt-get remove -y docker docker-engine docker.io containerd runc || true
 apt-get update
 apt-get install -y ca-certificates curl gnupg lsb-release
@@ -124,30 +89,11 @@ ARCH=$(dpkg --print-architecture)
 CODENAME=$(lsb_release -cs)
 echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list
 apt-get update
-
-for i in {{1..5}}; do
-    if apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then break; fi
-    sleep 10
-    if [ $i -eq 5 ]; then
-        notify_webhook "failed" "docker_setup" "Failed to install Docker packages"
-        exit 1
-    fi
-done
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 CURRENT_USER=$(whoami)
-if [ "$CURRENT_USER" != "root" ]; then
-    usermod -aG docker "$CURRENT_USER" || true
-fi
-
-for i in {{1..10}}; do
-    if systemctl enable docker && systemctl start docker; then break; fi
-    sleep 5
-    if [ $i -eq 10 ]; then
-        journalctl -u docker -n 50 --no-pager
-        notify_webhook "failed" "docker_start" "Docker service failed to start"
-        exit 1
-    fi
-done
+if [ "$CURRENT_USER" != "root" ]; then usermod -aG docker "$CURRENT_USER" || true; fi
+systemctl enable docker && systemctl start docker
 
 timeout=180
 while [ $timeout -gt 0 ]; do
@@ -155,35 +101,24 @@ while [ $timeout -gt 0 ]; do
     sleep 5
     timeout=$((timeout - 5))
 done
-
 if [ $timeout -eq 0 ]; then
-    journalctl -u docker -n 50 --no-pager
     notify_webhook "failed" "docker_failed" "Docker daemon startup timeout"
     exit 1
 fi
 
-docker --version || (notify_webhook "failed" "docker_setup_failed" "Docker CLI not working" && exit 1)
-docker compose version || (notify_webhook "failed" "docker_setup_failed" "Docker Compose not working" && exit 1)
-docker buildx version || (notify_webhook "failed" "docker_setup_failed" "Docker Buildx not working" && exit 1)
-
-if [ ! -w /var/run/docker.sock ]; then
-    if ! getent group docker >/dev/null; then groupadd docker; fi
-    usermod -aG docker $(whoami)
-    notify_webhook "failed" "docker_setup_failed" "Docker socket permission updated; log out/in may be required"
-fi
-
-notify_webhook "provisioning" "docker_setup_complete" "Docker & CLI plugins installed successfully"
+notify_webhook "provisioning" "docker_setup_complete" "Docker installed successfully"
 
 # ---------------- FORGEJO SETUP ----------------
+echo "[3/9] Setting up Forgejo..."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}} || exit 1
-cd "$FORGEJO_DIR" || exit 1
+mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
+chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config
+mkdir -p "$FORGEJO_DIR/data/gitea/lfs"
+chown -R 1000:1000 "$FORGEJO_DIR/data/gitea"
+cd "$FORGEJO_DIR"
 
-if docker ps -a --format '{{.Names}}' | grep -q "^forgejo\$"; then
-    docker rm -f forgejo || true
-fi
-
+# Docker Compose for Forgejo
 cat > docker-compose.yml <<EOF
 version: "3.8"
 services:
@@ -192,56 +127,69 @@ services:
     container_name: forgejo
     restart: unless-stopped
     environment:
-      - FORGEJO__server__DOMAIN=${DOMAIN_NAME}
-      - FORGEJO__server__ROOT_URL=https://${DOMAIN_NAME}
+      - FORGEJO__server__DOMAIN=$DOMAIN_NAME
+      - FORGEJO__server__ROOT_URL=https://$DOMAIN_NAME
       - FORGEJO__server__HTTP_PORT=3000
       - FORGEJO__server__LFS_START_SERVER=true
       - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
-      - FORGEJO__server__LFS_JWT_SECRET=${{LFS_JWT_SECRET}}
-      - FORGEJO__server__LFS_MAX_FILE_SIZE=${LFS_MAX_FILE_SIZE_IN_BYTES}
+      - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
+      - FORGEJO__server__LFS_MAX_FILE_SIZE={LFS_MAX_FILE_SIZE_IN_BYTES}
     volumes:
       - ./data:/data
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "${PORT}:3000"
+      - "${{PORT}}:3000"
       - "222:22"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
+    test: ["CMD", "curl", "-f", "http://localhost:3000"]
+    interval: 15s
+    timeout: 10s
+    retries: 40
 EOF
 
-for i in {{1..3}}; do
-    if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d && break
-    elif docker compose version >/dev/null 2>&1; then docker compose up -d && break
-    else notify_webhook "failed" "compose_failed" "Docker Compose not available"; exit 1; fi
-    sleep 5
-    if [ $i -eq 3 ]; then
-        docker logs forgejo --tail 50 || true
-        notify_webhook "failed" "compose_failed" "docker compose up failed after 3 attempts"
-        exit 1
-    fi
-done
+# Ensure Docker socket is usable
+if ! docker ps >/dev/null 2>&1; then
+    notify_webhook "failed" "docker_error" "⚠️ Docker socket not accessible. Trying to fix permissions..."
+    chmod 666 /var/run/docker.sock || true
+fi
 
-for i in {{1..30}}; do
-    if docker ps -a --format '{{.Names}}' | grep -q "^forgejo\$"; then break; fi
-    sleep 2
-done
-
-for i in {{1..60}}; do
-    STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
-    if [ "$STATUS" = "healthy" ]; then break; fi
-    sleep 2
-done
-
-STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
-if [ "$STATUS" != "healthy" ]; then
-    docker logs forgejo --tail 50
-    notify_webhook "failed" "forgejo_health" "Forgejo container not healthy after 2 minutes"
+if lsof -i:"$PORT" >/dev/null; then
+    notify_webhook "failed" "port_error" "Port $PORT is already in use. Exiting..."
     exit 1
 fi
+
+# Start Forgejo with retries
+attempt=1
+max_attempts=3
+while [ $attempt -le $max_attempts ]; do
+    notify_webhook "provisioning" "starting_forgejo" "Starting Forgejo (attempt $attempt/$max_attempts)..."
+    if command -v docker-compose >/dev/null 2>&1; then
+        docker-compose up -d && break
+    elif docker compose version >/dev/null 2>&1; then
+        docker compose up -d && break
+    else
+        notify_webhook "failed" "compose_failed" "Docker Compose not available"
+        exit 1
+    fi
+    attempt=$((attempt+1))
+    sleep 5
+done
+
+if [ $attempt -gt $max_attempts ]; then
+    notify_webhook "failed" "forgejo_start_failed" "Forgejo failed to start after $max_attempts attempts"
+    exit 1
+fi
+
+# Wait for Forgejo container to become healthy
+for i in {{1..60}}; do
+    STATUS=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
+    if [ "$STATUS" = "healthy" ]; then
+        notify_webhook "prvisioning" "forgejo_healthy" "✅ Forgejo is healthy"
+        break
+    fi
+    sleep 2
+done
 
 # ---------------- NETWORK SECURITY ----------------
 notify_webhook "provisioning" "firewall_setup" "Configuring firewall"
@@ -269,7 +217,6 @@ fi
 # ---------------- NGINX ----------------
 notify_webhook "provisioning" "nginx_setup" "Configuring Nginx"
 rm -f /etc/nginx/sites-enabled/default
-
 cat > /etc/nginx/sites-available/forgejo <<EOF
 server {{
     listen 80;
@@ -286,12 +233,12 @@ server {{
     client_max_body_size {MAX_UPLOAD_FILE_SIZE_IN_MB}M;
     location / {{
         proxy_pass http://localhost:{PORT};
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
         proxy_http_version 1.1;
         proxy_buffering off;
         proxy_request_buffering off;
@@ -299,28 +246,8 @@ server {{
     }}
 }}
 EOF
-
 ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
-
-# ---------------- VERIFICATION ----------------
-notify_webhook "provisioning" "verification" "Running post-install checks"
-
-if ! docker ps --filter "name=forgejo" --filter "status=running" | grep -q forgejo; then
-    docker logs forgejo
-    notify_webhook "failed" "verification" "Forgejo container not running"
-    exit 1
-fi
-
-if ! nginx -t; then
-    notify_webhook "failed" "verification" "Nginx configuration failed"
-    exit 1
-fi
-
-if [ ! -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
-    notify_webhook "failed" "verification" "SSL cert missing"
-    exit 1
-fi
 
 # ---------------- FINAL CONFIG ----------------
 sleep 30

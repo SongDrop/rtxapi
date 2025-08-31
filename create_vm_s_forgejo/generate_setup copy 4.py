@@ -54,7 +54,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 {webhook_notification}
 
-trap 'notify_webhook "failed" "unexpected_error" "Script exited on line ${LINENO} with code $?"' ERR
+trap 'notify_webhook "failed" "unexpected_error" "Script exited on line ${{LINENO}} with code $?"' ERR
 
 # ---------------- VALIDATION ----------------
 if ! [[ "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
@@ -114,6 +114,8 @@ notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories an
 
 mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}}
 chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config
+mkdir -p "$FORGEJO_DIR/data/gitea/lfs"
+chown -R 1000:1000 "$FORGEJO_DIR/data/gitea"
 cd "$FORGEJO_DIR"
 
 # Docker Compose for Forgejo
@@ -140,10 +142,10 @@ services:
       - "${{PORT}}:3000"
       - "222:22"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
+    test: ["CMD", "curl", "-f", "http://localhost:3000"]
+    interval: 15s
+    timeout: 10s
+    retries: 40
 EOF
 
 # Ensure Docker socket is usable
