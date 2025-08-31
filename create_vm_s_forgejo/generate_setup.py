@@ -20,9 +20,9 @@ def generate_setup(
     if WEBHOOK_URL:
         webhook_notification = f'''
 notify_webhook() {{
-    local status=$1
-    local step=$2
-    local message=$3
+    local status="$1"
+    local step="$2"
+    local message="$3"
     if [ -z "${{WEBHOOK_URL}}" ]; then return 0; fi
     JSON_PAYLOAD=$(cat <<EOF
 {{
@@ -75,8 +75,9 @@ notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
 
 # ---------------- SYSTEM SETUP ----------------
 notify_webhook "provisioning" "system_update" "Installing dependencies"
+DEBIAN_FRONTEND=noninteractive
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y curl git git-lfs nginx certbot python3-pip python3-venv jq make net-tools python3-certbot-nginx openssl ufw
+apt-get install -y curl git git-lfs nginx certbot python3-pip python3-venv jq make net-tools python3-certbot-nginx openssl ufw
 git lfs install
 
 # ---------------- DOCKER SETUP ----------------
@@ -97,8 +98,10 @@ if [ "$CURRENT_USER" != "root" ]; then
     usermod -aG docker "$CURRENT_USER" || true
 fi
 
-systemctl enable docker && systemctl start docker
+systemctl enable docker
+systemctl restart docker
 
+# Wait for Docker to be fully ready
 timeout=180
 while [ $timeout -gt 0 ]; do
     if docker info >/dev/null 2>&1; then break; fi
@@ -113,24 +116,12 @@ fi
 notify_webhook "provisioning" "docker_setup_complete" "Docker installed successfully"
 
 # ---------------- FORGEJO SETUP ----------------
-echo "[3/9] Setting up Forgejo...."
 notify_webhook "provisioning" "forgejo_setup" "Setting up Forgejo directories and config"
 
-mkdir -p "$FORGEJO_DIR"/{{data,config,ssl}} || \
-    notify_webhook "failed" "directories_creation" "Failed to create Forgejo directories" && exit 1
-notify_webhook "provisioning" "directories_created" "Forgejo directories created"
+mkdir -p "$FORGEJO_DIR"/{{data,config,ssl,data/gitea/lfs}} || {{"notify_webhook \"failed\" \"directories_creation\" \"Failed to create Forgejo directories\" && exit 1"}}
+chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config "$FORGEJO_DIR"/data/gitea
 
-chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config || \
-    notify_webhook "failed" "permissions" "Failed to set directory ownership" && exit 1
-notify_webhook "provisioning" "ownership_set_data_config" "Ownership set for data and config"
-
-mkdir -p "$FORGEJO_DIR/data/gitea/lfs" || \
-    notify_webhook "failed" "directories_creation" "Failed to create LFS directory" && exit 1
-chown -R 1000:1000 "$FORGEJO_DIR/data/gitea" || \
-    notify_webhook "failed" "permissions" "Failed to set gitea ownership" && exit 1
-notify_webhook "provisioning" "ownership_set_gitea" "Ownership set for gitea directories"
-
-cd "$FORGEJO_DIR" || {{ notify_webhook "failed" "cd_failed" "Cannot cd into $FORGEJO_DIR"; exit 1; }}
+cd "$FORGEJO_DIR" || {{"notify_webhook \"failed\" \"cd_failed\" \"Cannot cd into $FORGEJO_DIR\"; exit 1"}}
 
 # Docker Compose for Forgejo
 cat > docker-compose.yml <<EOF
@@ -153,7 +144,7 @@ services:
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "${PORT}:3000"
+      - "{PORT}:3000"
       - "222:22"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
@@ -211,12 +202,12 @@ server {{
     client_max_body_size {MAX_UPLOAD_FILE_SIZE_IN_MB}M;
     location / {{
         proxy_pass http://localhost:{PORT};
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
         proxy_http_version 1.1;
         proxy_buffering off;
         proxy_request_buffering off;
@@ -224,6 +215,7 @@ server {{
     }}
 }}
 EOF
+
 ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
 
