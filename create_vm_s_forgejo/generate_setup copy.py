@@ -9,7 +9,7 @@ def generate_setup(
     location="",
     resource_group=""
 ):
-    # ========== CONFIGURABLE URLs ==========
+    # ========== CONFIGURABLE URLs ==============
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
     MAX_UPLOAD_FILE_SIZE_IN_MB = 1024
