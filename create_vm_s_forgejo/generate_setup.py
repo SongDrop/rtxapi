@@ -169,19 +169,36 @@ mkdir -p /etc/letsencrypt
 curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
 curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
 
-if [ -f "$DNS_HOOK_SCRIPT" ]; then
-    chmod +x "$DNS_HOOK_SCRIPT"
-    certbot certonly --manual --preferred-challenges=dns \
-        --manual-auth-hook "$DNS_HOOK_SCRIPT add" \
-        --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" \
-        --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" \
-        --non-interactive --manual-public-ip-logging-ok
-else
-    systemctl stop nginx || true
-    certbot certonly --standalone --preferred-challenges http \
-        --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" --non-interactive
-    systemctl start nginx || true
-fi
+issue_cert() {{
+    if [ -f "$DNS_HOOK_SCRIPT" ]; then
+        chmod +x "$DNS_HOOK_SCRIPT"
+        certbot certonly --manual --preferred-challenges=dns \
+            --manual-auth-hook "$DNS_HOOK_SCRIPT add" \
+            --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" \
+            --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" -d "*.{DOMAIN_NAME}" \
+            --non-interactive --manual-public-ip-logging-ok
+    else
+        systemctl stop nginx || true
+        certbot certonly --standalone --preferred-challenges http \
+            --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" --non-interactive
+        systemctl start nginx || true
+    fi
+}}
+
+# Retry certbot a few times in case of DNS/propagation delays
+retries=3
+for i in $(seq 1 $retries); do
+    if issue_cert; then
+        notify_webhook "provisioning" "ssl_setup_complete" "SSL certificate issued successfully"
+        break
+    fi
+    if [ "$i" -eq "$retries" ]; then
+        notify_webhook "failed" "ssl_setup" "Certbot failed after $retries attempts (see /var/log/letsencrypt/letsencrypt.log)"
+        exit 1
+    fi
+    sleep 30
+done
+
 
 # ---------------- NGINX ----------------
 notify_webhook "provisioning" "nginx_setup" "Configuring Nginx"
