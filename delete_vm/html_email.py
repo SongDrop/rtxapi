@@ -201,17 +201,17 @@ def HTMLEmail(vm_name: str,
             <div class="vm-details">
                 <div class="detail-row">
                     <span class="detail-label">Machine Name:</span>
-                    <span class="detail-value" id="vm-name">{vm_name}</span>
+                    <span class="detail-value" id="vm-name"> {vm_name}</span>
                 </div>
 
                 <div class="detail-row">
                     <span class="detail-label">Deletion Time:</span>
-                    <span class="detail-value" id="deletion-time">{deletion_time}</span>
+                    <span class="detail-value" id="deletion-time"> {deletion_time}</span>
                 </div>
 
                 <div class="detail-row">
                     <span class="detail-label">Status:</span>
-                    <span class="detail-value red">{status}</span>
+                    <span class="detail-value red"> {status}</span>
                 </div>
             </div>
 

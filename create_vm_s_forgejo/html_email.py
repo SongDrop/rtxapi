@@ -1,4 +1,4 @@
-def HTMLEmail(ip_address: str, link1: str, link2: str, link3: str, new_vm_url, dash_url) -> str:
+def HTMLEmail(ip_address: str, created_at: str, link1: str, link2: str, link3: str, new_vm_url, dash_url) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 
@@ -148,6 +148,7 @@ def HTMLEmail(ip_address: str, link1: str, link2: str, link3: str, new_vm_url, d
             justify-content: center;
             gap: 20px;
             margin-top: 40px;
+            flex-wrap: wrap;
         }}
 
         .btn {{
@@ -161,6 +162,7 @@ def HTMLEmail(ip_address: str, link1: str, link2: str, link3: str, new_vm_url, d
             display: flex;
             align-items: center;
             gap: 10px;
+            text-decoration: none;
         }}
 
         .btn-primary {{
@@ -213,6 +215,13 @@ def HTMLEmail(ip_address: str, link1: str, link2: str, link3: str, new_vm_url, d
 
             .actions {{
                 flex-direction: column;
+                align-items: center;
+            }}
+            
+            .btn {{
+                width: 100%;
+                max-width: 280px;
+                justify-content: center;
             }}
         }}
     </style>
@@ -237,17 +246,17 @@ def HTMLEmail(ip_address: str, link1: str, link2: str, link3: str, new_vm_url, d
             <div class="vm-details">
                 <div class="detail-row">
                     <span class="detail-label">IP Address:</span>
-                    <span class="detail-value" id="ip-address">{ip_address}</span>
+                    <span class="detail-value" id="ip-address"> {ip_address}</span>
                 </div>
 
                 <div class="detail-row">
                     <span class="detail-label">Status:</span>
-                    <span class="detail-value">Running</span>
+                    <span class="detail-value"> Running</span>
                 </div>
 
                 <div class="detail-row">
                     <span class="detail-label">Creation Time:</span>
-                    <span class="detail-value" id="creation-time">Just now</span>
+                    <span class="detail-value" id="creation-time"> {created_at}</span>
                 </div>
             </div>
 
@@ -257,7 +266,7 @@ def HTMLEmail(ip_address: str, link1: str, link2: str, link3: str, new_vm_url, d
                         <i class="fas fa-globe"></i>
                     </div>
                     <div class="link-text">
-                        <a href="{ip_address}" target="_blank">Primary Access URL</a>
+                        <a href="{link1}" target="_blank">{link1}</a>
                         <div class="link-description">Direct access to your virtual machine</div>
                     </div>
                 </div>
@@ -267,28 +276,8 @@ def HTMLEmail(ip_address: str, link1: str, link2: str, link3: str, new_vm_url, d
                         <i class="fas fa-link"></i>
                     </div>
                     <div class="link-text">
-                        <a href="{link1}" target="_blank">Application Link 1</a>
+                        <a href="{ip_address}" target="_blank">Primary Access URL</a>
                         <div class="link-description">Access your deployed application</div>
-                    </div>
-                </div>
-
-                <div class="link-item">
-                    <div class="link-icon">
-                        <i class="fas fa-link"></i>
-                    </div>
-                    <div class="link-text">
-                        <a href="{link2}" target="_blank">Application Link 2</a>
-                        <div class="link-description">Additional application access point</div>
-                    </div>
-                </div>
-
-                <div class="link-item">
-                    <div class="link-icon">
-                        <i class="fas fa-link"></i>
-                    </div>
-                    <div class="link-text">
-                        <a href="{link3}" target="_blank">Application Link 3</a>
-                        <div class="link-description">Supplementary service access</div>
                     </div>
                 </div>
             </div>
@@ -300,7 +289,7 @@ def HTMLEmail(ip_address: str, link1: str, link2: str, link3: str, new_vm_url, d
                 <a id="dash_url" class="btn btn-secondary" href="{dash_url}" target="_blank">
                     <i class="fas fa-arrow-left"></i> Return to Dashboard
                 </a>
-            </div>s
+            </div>
         </div>
 
         <div class="footer">
