@@ -1114,7 +1114,7 @@ async def provision_vm_background(
             
             html_content = html_email.HTMLEmail(
                 ip_address=public_ip,
-                created_at={datetime.utcnow().isoformat()},
+                created_at=datetime.utcnow().isoformat(),
                 link1=f"https://{fqdn}",
                 link2=f"https://{fqdn}/admin",
                 link3=f"https://{fqdn}/status",
