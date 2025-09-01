@@ -155,22 +155,6 @@ EOF
 
 notify_webhook "provisioning" "docker_compose_created" "docker-compose.yml created"
 
-# Pull & start Docker container
-docker compose pull
-docker compose up -d
-
-# Wait for Forgejo container to be healthy
-timeout=180
-while [ $timeout -gt 0 ]; do
-    HEALTH=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
-    if [ "$HEALTH" = "healthy" ]; then break; fi
-    sleep 5
-    timeout=$((timeout - 5))
-done
-if [ $timeout -eq 0 ]; then
-    notify_webhook "failed" "forgejo_container" "Forgejo container did not become healthy"
-    exit 1
-fi
 
 # ---------------- NETWORK SECURITY ----------------
 notify_webhook "provisioning" "firewall_setup" "Configuring firewall"
@@ -264,6 +248,28 @@ EOF
 
 
 ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
+nginx -t && systemctl restart nginx
+
+# ---------------- START FORGEJO CONTAINER ----------------
+notify_webhook "provisioning" "forgejo_start" "Starting Forgejo container"
+docker compose pull
+docker compose up -d
+
+# Wait for container to become healthy
+timeout=180
+while [ $timeout -gt 0 ]; do
+    HEALTH=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
+    if [ "$HEALTH" = "healthy" ]; then break; fi
+    sleep 5
+    timeout=$((timeout - 5))
+done
+if [ $timeout -eq 0 ]; then
+    notify_webhook "failed" "forgejo_container" "Forgejo container did not become healthy"
+    exit 1
+fi
+
+# ---------------- RESTART NGINX AFTER FORGEJO IS HEALTHY ----------------
+notify_webhook "provisioning" "nginx_restart" "Restarting Nginx to apply upstream settings"
 nginx -t && systemctl restart nginx
 
 # ---------------- FINAL CONFIG ----------------
