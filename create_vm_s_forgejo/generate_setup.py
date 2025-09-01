@@ -205,7 +205,7 @@ issue_cert() {{
     fi
 }}
 
-# Retry certbot a few times in case of DNS/propagation delays
+# Retry certbot a few times in case of DNS/propagation delays...
 retries=3
 for i in $(seq 1 $retries); do
     if issue_cert; then
