@@ -155,6 +155,23 @@ EOF
 
 notify_webhook "provisioning" "docker_compose_created" "docker-compose.yml created"
 
+# Pull & start Docker container
+docker compose pull
+docker compose up -d
+
+# Wait for Forgejo container to be healthy
+timeout=180
+while [ $timeout -gt 0 ]; do
+    HEALTH=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
+    if [ "$HEALTH" = "healthy" ]; then break; fi
+    sleep 5
+    timeout=$((timeout - 5))
+done
+if [ $timeout -eq 0 ]; then
+    notify_webhook "failed" "forgejo_container" "Forgejo container did not become healthy"
+    exit 1
+fi
+
 # ---------------- NETWORK SECURITY ----------------
 notify_webhook "provisioning" "firewall_setup" "Configuring firewall"
 ufw allow 22/tcp
@@ -179,8 +196,11 @@ issue_cert() {{
             --non-interactive --manual-public-ip-logging-ok
     else
         systemctl stop nginx || true
+        # Use staging fallback if too many certs
         certbot certonly --standalone --preferred-challenges http \
-            --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" --non-interactive
+            --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" --non-interactive || \
+        certbot certonly --standalone --preferred-challenges http \
+            --staging --agree-tos --email "{ADMIN_EMAIL}" -d "{DOMAIN_NAME}" --non-interactive
         systemctl start nginx || true
     fi
 }}
