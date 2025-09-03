@@ -378,7 +378,7 @@ async def provision_vm_background(
         # Generate and upload setup script
         print_info("Generating PowerShell setup script...")
         ssl_email = os.environ.get('SENDER_EMAIL')
-        ps_script = generate_setup.generate_setup(WEBHOOK_URL=hook_url)
+        ps_script = generate_setup.generate_setup(vm_name, fqdn, ssl_email, DUMBDROP_PIN, WINDOWS_IMAGE_PASSWORD)
         
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
         container_name = 'vm-startup-scripts'
@@ -1156,12 +1156,10 @@ async def provision_vm_background(
             recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
             
             html_content = html_email.HTMLEmail(
-                ip_address=public_ip,
-                created_at=datetime.utcnow().isoformat(),
-                link1=f"https://{fqdn}",
-                rdpgen=f"https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={public_ip}&user={WINDOWS_IMAGE_USERNAME}",
-                new_vm_url=f"https://rtxdevstation.xyz/requestvm",
-                dash_url="https://rtxdevstation.xyz"
+                vhd_name=vm_name, 
+                vhd_size_gib=256, 
+                sas_download_url="https://vhdvm.blob.core.windows.net/vhdvm/rtxvhdx/rtx2udkfixed.vhd", 
+                github_app_url="https://github.com/ProjectIGIRemakeTeam/azcopy-windows/releases/tag/azcopy"
             )
 
             await html_email_send.send_html_email_smtp(

@@ -1,291 +1,154 @@
-def HTMLEmail(ip_address: str,
-              background_image_url: str,
-              title: str,
-              main_heading: str,
-              main_description: str,
-              youtube_embed_src: str,
-              image_left_src: str,
-              image_right_src: str,
-              logo_src: str,
-              company_src: str,
-              discord_widget_src: str,
-              windows_password: str,
-              credentials_sunshine: str,
-              form_description: str,
-              form_link: str,
-              new_vm_url: str,
-              dash_url: str):
-    
-    # Extract YouTube video ID from URL
-    def get_youtube_video_id(url):
-        import re
-        regex = r"(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|live\/|.+\?v=)?|youtu\.be\/)([^&\n?#]+)"
-        match = re.search(regex, url)
-        return match.group(1) if match else None
-    
-    video_id = get_youtube_video_id(youtube_embed_src)
-    youtube_embed_url = f"https://www.youtube.com/embed/{video_id}?loop=1&mute=1&playlist={video_id}" if video_id else ""
-    
-    # Format IPv6 style address for iOS
-    ios_address = f"[::ffff:{ip_address}]"
-    
-    # Create pin URL - use the direct URL without tracking
-    pin_url = f"https://{ip_address}:47990/pin"
-    
-    # Create drop URL - use the direct URL without tracking
-    drop_url = f"https://{ip_address}:3475"
-
+def HTMLEmail(ip_address: str, created_at: str, link1: str, rdpgen: str,  new_vm_url, dash_url) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8" />
-    <title>{title}</title>
-    <link rel="shortcut icon" href="https://i.ibb.co/kVtMTrWf/nvidia.png" type="image/x-icon">
-    <meta name="author" content="win10dev.xyz">
-    <meta property="article:published_time" content="2025-04-19T10:00:00Z">
-    <meta name="description" content="Your virtual machine is ready to use">
-    <meta itemprop="name" content="{title}">
-    <meta itemprop="description" content="Your virtual machine is ready to use">
-    <meta itemprop="image" content="">
-    <meta name="keywords" content="{title}">
-    <meta property="og:title" content="{title}">
-    <meta property="og:url" content="https://win10dev.xyz">
-    <meta property="og:type" content="website">
-    <meta property="og:description" content="Your virtual machine is ready to use">
-    <meta property="og:image" content="">
-    <meta name="twitter:title" content="{title}">
-    <meta name="twitter:description" content="Your virtual machine is ready to use">
-    <meta name="twitter:card" content="summary_large_image">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Virtual Machine is Ready</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        :root {{
-            --primary: #0f9d58;
-            --primary-dark: #0a7a45;
-            --primary-light: #1db954;
-            --secondary: #107c10;
-            --accent: #00b4d8;
-            --accent-alt: #ff6b6b;
-            --dark: #0a0a0a;
-            --medium: #1a1a1a;
-            --light: #f8f9fa;
-            --border: rgba(255, 255, 255, 0.1);
-            --glow: 0 0 15px rgba(16, 124, 16, 0.7);
-            --transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }}
-
         * {{
-            box-sizing: border-box;
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }}
 
         body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            color: var(--light);
-            line-height: 1.6;
-            padding: 20px;
+            background: linear-gradient(135deg, #0a527c, #1a7c9e, #38b6ff);
             min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
-            background: linear-gradient(135deg, #0a527c, #1a7c9e, #38b6ff);
+            padding: 20px;
+            color: #333;
         }}
 
         .container {{
-            max-width: 800px;
             width: 100%;
-            background: white;
-            padding: 30px;
+            max-width: 800px;
+            background: rgba(255, 255, 255, 0.97);
             border-radius: 20px;
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(8px);
-            border: 1px solid lightgray;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
         }}
 
         .header {{
+            background: #2c3e50;
+            color: white;
+            padding: 30px;
             text-align: center;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         }}
 
-        .header img {{
-            max-width: 200px;
-            height: auto;
+        .header h1 {{
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }}
+
+        .header p {{
+            opacity: 0.9;
+        }}
+
+        .content {{
+            padding: 40px;
+        }}
+
+        .creation-message {{
+            text-align: center;
+            margin-bottom: 40px;
+        }}
+
+        .creation-message h2 {{
+            font-size: 2.8rem;
+            color: #2e7d32;
             margin-bottom: 20px;
-            filter: drop-shadow(0 0 10px rgba(16, 124, 16, 0.5));
+            letter-spacing: 1px;
         }}
 
-        h1 {{
-            font-size: 2.4rem;
-            color: var(--primary);
-            margin-bottom: 15px;
-            text-shadow: 0 0 10px rgba(16, 124, 16, 0.5);
-            font-weight: 700;
-            letter-spacing: 0.5px;
-        }}
-
-        .description {{
-            font-size: 1.1rem;
+        .vm-details {{
+            background: #e3f2fd;
+            border-radius: 15px;
+            padding: 30px;
             margin-bottom: 30px;
-            padding: 20px;
-            border-radius: 12px;
-            border-left: 4px solid var(--primary);
-            white-space: pre-wrap;
-            line-height: 1.7;
-            background: rgba(16, 124, 16, 0.2);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+            border-left: 5px solid #2196f3;
         }}
 
-        iframe {{
-            width: 100%;
-            height: 350px;
-            border: none;
-            border-radius: 12px;
-            margin-bottom: 25px;
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5);
+        .detail-row {{
+            display: flex;
+            justify-content: space-between;
+            padding: 15px 0;
+            border-bottom: 1px solid #bbdefb;
         }}
 
-        .section {{
-            margin-bottom: 25px;
+        .detail-row:last-child {{
+            border-bottom: none;
         }}
 
-        .section-title {{
-            font-size: 1.4rem;
-            color: var(--accent);
-            margin-bottom: 15px;
+        .detail-label {{
+            font-weight: 600;
+            color: #1565c0;
+            font-size: 1.2rem;
+        }}
+
+        .detail-value {{
+            font-weight: 500;
+            color: black;
+            font-size: 1.2rem;
+        }}
+
+        .links-container {{
+            margin-top: 30px;
+        }}
+
+        .link-item {{
             display: flex;
             align-items: center;
-            gap: 12px;
+            padding: 15px;
+            margin: 15px 0;
+            background: #f5f5f5;
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }}
+
+        .link-item:hover {{
+            background: #e8f5e9;
+            transform: translateX(5px);
+        }}
+
+        .link-icon {{
+            margin-right: 15px;
+            font-size: 1.5rem;
+            color: #2196f3;
+        }}
+
+        .link-text {{
+            flex-grow: 1;
+        }}
+
+        .link-text a {{
+            color: #1565c0;
+            text-decoration: none;
             font-weight: 600;
         }}
 
-        .section-title i {{
-            color: var(--primary);
-            font-size: 1.3rem;
-        }}
-
-        .code-box {{
-            padding: 18px;
-            border-radius: 12px;
-            position: relative;
-            margin: 15px 0;
-            border: 1px solid var(--border);
-            transition: var(--transition);
-        }}
-
-        .code-box:hover {{
-             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-        }}
-
-        .code-content {{
-            padding-right: 15px;
-            overflow: auto;
-            font-size: 1.1rem;
-        }}
-
-        .code-box strong {{
-            color: var(--accent);
-        }}
-
-        a {{
-            color: var(--accent);
-            text-decoration: none;
-            transition: var(--transition);
-            word-break: break-word;
-        }}
-
-        a:hover {{
-            color: #00ffff;
+        .link-text a:hover {{
             text-decoration: underline;
         }}
 
-        .download-section {{
-            text-align: center;
-            margin-top: 40px;
-            padding: 25px;
-            background: rgba(16, 124, 16, 0.2);
-            border-radius: 12px;
-            border-top: 2px solid var(--primary);
-            border-bottom: 2px solid var(--primary);
+        .link-description {{
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 5px;
         }}
 
-        .fixed-images {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 40px;
-            padding: 0 10px;
-        }}
-
-        .fixed-image-left,
-        .fixed-image-right {{
-            background-color: transparent;
-            margin: 0;
-            padding: 0;
-        }}
-
-        .fixed-images a {{
-            transition: var(--transition);
-        }}
-
-        .fixed-images img {{
-            width: 80px;
-            height: auto;
-            opacity: 0.85;
-            transition: var(--transition);
-            border-radius: 8px;
-        }}
-
-        .fixed-images img:hover {{
-            opacity: 1;
-            transform: scale(1.08);
-        }}
-
-        .company-logo {{
-            display: block;
-            margin: 40px auto 0;
-            max-width: 300px;
-            height: auto;
-            opacity: 0.9;
-            border-radius: 12px;
-            padding: 10px;
-            background: rgba(255, 255, 255, 0.05);
-        }}
-
-        #image-left, #image-right {{
-            width: 120px;
-            z-index: 999;
-            border-radius: 10px;
-            opacity: 0.9;
-        }}
-
-        #image-left {{
-            float: left;
-            margin-right: 20px;
-            shape-outside: circle(50%);
-        }}
-
-        #image-right {{
-            float: right;
-            margin-left: 20px;
-            shape-outside: circle(50%);
-        }}
-
-        .clearfix::after {{
-            content: "";
-            display: table;
-            clear: both;
-        }}
-
-        /* Action buttons styles */
         .actions {{
             display: flex;
-            justify-content: space-between;
-            align-items: center;
+            justify-content: center;
             gap: 20px;
-            margin: 40px 0 20px;
+            margin-top: 40px;
+            flex-wrap: wrap;
         }}
 
         .btn {{
@@ -322,86 +185,43 @@ def HTMLEmail(ip_address: str,
             transform: translateY(-3px);
         }}
 
-        /* Responsive adjustments */
+        .footer {{
+            background: #e3f2fd;
+            padding: 20px;
+            text-align: center;
+            font-size: 0.9rem;
+            color: black;
+        }}
+
+        .success-icon {{
+            font-size: 4rem;
+            color: #4caf50;
+            margin-bottom: 20px;
+        }}
+
         @media (max-width: 768px) {{
-            body {{
-                padding: 15px;
-            }}
-
-            .container {{
-                padding: 20px;
-            }}
-
-            h1 {{
+            .header h1 {{
                 font-size: 2rem;
             }}
 
-            .description {{
-                font-size: 1rem;
-                padding: 15px;
+            .creation-message h2 {{
+                font-size: 2rem;
             }}
 
-            iframe {{
-                height: 250px;
-            }}
-
-            .section-title {{
-                font-size: 1.2rem;
-            }}
-
-            .code-content {{
-                font-size: 1rem;
-            }}
-
-            .header img {{
-                max-width: 160px;
-            }}
-
-            .fixed-images img {{
-                width: 65px;
-            }}
-
-            .company-logo {{
-                max-width: 220px;
-            }}
-
-            #image-left, #image-right {{
-                width: 90px;
-                float: none;
-                margin: 15px auto;
-                display: block;
+            .detail-row {{
+                flex-direction: column;
+                gap: 5px;
             }}
 
             .actions {{
                 flex-direction: column;
-                gap: 15px;
+                align-items: center;
             }}
-
+            
             .btn {{
+                width: 100%;
+                max-width: 280px;
                 justify-content: center;
-            }}
-        }}
-
-        @media (max-width: 480px) {{
-            .container {{
-                padding: 15px;
-            }}
-
-            h1 {{
-                font-size: 1.8rem;
-            }}
-
-            iframe {{
-                height: 200px;
-            }}
-
-            .fixed-images {{
-                flex-direction: column;
-                gap: 15px;
-            }}
-
-            .fixed-images img {{
-                width: 70px;
             }}
         }}
     </style>
@@ -410,95 +230,80 @@ def HTMLEmail(ip_address: str,
 <body>
     <div class="container">
         <div class="header">
-            <img src="{logo_src}" alt="Logo" />
-            <h1>{main_heading}</h1>
-            <div class="description">{main_description}</div>
+            <h1><i class="fas fa-server"></i> Virtual Machine Management</h1>
+            <p>Your cloud resources are ready</p>
         </div>
 
-        <iframe src="{youtube_embed_url}" allowfullscreen></iframe>
+        <div class="content">
+            <div class="creation-message">
+                <div class="success-icon">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <h2>Virtual Machine Successfully Created</h2>
+                <p>Your new virtual machine is now running and ready for use.</p>
+            </div>
 
-        <div class="clearfix">
-            <img id="image-left" src="{image_left_src}" />
-            <img id="image-right" src="{image_right_src}" />
-            
-            <div class="section">
-                <div class="section-title"><i class="fas fa-link"></i> Open <strong>Moonlight</strong> and Add:</div>
-                <div class="code-box">
-                    <div class="code-content">{ip_address}</div>
+            <div class="vm-details">
+                <div class="detail-row">
+                    <span class="detail-label">IP Address:</span>
+                    <span class="detail-value" id="ip-address"> {ip_address}</span>
                 </div>
 
-                <div class="section-title"><i class="fas fa-mobile-alt"></i> Open <strong>iOS Moonlight</strong> and Add:</div>
-                <div class="code-box">
-                    <div class="code-content">{ios_address}</div>
+                <div class="detail-row">
+                    <span class="detail-label">Status:</span>
+                    <span class="detail-value"> Running</span>
+                </div>
+
+                <div class="detail-row">
+                    <span class="detail-label">Creation Time:</span>
+                    <span class="detail-value" id="creation-time"> {created_at}</span>
                 </div>
             </div>
 
-            <div class="section">
-                <div class="section-title"><i class="fas fa-lock"></i> Enter 4-digit PIN here:</div>
-                <div class="code-box">
-                    <div class="code-content">
-                        <a href="{pin_url}" target="_blank">{pin_url}</a>
+            <div class="links-container">
+                <div class="link-item">
+                    <div class="link-icon">
+                        <i class="fas fa-globe"></i>
+                    </div>
+                    <div class="link-text">
+                        <a href="{link1}" target="_blank">{link1}</a>
+                        <div class="link-description">Direct access to your virtual machine</div>
+                    </div>
+                </div>
+                <div class="link-item">
+                    <div class="link-icon">
+                        <i class="fas fa-globe"></i>
+                    </div>
+                    <div class="link-text">
+                        <a href="{rdpgen}" target="_blank">{rdpgen}</a>
+                        <div class="link-description">Connect with Remote Desktop Solution</div>
+                    </div>
+                </div>
+                <div class="link-item">
+                    <div class="link-icon">
+                        <i class="fas fa-link"></i>
+                    </div>
+                    <div class="link-text">
+                        <a href="{ip_address}" target="_blank">Primary Access URL</a>
+                        <div class="link-description">Access your deployed application</div>
                     </div>
                 </div>
             </div>
 
-            <div class="section">
-                <div class="section-title"><i class="fas fa-user-circle"></i> Use credentials:</div>
-                <div class="code-box">
-                    <div class="code-content">{credentials_sunshine}</div>
-                </div>
-
-                <div class="section-title"><i class="fas fa-desktop"></i> Windows Password:</div>
-                <div class="code-box">
-                    <div class="code-content">{windows_password}</div>
-                </div>
-            </div>
-
-            <div class="section">
-                <div class="section-title"><i class="fas fa-download"></i> You need to download <strong>Moonlight</strong> to connect:</div>
-                <div class="code-box">
-                    <div class="code-content">
-                        <a href="https://github.com/moonlight-stream/moonlight-qt/releases" target="_blank">
-                            https://github.com/moonlight-stream/moonlight-qt/releases
-                        </a>
-                    </div>
-                </div>
-            </div>
-
-            <div class="section">
-                <div class="section-title"><i class="fas fa-cloud-upload-alt"></i> Upload files directly:</div>
-                <div class="code-box">
-                    <div class="code-content">
-                        <a href="{drop_url}" target="_blank">{drop_url}</a>
-                    </div>
-                </div>
+             <div class="actions">
+                <a id="new_vm_url" class="btn btn-primary" href="{new_vm_url}" target="_blank">
+                    <i class="fas fa-plus"></i> Create New VM
+                </a>
+                <a id="dash_url" class="btn btn-secondary" href="{dash_url}" target="_blank">
+                    <i class="fas fa-arrow-left"></i> Return to Dashboard
+                </a>
             </div>
         </div>
 
-        <div class="download-section">
-            <div>{form_description}</div>
-            <div class="code-box">
-                <div class="code-content">
-                    <a href="{form_link}" target="_blank">{form_link}</a>
-                </div>
-            </div>
+        <div class="footer">
+            <p>© 2025 Cloud Infrastructure Manager | Need help? Contact our support team</p>
         </div>
-
-        <iframe src="{discord_widget_src}" width="100%" height="350" allowtransparency="true" frameborder="0"
-            sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"></iframe>
-
-        <div class="actions">
-            <a id="new_vm_url" class="btn btn-primary" href="{new_vm_url}" target="_blank">
-                <i class="fas fa-plus"></i> Create New VM
-            </a>
-            <a id="dash_url" class="btn btn-secondary" href="{dash_url}" target="_blank">
-                <i class="fas fa-arrow-left"></i> Return to Dashboard
-            </a>
-        </div>
-
-        <img class="company-logo" src="{company_src}"/>
     </div>
 </body>
 
-</html>
-"""
+</html>"""

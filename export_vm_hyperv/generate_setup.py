@@ -1,4 +1,4 @@
-def generate_setup(WEBHOOK_URL: str = None) -> str:
+def generate_setup(SNAPSHOT_URL: str = None, WEBHOOK_URL: str = None, AZURE_SAS_TOKEN: str = None) -> str:
     script = f'''# Check for admin privileges
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {{
@@ -10,12 +10,14 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 
 $ErrorActionPreference = "Stop"
 $env:WEBHOOK_URL = "{WEBHOOK_URL}"
+$env:AZURE_SAS_TOKEN = "{AZURE_SAS_TOKEN}"
+$env:AZ_COPY_URL = "https://github.com/ProjectIGIRemakeTeam/azcopy-windows/releases/download/azcopy/AzCopyWin.zip"
 
 # --- Webhook helper ---
 function Notify-Webhook {{
     param([string]$Status, [string]$Step, [string]$Message)
     if (-not $env:WEBHOOK_URL) {{ return }}
-    $payload = @{{
+    $payload = @{{ 
         vm_name = $env:COMPUTERNAME
         status = $Status
         timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -38,7 +40,6 @@ try {{
 }}
 Add-Content -Path $installLog -Value "=== Hyper-V Setup Script Started $(Get-Date) ==="
 
-# --- System Cleanup / Debloat (Registry & Services) ---
 # Mark Windows as OOBE-completed
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" -Name "ImageState" -Value "IMAGE_STATE_COMPLETE"
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" -Name "OOBEInProgress" -Value 0
@@ -160,17 +161,82 @@ try {{
         $trigger = New-ScheduledTaskTrigger -AtStartup
         $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
-
         Notify-Webhook -Status "info" -Step "hyperv_enable" -Message "Scheduled post-reboot continuation."
+
         Notify-Webhook -Status "provisioning" -Step "hyperv_restart" -Message "Restarting computer to complete Hyper-V installation..."
         Restart-Computer -Force
         exit
     }} else {{
-        Notify-Webhook -Status "provisioning" -Step "hyperv_enable" -Message "Hyper-V already enabled."
+        Notify-Webhook -Status "success" -Step "hyperv_enable" -Message "Hyper-V already enabled."
     }}
 }} catch {{
     Notify-Webhook -Status "failed" -Step "hyperv_enable" -Message "Hyper-V installation failed: $_"
     exit 1
 }}
+
+# --- Download snapshot ---
+$userProfile = [Environment]::GetFolderPath("UserProfile")
+$snapshotDir = Join-Path $userProfile "Downloads"
+if (-not (Test-Path $snapshotDir)) {{ New-Item -Path $snapshotDir -ItemType Directory -Force | Out-Null }}
+
 '''
+
+    if SNAPSHOT_URL:
+        script += f'''
+$snapshotPath = Join-Path $snapshotDir "azure-os-disk.vhd"
+
+try {{
+    ####STEP-1: DOWNLOAD SNAPSHOT
+    Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Downloading snapshot from {SNAPSHOT_URL}..."
+    Invoke-WebRequest -Uri "{SNAPSHOT_URL}" -OutFile $snapshotPath -UseBasicParsing
+    if (-Not (Test-Path $snapshotPath)) {{
+        throw "Snapshot download failed: File not found"
+    }}
+    Notify-Webhook -Status "success" -Step "snapshot_download" -Message "Snapshot downloaded to $snapshotPath"
+
+    ####STEP-2: CREATE BOOTABLE FIXED VHD
+    Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Creating bootable fixed VHD..."
+    Import-Module Hyper-V -ErrorAction Stop
+    $fixedVHD = Join-Path $snapshotDir "azure-os-disk_fixed.vhd"
+    Convert-VHD -Path $snapshotPath -DestinationPath $fixedVHD -VHDType Fixed
+    if (-Not (Test-Path $fixedVHD)) {{
+        throw "Fixed VHD creation failed: File not found"
+    }}
+    Notify-Webhook -Status "success" -Step "hyperv_finalize" -Message "Bootable fixed VHD created at $fixedVHD"
+
+    ####STEP-3: DOWNLOAD AZCOPY
+    try {{
+        $azcopyZip = Join-Path $snapshotDir "AzCopyWin.zip"
+        Invoke-WebRequest -Uri "$env:AZ_COPY_URL" -OutFile $azcopyZip -UseBasicParsing
+        Expand-Archive -Path $azcopyZip -DestinationPath $snapshotDir -Force
+        Remove-Item $azcopyZip -Force
+        Notify-Webhook -Status "success" -Step "azcopy_download" -Message "AzCopy downloaded and extracted"
+    }} catch {{
+        throw "AzCopy download/extract failed: $_"
+    }}
+
+    s####STEP-4: UPLOAD FIXED VHD VIA AZCOPY
+    try {{
+        $azcopyExe = Join-Path $snapshotDir "AzCopy\azcopy.exe"
+        Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Uploading fixed VHD via CMD..."
+        
+        # Run AzCopy using cmd.exe
+        $cmdArgs = "/c `"$azcopyExe copy `"$fixedVHD`" `$env:AZURE_SAS_TOKEN --recursive`""
+        Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs -Wait -NoNewWindow
+        
+        Notify-Webhook -Status "success" -Step "vhd_upload" -Message "Fixed VHD uploaded successfully"
+    }} catch {{
+        throw "AzCopy upload failed: $_"
+    }}
+
+
+    ####STEP-5: COMPLETION
+    Notify-Webhook -Status "success" -Step "setup_finished" -Message "Hyper-V setup and VHD upload completed successfully"
+
+}} catch {{
+    Notify-Webhook -Status "failed" -Step "hyperv_process" -Message "Process failed: $_"
+    exit 1
+}}
+'''
+
     return script
