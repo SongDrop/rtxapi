@@ -79,6 +79,7 @@
             const urlParams = new URLSearchParams(window.location.search);
             const ip = urlParams.get("ip");
             const user = urlParams.get("user") || "azureuser";
+            const vmName = urlParams.get("vm_name"); // <-- new param
 
             if (!ip) {
                 document.getElementById("status").textContent = "❌ Missing IP parameter!";
@@ -99,7 +100,7 @@ session bpp:i:32
             const blob = new Blob([rdpContent], { type: "application/x-rdp" });
             const link = document.createElement("a");
             link.href = URL.createObjectURL(blob);
-            link.download = "vm-connection.rdp";
+            link.download = (vmName ? vmName : "vm-connection") + ".rdp";
             link.click();
 
             document.getElementById("status").textContent = "✅ Your RDP file is downloading...";
