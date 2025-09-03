@@ -100,15 +100,75 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
                 mimetype="application/json"
             )
-        
-        # Start background snapshot task
-        asyncio.create_task(
-            snapshot_vm_background(vm_name, resource_group, location, hook_url, RECIPIENT_EMAILS)
+        # ====================== Initial Status Update ======================
+        hook_response = await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "init",
+                    "vm_name": vm_name,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
         )
 
+        if not hook_response.get("success") and hook_url:
+            error_msg = hook_response.get("error", "Unknown error posting status")
+            print_error(f"Initial status update failed: {error_msg}")
+            return func.HttpResponse(
+                json.dumps({"error": f"Status update failed: {error_msg}"}),
+                status_code=500,
+                mimetype="application/json"
+            )
+
+        status_url = hook_response.get("status_url", "")
+
+        # ====================== Azure Authentication ======================
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "authenticating",
+                    "message": "Authenticating with Azure"
+                }
+            }
+        )
+
+        # Validate environment variables
+        required_vars = [
+            "AZURE_APP_CLIENT_ID",
+            "AZURE_APP_CLIENT_SECRET",
+            "AZURE_APP_TENANT_ID",
+            "AZURE_SUBSCRIPTION_ID"
+        ]
+        missing_env = [var for var in required_vars if not os.environ.get(var)]
+        if missing_env:
+            raise Exception(f"Missing environment variables: {', '.join(missing_env)}")
+
+        credentials = ClientSecretCredential(
+            client_id=os.environ["AZURE_APP_CLIENT_ID"],
+            client_secret=os.environ["AZURE_APP_CLIENT_SECRET"],
+            tenant_id=os.environ["AZURE_APP_TENANT_ID"]
+        )
+
+        # ====================== Start Background Snapshot Task ======================
+        asyncio.create_task(
+            snapshot_vm_background(credentials, vm_name, resource_group, location, hook_url, RECIPIENT_EMAILS)
+        )
+
+        # ✅ Background task started
         return func.HttpResponse(
             json.dumps({
                 "message": "VM snapshot process started",
+                "status_url": status_url,
                 "vm_name": vm_name
             }),
             status_code=202,
@@ -117,6 +177,21 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as ex:
         logging.exception("Unhandled error in main function:")
+        if hook_url:
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name or "unknown",
+                    "status": "failed",
+                    "resource_group": resource_group or "unknown",
+                    "location": location or "unknown",
+                    "details": {
+                        "step": "main_function_error",
+                        "error": str(ex),
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
         return func.HttpResponse(
             json.dumps({"error": str(ex)}),
             status_code=500,
@@ -125,8 +200,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
 
 # ====================== BACKGROUND TASK ======================
-# ====================== BACKGROUND TASK ======================
-async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RECIPIENT_EMAILS):
+async def snapshot_vm_background(credentials, vm_name, resource_group, location, hook_url, RECIPIENT_EMAILS):
     try:
         # Initial status update
         await post_status_update(hook_url, {
@@ -142,18 +216,9 @@ async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RE
         })
         print_info(f"Starting snapshot process for VM '{vm_name}'")
 
-        # Azure authentication
-        required_vars = ['AZURE_APP_CLIENT_ID', 'AZURE_APP_CLIENT_SECRET', 'AZURE_APP_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']
-        missing = [var for var in required_vars if not os.environ.get(var)]
-        if missing:
-            raise Exception(f"Missing environment variables: {', '.join(missing)}")
-
-        credentials = ClientSecretCredential(
-            client_id=os.environ['AZURE_APP_CLIENT_ID'],
-            client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
-            tenant_id=os.environ['AZURE_APP_TENANT_ID']
-        )
+       
         subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
+        # Initialize Azure clients
         compute_client = ComputeManagementClient(credentials, subscription_id)
 
         # Stop VM before snapshot
@@ -338,7 +403,6 @@ async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RE
             "location": location,
             "details": {"step": "snapshot_failed", "error": error_msg, "timestamp": datetime.utcnow().isoformat()}
         })
-
 
 
 # ====================== STOP & RESTART VM ======================
