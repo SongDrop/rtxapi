@@ -90,6 +90,17 @@ $systemKeys = @{{
     "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System" = @{{ "NoConnectedUser" = 3 }}
     "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection" = @{{ "AllowTelemetry" = 0 }}
     "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" = @{{ "fAllowToGetHelp" = 0 }}
+
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" = @{{ "NC_ShowSharedAccessUI" = 0 }}
+    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network\\NewNetworkWindowOff" = @{{}}
+    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" = @{{ "Category" = 1 }}
+
+}}
+
+Get-NetConnectionProfile | ForEach-Object {{
+    try {{
+        Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+    }} catch {{}}
 }}
 
 foreach ($path in $systemKeys.Keys) {{
@@ -162,5 +173,15 @@ try {{
     Notify-Webhook -Status "failed" -Step "hyperv_enable" -Message "Hyper-V installation failed: $_"
     exit 1
 }}
+# --- Create Hyper-V Manager shortcut on desktop ---
+$desktopPath = [Environment]::GetFolderPath("Desktop")
+$shortcutPath = Join-Path $desktopPath "Hyper-V Manager.lnk"
+$targetPath = "$env:windir\\System32\\virtmgmt.msc"
+
+$wsh = New-Object -ComObject WScript.Shell
+$shortcut = $wsh.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = $targetPath
+$shortcut.IconLocation = "$env:windir\\System32\\virtmgmt.msc,0"
+$shortcut.Save()
 '''
     return script
