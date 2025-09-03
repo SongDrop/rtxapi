@@ -252,8 +252,10 @@ nginx -t && systemctl restart nginx
 
 # ---------------- START FORGEJO CONTAINER ----------------
 notify_webhook "provisioning" "forgejo_start" "Starting Forgejo container"
-docker compose pull
+cd "$FORGEJO_DIR" || exit 1
+docker compose pull || {{notify_webhook "provisioning" "forgejo_start" "Starting Forgejo container"; exit 1; }}
 docker compose up -d
+
 
 # Wait for container to become healthy
 timeout=180
