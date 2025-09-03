@@ -1,0 +1,336 @@
+import asyncio
+import json
+import os
+import sys
+import time
+import re
+import aiohttp
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+load_dotenv()
+import random
+import string
+import shutil
+import platform
+import dns.resolver
+from azure.core.exceptions import ClientAuthenticationError
+from azure.identity import ClientSecretCredential
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+import logging
+from azure.mgmt.compute import ComputeManagementClient
+import azure.functions as func
+from azure.storage.blob import generate_blob_sas, BlobSasPermissions
+
+from . import html_email
+from . import html_email_send
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+logger.info("Starting snapshot application initialization...")
+
+# Console colors for logs
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKORANGE = '\033[38;5;214m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+
+def print_info(msg):
+    logging.info(f"{bcolors.OKBLUE}[INFO]{bcolors.ENDC} {msg}")
+
+def print_success(msg):
+    logging.info(f"{bcolors.OKGREEN}[SUCCESS]{bcolors.ENDC} {msg}")
+
+def print_warn(msg):
+    logging.info(f"{bcolors.WARNING}[WARNING]{bcolors.ENDC} {msg}")
+
+def print_error(msg):
+    logging.info(f"{bcolors.FAIL}[ERROR]{bcolors.ENDC} {msg}")
+
+# Async helper
+async def run_azure_operation(func, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, func, *args, **kwargs)
+
+# ====================== HTTP TRIGGER ======================
+async def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info('Processing snapshot request...')    
+    try:
+        try:
+            req_body = req.get_json()
+        except ValueError:
+            req_body = {}
+
+        vm_name = req_body.get('vm_name') or req.params.get('vm_name')
+        resource_group = req_body.get('resource_group') or req.params.get('resource_group')
+        location = req_body.get('location') or req.params.get('location')
+        hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
+        RECIPIENT_EMAILS = req_body.get('recipient_emails') or req.params.get('recipient_emails')
+
+        if not vm_name:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'vm_name' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not resource_group:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'resource_group' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not location:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'location' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        if not RECIPIENT_EMAILS:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'recipient_emails' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
+        
+        # Start background snapshot task
+        asyncio.create_task(
+            snapshot_vm_background(vm_name, resource_group, location, hook_url, RECIPIENT_EMAILS)
+        )
+
+        return func.HttpResponse(
+            json.dumps({
+                "message": "VM snapshot process started",
+                "vm_name": vm_name
+            }),
+            status_code=202,
+            mimetype="application/json"
+        )
+
+    except Exception as ex:
+        logging.exception("Unhandled error in main function:")
+        return func.HttpResponse(
+            json.dumps({"error": str(ex)}),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+
+# ====================== BACKGROUND TASK ======================
+async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RECIPIENT_EMAILS):
+    try:
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {
+                "step": "starting_snapshot",
+                "message": "Beginning snapshot process",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        })
+
+        # Azure authentication
+        required_vars = ['AZURE_APP_CLIENT_ID', 'AZURE_APP_CLIENT_SECRET', 'AZURE_APP_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']
+        missing = [var for var in required_vars if not os.environ.get(var)]
+        if missing:
+            raise Exception(f"Missing environment variables: {', '.join(missing)}")
+
+        credentials = ClientSecretCredential(
+            client_id=os.environ['AZURE_APP_CLIENT_ID'],
+            client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
+            tenant_id=os.environ['AZURE_APP_TENANT_ID']
+        )
+
+        subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
+        compute_client = ComputeManagementClient(credentials, subscription_id)
+
+        # Stop VM before snapshot
+        await stop_vm_to_snapshot(compute_client, vm_name, resource_group)
+
+        # Get the VM and disk
+        vm = await run_azure_operation(compute_client.virtual_machines.get, resource_group, vm_name)
+        os_disk_name = vm.storage_profile.os_disk.name
+
+        snapshot_name = f"{vm_name}-snapshot-{int(time.time())}"
+        snapshot_params = {
+            "location": location,
+            "creation_data": {
+                "create_option": "Copy",
+                "source_uri": vm.storage_profile.os_disk.managed_disk.id
+            }
+        }
+
+        # Create snapshot
+        snapshot_operation = compute_client.snapshots.begin_create_or_update(resource_group, snapshot_name, snapshot_params)
+        snapshot = await run_azure_operation(snapshot_operation.result)
+
+        # ================= Generate SAS URL =================
+        storage_account_name = os.environ.get("AZURE_STORAGE_ACCOUNT")
+        storage_account_key = os.environ.get("AZURE_STORAGE_KEY")
+        container_name = "snapshots"
+        blob_name = f"{snapshot_name}.vhd"
+
+        snapshot_sas_url = generate_blob_sas(
+            account_name=storage_account_name,
+            container_name=container_name,
+            blob_name=blob_name,
+            account_key=storage_account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=datetime.utcnow() + timedelta(days=7)
+        )
+        snapshot_sas_url = f"https://{storage_account_name}.blob.core.windows.net/{container_name}/{blob_name}?{snapshot_sas_url}"
+        print_info(f"SAS URL: {snapshot_sas_url}")
+
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {
+                "step": "snapshot_created",
+                "message": f"Snapshot '{snapshot_name}' created successfully",
+                "snapshot_id": snapshot.id,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        })
+        print_success(f"Snapshot of VM '{vm_name}' created successfully as '{snapshot_name}'")
+
+        # Restart VM after snapshot
+        await restart_vm(compute_client, vm_name, resource_group)
+
+        # Wait before sending email
+        await asyncio.sleep(30)
+
+        # Send completion email
+        try:
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "sending_email",
+                    "message": "Sending completion email"
+                }
+            })
+
+            smtp_host = os.environ.get('SMTP_HOST')
+            smtp_port = int(os.environ.get('SMTP_PORT', 587))
+            smtp_user = os.environ.get('SMTP_USER')
+            smtp_password = os.environ.get('SMTP_PASS')
+            sender_email = os.environ.get('SENDER_EMAIL')
+            recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
+
+            html_content = html_email.HTMLEmail(
+                snapshot_name=snapshot_name,
+                created_at=datetime.utcnow().isoformat(),
+                snapshot_url=snapshot_sas_url
+            )
+
+            await html_email_send.send_html_email_smtp(
+                smtp_host=smtp_host,
+                smtp_port=smtp_port,
+                smtp_user=smtp_user,
+                smtp_password=smtp_password,
+                sender_email=sender_email,
+                recipient_emails=recipient_emails,
+                subject=f"Vm '{vm_name}' Snapshot Exported",
+                html_content=html_content,
+                use_tls=True
+            )
+
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "completed",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {"step": "email_sent", "message": "Snapshot created, email sent."}
+            })
+
+        except Exception as e:
+            error_msg = f"Failed to send email: {str(e)}"
+            print_warn(error_msg)
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "failed",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {"step": "email_failed", "warning": error_msg}
+            })
+
+    except Exception as e:
+        error_msg = f"Snapshot creation failed: {str(e)}"
+        print_error(error_msg)
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "failed",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {"step": "snapshot_failed", "error": error_msg, "timestamp": datetime.utcnow().isoformat()}
+        })
+
+
+# ====================== STOP & RESTART VM ======================
+async def stop_vm_to_snapshot(compute_client: ComputeManagementClient, vm_name: str, resource_group: str):
+    try:
+        print(f"Stopping VM '{vm_name}' in resource group '{resource_group}'...")
+        poller = compute_client.virtual_machines.begin_deallocate(resource_group, vm_name)
+        await asyncio.to_thread(poller.result)
+        print(f"VM '{vm_name}' is now stopped/deallocated.")
+    except Exception as e:
+        error_msg = f"Failed to stop VM '{vm_name}': {str(e)}"
+        print_error(error_msg)
+        raise
+
+async def restart_vm(compute_client: ComputeManagementClient, vm_name: str, resource_group: str):
+    try:
+        print(f"Starting VM '{vm_name}' in resource group '{resource_group}'...")
+        poller = compute_client.virtual_machines.begin_start(resource_group, vm_name)
+        await asyncio.to_thread(poller.result)
+        print(f"VM '{vm_name}' has been restarted successfully.")
+    except Exception as e:
+        error_msg = f"Failed to restart VM '{vm_name}': {str(e)}"
+        print_error(error_msg)
+        raise
+
+
+# ====================== STATUS UPDATE ======================
+async def post_status_update(hook_url: str, status_data: dict) -> dict:
+    if not hook_url:
+        return {"success": True, "status_url": ""}
+    step = status_data.get("details", {}).get("step", "unknown")
+    print_info(f"Sending status update for step: {step}")
+
+    max_retries = 3
+    retry_delay = 2
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(hook_url, json=status_data, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return {"success": True, "status_url": data.get("status_url", ""), "response": data}
+                    else:
+                        error_msg = f"HTTP {response.status}"
+        except (asyncio.TimeoutError, aiohttp.ClientConnectionError) as e:
+            error_msg = str(e)
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+
+        if attempt < max_retries:
+            print_warn(f"Status update failed (attempt {attempt}/{max_retries}): {error_msg}")
+            await asyncio.sleep(retry_delay * attempt)
+        else:
+            print_error(f"Status update failed after {max_retries} attempts: {error_msg}")
+            return {"success": False, "error": error_msg, "status_url": ""}
+    return {"success": False, "error": "Unknown error", "status_url": ""}
