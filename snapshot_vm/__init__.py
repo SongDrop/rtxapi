@@ -373,13 +373,22 @@ async def snapshot_vm_background(credentials, vm_name, resource_group, location,
                 use_tls=True
             )
 
-            await post_status_update(hook_url, {
-                "vm_name": vm_name,
-                "status": "completed",
-                "resource_group": resource_group,
-                "location": location,
-                "details": {"step": "email_sent", "message": "Snapshot created, email sent."}
-            })
+            # Final success update
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "completed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "completed",
+                        "message": "VM provisioning successful",
+                        "url": f"https://cdn.sdappnet.cloud/rtx/snapshot.html?snapshot_name={snapshot_name}&created_at={datetime.utcnow().isoformat()}&snapshot_url={snapshot_sas_url}",
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
             print_success(f"Email sent for snapshot '{snapshot_name}'")
 
         except Exception as e:
