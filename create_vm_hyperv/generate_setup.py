@@ -38,113 +38,95 @@ try {{
 }}
 Add-Content -Path $installLog -Value "=== Hyper-V Setup Script Started $(Get-Date) ==="
 
-# --- System Cleanup / Debloat (Registry & Services) ---
-# Mark Windows as OOBE-completed
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" -Name "ImageState" -Value "IMAGE_STATE_COMPLETE"
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" -Name "OOBEInProgress" -Value 0
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" -Name "SetupPhase" -Value 0
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" -Name "SystemSetupInProgress" -Value 0
+# --- Registry helper ---
+function Set-RegistryValue {{
+    param(
+        [string]$Path, 
+        [string]$Name, 
+        [Object]$Value, 
+        [Microsoft.Win32.RegistryValueKind]$Type = [Microsoft.Win32.RegistryValueKind]::DWord
+    )
+    if (-not (Test-Path $Path)) {{ New-Item -Path $Path -Force | Out-Null }}
+    New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
+}}
 
-# Suppress Cortana first-run
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" -Name "AllowCortana" -Value 0
+# --- SYSTEM CLEANUP & DEBLOAT ---
 
-# Suppress Edge first-run
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Edge" -Name "HideFirstRunExperience" -Value 1
+# OOBE completed
+Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" -Name "ImageState" -Value "IMAGE_STATE_COMPLETE"
+Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" -Name "OOBEInProgress" -Value 0
+Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" -Name "SetupPhase" -Value 0
+Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" -Name "SystemSetupInProgress" -Value 0
 
-# Turn off automatic updates temporarily
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "NoAutoUpdate" -Value 1
+# Cortana
+Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" -Name "AllowCortana" -Value 0
 
-# Prevent MSA login prompts
-New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -Name "NoConnectedUser" -PropertyType DWord -Value 3 -Force
+# Edge first-run
+Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge" -Name "HideFirstRunExperience" -Value 1
 
-# Disable diagnostic data prompts
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" -Name "AllowTelemetry" -Value 0
+# Windows Update auto-disable
+Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU" -Name "NoAutoUpdate" -Value 1
 
-# Suppress “Set default apps” notification
-New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenEnabled" -Value 0 -Force
-New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenOverlayEnabled" -Value 0 -Force
-New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338388Enabled" -Value 0 -Force
+# MSA login
+Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System" -Name "NoConnectedUser" -Value 3
 
-# Disable OneDrive first-run setup
-New-ItemProperty -Path "HKCU:\Software\Microsoft\OneDrive" -Name "DisableFirstRun" -Value 1 -Force
+# Telemetry
+Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection" -Name "AllowTelemetry" -Value 0
 
-# Disable Xbox first-run
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Xbox" -Name "ShowFirstRunUI" -Value 0
+# Content Delivery Manager tweaks
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" -Name "RotatingLockScreenEnabled" -Value 0
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" -Name "RotatingLockScreenOverlayEnabled" -Value 0
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" -Name "SubscribedContent-338388Enabled" -Value 0
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" -Name "SubscribedContent-310093Enabled" -Value 0
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" -Name "SystemPaneSuggestionsEnabled" -Value 0
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" -Name "SubscribedContent-SettingsEnabled" -Value 0
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" -Name "SubscribedContent-AppsEnabled" -Value 0
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager" -Name "SubscribedContent-338387Enabled" -Value 0
 
-# Disable Xbox Game Bar
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\GameBar" -Name "ShowStartupPanel" -Value 0 -Force
+# OneDrive
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\OneDrive" -Name "DisableFirstRun" -Value 1
+Remove-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "OneDrive" -ErrorAction SilentlyContinue
 
-# Disable Windows welcome experience
-New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-310093Enabled" -Value 0 -Force
-New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SystemPaneSuggestionsEnabled" -Value 0 -Force
+# Xbox
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Xbox" -Name "ShowFirstRunUI" -Value 0
 
-# Disable lock screen background slideshow
-New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -Value 1 -Force
+# Game Bar
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\GameBar" -Name "ShowStartupPanel" -Value 0
 
-# Disable OneDrive auto-start
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "OneDrive" -Value "" -ErrorAction SilentlyContinue
+# Office
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Office\\16.0\\Common\\General" -Name "ShownFirstRunOptIn" -Value 1
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Office\\16.0\\Common\\Internet" -Name "SignInOptions" -Value 3
 
-# Disable Office First Run
-New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\General" -Name "ShownFirstRunOptIn" -Value 1 -Force
+# Feedback Hub
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\feedbackhub" -Name "Value" -Value 2
 
-# Disable Feedback Hub first-run
-New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\feedbackhub" -Name "Value" -Value 2 -Force
+# Explorer tweaks
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" -Name "PeopleBand" -Value 0
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" -Name "TaskbarDa" -Value 0
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" -Name "EnableBalloonTips" -Value 0
 
-# Disable Connected User Experiences and Telemetry
+# Pen / Windows Ink
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Pen" -Name "PenWorkspaceButton" -Value 0
+
+# Appx / Store
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Appx" -Name "DisabledByPolicy" -Value 1
+Set-RegistryValue -Path "HKCU:\\Software\\Policies\\Microsoft\\WindowsStore" -Name "AutoDownload" -Value 2
+Set-RegistryValue -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications" -Name "NoToastApplicationNotification" -Value 1
+
+# Windows Search / Indexing
+Stop-Service "WSearch" -Force
+Set-Service "WSearch" -StartupType Disabled
+
+# DiagTrack / Telemetry
 Stop-Service "DiagTrack" -Force
 Set-Service "DiagTrack" -StartupType Disabled
 
-# Disable Windows tips, suggestions, and notifications
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-SettingsEnabled" -Value 0 -Force
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-AppsEnabled" -Value 0 -Force
-
-# Disable People Bar
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer" -Name "PeopleBand" -Value 0 -Force
-
-# Disable Widgets (Windows 11)
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Value 0 -Force
-
-# Disable Spotlight images on lock screen
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenEnabled" -Value 0 -Force
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "RotatingLockScreenOverlayEnabled" -Value 0 -Force
-
-# Disable Windows Store first-run
-New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Appx" -Name "DisabledByPolicy" -Value 1 -Force
-
-# Disable all current user startup items
-Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" | foreach {{
-    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name $_.PSChildName -ErrorAction SilentlyContinue
-}}
-
-# Disable Action Center (notification center)
-Set-ItemProperty -Path "HKCU:\Software\Policies\Microsoft\Windows\Explorer" -Name "DisableNotificationCenter" -Value 1 -Force
-
-# Disable Windows Defender popups (not the service)
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "EnableBalloonTips" -Value 0 -Force
-
-# Prevent Microsoft Store from auto-updating apps
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications" -Name "NoToastApplicationNotification" -Value 1 -Force
-Set-ItemProperty -Path "HKCU:\Software\Policies\Microsoft\WindowsStore" -Name "AutoDownload" -Value 2 -Force
-
-# Disable “Get Office” notifications
-New-ItemProperty -Path "HKCU:\Software\Microsoft\Office\16.0\Common\Internet" -Name "SignInOptions" -Value 3 -Force
-
-# Lock screen tips
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-338387Enabled" -Value 0 -Force
-
-# Disable Windows Error Reporting service
+# Windows Error Reporting
 Stop-Service "WerSvc" -Force
 Set-Service "WerSvc" -StartupType Disabled
 
-# Disable “Windows Ink Workspace” popups
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Pen" -Name "PenWorkspaceButton" -Value 0 -Force
-
-# Disable Windows Search indexing for faster snapshot/VHD performance
-Set-Service "WSearch" -StartupType Disabled
-Stop-Service "WSearch" -Force
-
-# Disable Remote Assistance prompts:
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance" -Name "fAllowToGetHelp" -Value 0 -Force
+# Remote Assistance
+Set-RegistryValue -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" -Name "fAllowToGetHelp" -Value 0
 
 # --- Enable Hyper-V ---
 try {{
