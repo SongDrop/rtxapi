@@ -15,7 +15,7 @@ import platform
 import dns.resolver
 from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import ClientSecretCredential
-from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions, generate_container_sas, ContainerSasPermissions
 import logging
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.network import NetworkManagementClient
@@ -30,6 +30,7 @@ from azure.mgmt.dns import DnsManagementClient
 from azure.mgmt.dns.models import RecordSet
 from azure.mgmt.storage import StorageManagementClient
 import azure.functions as func
+
 
 from . import generate_setup
 from . import html_email
@@ -95,13 +96,14 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             req_body = {}
 
         # Extract parameters with defaults
+        snapshot_vm_name = req_body.get('snapshot_vm_name') or req.params.get('snapshot_vm_name')
         vm_name = req_body.get('vm_name') or req.params.get('vm_name')
         resource_group = req_body.get('resource_group') or req.params.get('resource_group')
         domain = req_body.get('domain') or req.params.get('domain')
         location = req_body.get('location') or req.params.get('location')
         vm_size = req_body.get('vm_size') or req.params.get('vm_size')
         storage_account_base = vm_name
-
+        
         # Image/Windows configuration
         OS_DISK_SSD_GB = int(req_body.get('os_disk_ssd_gb') or req.params.get('os_disk_ssd_gb') or 1024)
         WINDOWS_IMAGE_USERNAME = req_body.get('windows_image_username') or req.params.get('windows_image_username')
@@ -111,6 +113,12 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
 
         ###Parameter checking to handle errors 
+        if not snapshot_vm_name:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'snapshot_vm_name' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
         if not vm_name:
             return func.HttpResponse(
                 json.dumps({"error": "Missing 'vm_name' parameter"}),
@@ -243,7 +251,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             asyncio.create_task(
                 provision_vm_background(
                     credentials,
-                    vm_name, resource_group, domain, location, vm_size,
+                    vm_name, snapshot_vm_name, resource_group, domain, location, vm_size,
                     storage_account_base, OS_DISK_SSD_GB, WINDOWS_IMAGE_USERNAME,
                     WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS, DUMBDROP_PIN, hook_url
                 )
@@ -293,7 +301,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
 async def provision_vm_background(
     credentials,
-    vm_name, resource_group, domain, location, vm_size,
+    vm_name,snapshot_vm_name, resource_group, domain, location, vm_size,
     storage_account_base, OS_DISK_SSD_GB,
     WINDOWS_IMAGE_USERNAME, WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS, DUMBDROP_PIN, hook_url
 ):
@@ -322,6 +330,122 @@ async def provision_vm_background(
         network_client = NetworkManagementClient(credentials, subscription_id)
         dns_client = DnsManagementClient(credentials, subscription_id)
         
+        # STOP THE VM FIRST TO GENERATE THE SNAPSHOT
+        try:      
+            await stop_vm_to_snapshot(
+                compute_client=compute_client,
+                vm_name=snapshot_vm_name, 
+                resource_group=resource_group
+            )
+
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "vm_to_snapshot_stopped_success",
+                        "message": f"VM '{snapshot_vm_name}' stopped successfully.",
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to stop VM to snapshot: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "vm_to_snapshot_stop_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        snapshot_name = f"{snapshot_vm_name}-os-snapshot-{int(time.time())}"
+        # Container storage(storage cant contains _ or - just numbers and letters)
+        try:
+            AZURE_SNAPSHOT_CONFIG = await run_azure_operation(
+                create_vm_snapshot_and_generate_sas,
+                storage_account_name=storage_account_name,
+                storage_account_key=AZURE_STORAGE_ACCOUNT_KEY,
+                storage_url=AZURE_STORAGE_URL,
+                vhd_container_name="vhdexports",
+                expiry_hours=24
+            )
+            print(f"SAS URL ready: {AZURE_SNAPSHOT_CONFIG['sas_token_url']}")
+            global SNAPSHOT_URL
+            SNAPSHOT_URL = AZURE_SNAPSHOT_CONFIG['sas_token_url']
+
+        except Exception as e:
+            error_msg = f"Failed to setup VHD export: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "storage_creation_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
+        # RESTART THE VM AFTER SNAPSHOT
+        try:
+            await restart_vm(
+                compute_client=compute_client,
+                vm_name=snapshot_vm_name,
+                resource_group=resource_group
+            )
+
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "provisioning",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "vm_to_snapshot_restarted_success",
+                        "message": f"VM '{snapshot_vm_name}' restarted successfully.",
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+        except Exception as e:
+            error_msg = f"Failed to restart VM after snapshot: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "vm_to_snapshot_restart_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
         # Handle subdomain
         subdomain = vm_name.strip().strip('.') if vm_name else None
         fqdn = f"{subdomain}.{domain}" if subdomain else domain
@@ -375,10 +499,49 @@ async def provision_vm_background(
             )
             return
 
+
+        # Container storage(storage cant contains _ or - just numbers and letters)
+        try:
+            AZURE_STORAGE_CONFIG = await run_azure_operation(
+                create_vhd_export_container_and_sas,
+                storage_account_name=storage_account_name,
+                storage_account_key=AZURE_STORAGE_ACCOUNT_KEY,
+                storage_url=AZURE_STORAGE_URL,
+                vhd_container_name="vhdexports",
+                expiry_hours=24
+            )
+            print(f"SAS URL ready: {AZURE_STORAGE_CONFIG['sas_token_url']}")
+            global VHD_EXPORT_SAS_URL
+            VHD_EXPORT_SAS_URL = AZURE_STORAGE_CONFIG['sas_token_url']
+
+        except Exception as e:
+            error_msg = f"Failed to setup VHD export: {str(e)}"
+            print_error(error_msg)
+            await post_status_update(
+                hook_url=hook_url,
+                status_data={
+                    "vm_name": vm_name,
+                    "status": "failed",
+                    "resource_group": resource_group,
+                    "location": location,
+                    "details": {
+                        "step": "storage_creation_failed",
+                        "error": error_msg,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return
+
         # Generate and upload setup script
         print_info("Generating PowerShell setup script...")
         ssl_email = os.environ.get('SENDER_EMAIL')
-        ps_script = generate_setup.generate_setup(vm_name, fqdn, ssl_email, DUMBDROP_PIN, WINDOWS_IMAGE_PASSWORD)
+        
+        ps_script = generate_setup.generate_setup(
+            SNAPSHOT_URL="",
+            WEBHOOK_URL=hook_url,
+            AZURE_SAS_TOKEN=VHD_EXPORT_SAS_URL
+        )
         
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
         container_name = 'vm-startup-scripts'
@@ -1441,6 +1604,225 @@ async def cleanup_resources_on_failure(
             pass
     
 
+async def stop_vm_to_snapshot(compute_client: ComputeManagementClient, vm_name: str, resource_group: str):
+    """
+    Stop (deallocate) a VM to prepare it for a snapshot.
+    Waits until the VM is fully stopped.
+    """
+    try:
+        print(f"Stopping VM '{vm_name}' in resource group '{resource_group}'...")
+        poller = compute_client.virtual_machines.begin_deallocate(resource_group, vm_name)
+        await asyncio.to_thread(poller.result)  # Wait for completion
+        print(f"VM '{vm_name}' is now stopped/deallocated.")
+    except Exception as e:
+        error_msg = f"Failed to stop VM '{vm_name}': {str(e)}"
+        print(error_msg)
+        raise
+
+async def create_vm_snapshot_and_generate_sas(
+    compute_client: ComputeManagementClient,
+    storage_account_name: str,
+    storage_account_key: str,
+    storage_url: str,
+    vm_name: str,
+    resource_group: str,
+    snapshot_name: str = None,
+    expiry_hours: int = 24
+) -> dict[str, str]:
+    """
+    Stop a VM, create a snapshot of its OS disk, export it to storage, generate a SAS URL,
+    and restart the VM afterward.
+    
+    Returns:
+        dict: {"sas_token_url": <sas_url>}
+    """
+    try:
+        # Generate default snapshot name if not provided
+        snapshot_name = snapshot_name or f"{vm_name}-os-snapshot-{int(time.time())}"
+
+        # Get VM info
+        vm = await asyncio.to_thread(compute_client.virtual_machines.get, resource_group, vm_name)
+        if not vm:
+            raise Exception(f"VM '{vm_name}' not found in resource group '{resource_group}'")
+
+        os_disk = vm.storage_profile.os_disk
+        os_disk_id = os_disk.managed_disk.id
+
+        # Stop VM
+        await stop_vm_to_snapshot(compute_client, vm_name, resource_group)
+
+        # Create snapshot
+        snapshot_params = {
+            "location": vm.location,
+            "creation_data": {
+                "create_option": "Copy",
+                "source_resource_id": os_disk_id
+            }
+        }
+        print(f"Creating snapshot '{snapshot_name}' for VM '{vm_name}'...")
+        poller = compute_client.snapshots.begin_create_or_update(resource_group, snapshot_name, snapshot_params)
+        snapshot = await asyncio.to_thread(poller.result)
+        print(f"Snapshot '{snapshot_name}' created successfully.")
+
+        # Export snapshot to storage account (generate SAS URL)
+        print(f"Exporting snapshot '{snapshot_name}' to storage account '{storage_account_name}'...")
+        export_sas = compute_client.disks.begin_export(
+            resource_group_name=resource_group,
+            disk_name=snapshot_name,
+            parameters={
+                "storage_account_id": f"/subscriptions/{os.environ['AZURE_SUBSCRIPTION_ID']}/resourceGroups/{resource_group}/providers/Microsoft.Storage/storageAccounts/{storage_account_name}",
+                "sas_duration": f"PT{expiry_hours}H"
+            }
+        )
+        sas_result = await asyncio.to_thread(export_sas.result)
+        sas_url = sas_result.continuation_uri  # SAS URL to download exported snapshot
+        print(f"SAS URL generated: {sas_url}")
+
+        # Restart VM
+        await restart_vm(compute_client, vm_name, resource_group)
+
+        return {"sas_token_url": sas_url}
+
+    except Exception as e:
+        error_msg = f"Failed to create snapshot or generate SAS: {str(e)}"
+        print_error(error_msg)
+        # Try to restart VM in case it is still stopped
+        try:
+            await restart_vm(compute_client, vm_name, resource_group)
+        except Exception as ex:
+            print_warn(f"Failed to restart VM after error: {str(ex)}")
+        raise
+
+
+async def restart_vm(compute_client: ComputeManagementClient, vm_name: str, resource_group: str):
+    """
+    Restart a VM after snapshot/export is complete.
+    Waits until the VM is running.
+    """
+    try:
+        print(f"Starting VM '{vm_name}' in resource group '{resource_group}'...")
+        poller = compute_client.virtual_machines.begin_start(resource_group, vm_name)
+        await asyncio.to_thread(poller.result)  # Wait for completion
+        print(f"VM '{vm_name}' has been restarted successfully.")
+    except Exception as e:
+        error_msg = f"Failed to restart VM '{vm_name}': {str(e)}"
+        print(error_msg)
+        raise
+
+async def create_vm_snapshot_and_generate_sas(
+    compute_client: ComputeManagementClient,
+    storage_account_name: str,
+    storage_account_key: str,
+    storage_url: str,
+    vm_name: str,
+    resource_group: str,
+    snapshot_name: str = None,
+    expiry_hours: int = 24
+) -> dict[str, str]:
+    """
+    Stop a VM, create a snapshot of its OS disk, export it to storage, generate a SAS URL,
+    and restart the VM afterward.
+    
+    Returns:
+        dict: {"sas_token_url": <sas_url>}
+    """
+    try:
+        # Generate default snapshot name if not provided
+        snapshot_name = snapshot_name or f"{vm_name}-os-snapshot-{int(time.time())}"
+
+        # Get VM info
+        vm = await asyncio.to_thread(compute_client.virtual_machines.get, resource_group, vm_name)
+        if not vm:
+            raise Exception(f"VM '{vm_name}' not found in resource group '{resource_group}'")
+
+        os_disk = vm.storage_profile.os_disk
+        os_disk_id = os_disk.managed_disk.id
+
+
+        # Create snapshot
+        snapshot_params = {
+            "location": vm.location,
+            "creation_data": {
+                "create_option": "Copy",
+                "source_resource_id": os_disk_id
+            }
+        }
+        print(f"Creating snapshot '{snapshot_name}' for VM '{vm_name}'...")
+        poller = compute_client.snapshots.begin_create_or_update(resource_group, snapshot_name, snapshot_params)
+        snapshot = await asyncio.to_thread(poller.result)
+        print(f"Snapshot '{snapshot_name}' created successfully.")
+
+        # Export snapshot to storage account (generate SAS URL)
+        print(f"Exporting snapshot '{snapshot_name}' to storage account '{storage_account_name}'...")
+        export_sas = compute_client.disks.begin_export(
+            resource_group_name=resource_group,
+            disk_name=snapshot_name,
+            parameters={
+                "storage_account_id": f"/subscriptions/{os.environ['AZURE_SUBSCRIPTION_ID']}/resourceGroups/{resource_group}/providers/Microsoft.Storage/storageAccounts/{storage_account_name}",
+                "sas_duration": f"PT{expiry_hours}H"
+            }
+        )
+        sas_result = await asyncio.to_thread(export_sas.result)
+        sas_url = sas_result.continuation_uri  # SAS URL to download exported snapshot
+        print(f"SAS URL generated: {sas_url}")
+
+        return {"sas_token_url": sas_url}
+
+    except Exception as e:
+        error_msg = f"Failed to create snapshot or generate SAS: {str(e)}"
+        print_error(error_msg)
+        # Try to restart VM in case it is still stopped
+        try:
+            await restart_vm(compute_client, vm_name, resource_group)
+        except Exception as ex:
+            print_warn(f"Failed to restart VM after error: {str(ex)}")
+        raise
+
+
+# ====================== VHD EXPORT HELPERS ======================
+async def create_vhd_export_container_and_sas(
+    storage_account_name: str,
+    storage_account_key: str,
+    storage_url: str,
+    vhd_container_name: str = "vhd-exports",
+    expiry_hours: int = 24
+) -> dict[str, str]:
+    """
+    Create a dedicated VHD export container and generate a SAS token URL.
+    
+    Returns:
+        dict: {"sas_token_url": <url>} on success
+    Raises:
+        Exception: If container creation or SAS generation fails
+    """
+    try:
+        blob_service_client = BlobServiceClient(account_url=storage_url, credential=storage_account_key)
+        container_client = blob_service_client.get_container_client(vhd_container_name)
+        
+        try:
+            container_client.create_container()
+            print_success(f"Created VHD export container '{vhd_container_name}'.")
+        except Exception:
+            print_info(f"VHD export container '{vhd_container_name}' already exists.")
+        
+        # Generate SAS token
+        expiry_time = datetime.utcnow() + timedelta(hours=expiry_hours)
+        sas_token = generate_container_sas(
+            account_name=storage_account_name,
+            container_name=vhd_container_name,
+            account_key=storage_account_key,
+            permission=ContainerSasPermissions(read=True, write=True, create=True, list=True),
+            expiry=expiry_time
+        )
+        vhd_sas_url = f"https://{storage_account_name}.blob.core.windows.net/{vhd_container_name}?{sas_token}"
+        print_success(f"Generated SAS URL for VHD exports: {vhd_sas_url}")
+        
+        return {"sas_token_url": vhd_sas_url}
+    
+    except Exception as e:
+        error_msg = f"Failed to create VHD export container or SAS: {str(e)}"
+        print_error(error_msg)
+        raise Exception(error_msg)
 
 
 # ====================== STATUS UPDATE FUNCTION ======================
