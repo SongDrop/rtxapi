@@ -69,28 +69,27 @@ function Set-RegistryValue {{
 
 # --- SYSTEM CLEANUP & DEBLOAT (HKLM + SYSTEM) ---
 $systemKeys = @{{ 
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" = @{{
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" = @{{ 
         "ImageState" = 7
         "OOBEInProgress" = 0
         "SetupPhase" = 0
         "SystemSetupInProgress" = 0
     }}
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" = @{{
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE" = @{{ 
         "PrivacyConsentStatus" = 1
         "DisablePrivacyExperience" = 1
         "SkipMachineOOBE" = 1
         "SkipUserOOBE" = 1
     }}
-    "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE" = @{{
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\OOBE" = @{{ 
         "DisablePrivacyExperience" = 1
     }}
-    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" = @{{ "ImageState"=7; "OOBEInProgress"=0; "SetupPhase"=0; "SystemSetupInProgress"=0 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" = @{{ "AllowCortana"=0 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge" = @{{ "HideFirstRunExperience"=1 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU" = @{{ "NoAutoUpdate"=1 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System" = @{{ "NoConnectedUser"=3 }}
-    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection" = @{{ "AllowTelemetry"=0 }}
-    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" = @{{ "fAllowToGetHelp"=0 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" = @{{ "AllowCortana" = 0 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge" = @{{ "HideFirstRunExperience" = 1 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU" = @{{ "NoAutoUpdate" = 1 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System" = @{{ "NoConnectedUser" = 3 }}
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection" = @{{ "AllowTelemetry" = 0 }}
+    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" = @{{ "fAllowToGetHelp" = 0 }}
 }}
 
 foreach ($path in $systemKeys.Keys) {{
