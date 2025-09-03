@@ -1,4 +1,4 @@
-def HTMLEmail(ip_address: str, created_at: str, link1: str, rdpgen: str,  new_vm_url, dash_url) -> str:
+def HTMLEmail(ip_address: str, created_at: str, link1: str, rdpgen: str,  new_vm_url: str, dash_url: str,  username: str, password: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 
@@ -248,7 +248,15 @@ def HTMLEmail(ip_address: str, created_at: str, link1: str, rdpgen: str,  new_vm
                     <span class="detail-label">IP Address:</span>
                     <span class="detail-value" id="ip-address"> {ip_address}</span>
                 </div>
+                 <div class="detail-row">
+                    <span class="detail-label">Username:</span>
+                    <span class="detail-value">{username}</span>
+                </div>
 
+                <div class="detail-row">
+                    <span class="detail-label">Password:</span>
+                    <span class="detail-value">{password}</span>
+                </div>
                 <div class="detail-row">
                     <span class="detail-label">Status:</span>
                     <span class="detail-value"> Running</span>

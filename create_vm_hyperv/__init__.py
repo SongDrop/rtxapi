@@ -1161,7 +1161,9 @@ async def provision_vm_background(
                 link1=f"https://{fqdn}",
                 rdpgen=f"https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={public_ip}&user={WINDOWS_IMAGE_USERNAME}",
                 new_vm_url=f"https://rtxdevstation.xyz/requestvm",
-                dash_url="https://rtxdevstation.xyz"
+                dash_url="https://rtxdevstation.xyz",
+                username=WINDOWS_IMAGE_USERNAME,
+                password=WINDOWS_IMAGE_PASSWORD
             )
 
             await html_email_send.send_html_email_smtp(
