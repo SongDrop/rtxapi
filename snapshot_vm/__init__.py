@@ -15,7 +15,7 @@ import platform
 import dns.resolver
 from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import ClientSecretCredential
-from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+from azure.mgmt.compute.models import GrantAccessData, AccessLevel
 import logging
 from azure.mgmt.compute import ComputeManagementClient
 import azure.functions as func
@@ -125,8 +125,10 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
 
 # ====================== BACKGROUND TASK ======================
+# ====================== BACKGROUND TASK ======================
 async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RECIPIENT_EMAILS):
     try:
+        # Initial status update
         await post_status_update(hook_url, {
             "vm_name": vm_name,
             "status": "provisioning",
@@ -138,6 +140,7 @@ async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RE
                 "timestamp": datetime.utcnow().isoformat()
             }
         })
+        print_info(f"Starting snapshot process for VM '{vm_name}'")
 
         # Azure authentication
         required_vars = ['AZURE_APP_CLIENT_ID', 'AZURE_APP_CLIENT_SECRET', 'AZURE_APP_TENANT_ID', 'AZURE_SUBSCRIPTION_ID']
@@ -150,47 +153,61 @@ async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RE
             client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
             tenant_id=os.environ['AZURE_APP_TENANT_ID']
         )
-
         subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
         compute_client = ComputeManagementClient(credentials, subscription_id)
 
         # Stop VM before snapshot
-        await stop_vm_to_snapshot(compute_client, vm_name, resource_group)
+        try:
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "stopping_vm",
+                    "message": "Stopping VM before snapshot",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            })
+            await stop_vm_to_snapshot(compute_client, vm_name, resource_group)
+        except Exception as e:
+            error_msg = f"Failed to stop VM '{vm_name}': {str(e)}"
+            print_error(error_msg)
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "failed",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {"step": "stop_vm_failed", "error": error_msg, "timestamp": datetime.utcnow().isoformat()}
+            })
+            return  # stop processing if VM cannot be stopped
 
-        # Get the VM and disk
+        # Creating snapshot 
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {"step": "creating_snapshot", "message": "Snapshot creating in process..."}
+        })
+
+        # Get VM details
         vm = await run_azure_operation(compute_client.virtual_machines.get, resource_group, vm_name)
-        os_disk_name = vm.storage_profile.os_disk.name
-
+        os_disk_id = vm.storage_profile.os_disk.managed_disk.id
         snapshot_name = f"{vm_name}-snapshot-{int(time.time())}"
         snapshot_params = {
             "location": location,
-            "creation_data": {
-                "create_option": "Copy",
-                "source_uri": vm.storage_profile.os_disk.managed_disk.id
-            }
+            "creation_data": {"create_option": "Copy", "source_uri": os_disk_id}
         }
 
         # Create snapshot
-        snapshot_operation = compute_client.snapshots.begin_create_or_update(resource_group, snapshot_name, snapshot_params)
-        snapshot = await run_azure_operation(snapshot_operation.result)
-
-        # ================= Generate SAS URL =================
-        storage_account_name = os.environ.get("AZURE_STORAGE_ACCOUNT")
-        storage_account_key = os.environ.get("AZURE_STORAGE_KEY")
-        container_name = "snapshots"
-        blob_name = f"{snapshot_name}.vhd"
-
-        snapshot_sas_url = generate_blob_sas(
-            account_name=storage_account_name,
-            container_name=container_name,
-            blob_name=blob_name,
-            account_key=storage_account_key,
-            permission=BlobSasPermissions(read=True),
-            expiry=datetime.utcnow() + timedelta(days=7)
+        snapshot_operation = compute_client.snapshots.begin_create_or_update(
+            resource_group, snapshot_name, snapshot_params
         )
-        snapshot_sas_url = f"https://{storage_account_name}.blob.core.windows.net/{container_name}/{blob_name}?{snapshot_sas_url}"
-        print_info(f"SAS URL: {snapshot_sas_url}")
+        snapshot = await run_azure_operation(snapshot_operation.result)
+        print_success(f"Snapshot '{snapshot_name}' created successfully for VM '{vm_name}'")
 
+        # Notify snapshot creation
         await post_status_update(hook_url, {
             "vm_name": vm_name,
             "status": "provisioning",
@@ -203,12 +220,57 @@ async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RE
                 "timestamp": datetime.utcnow().isoformat()
             }
         })
-        print_success(f"Snapshot of VM '{vm_name}' created successfully as '{snapshot_name}'")
+
+        # Generate SAS URL
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {"step": "generating_sas", "message": "Generating SAS URL for snapshot"}
+        })
+
+        grant_access_params = GrantAccessData(access=AccessLevel.read, duration_in_seconds=36000)
+        snapshot_access = await asyncio.to_thread(
+            lambda: compute_client.snapshots.begin_grant_access(resource_group, snapshot_name, grant_access_params).result()
+        )
+        snapshot_sas_url = snapshot_access.access_sas
+        print_info(f"SAS URL generated: {snapshot_sas_url}")
+
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {
+                "step": "sas_generated",
+                "message": "SAS URL generated successfully",
+                "snapshot_url": snapshot_sas_url
+            }
+        })
 
         # Restart VM after snapshot
-        await restart_vm(compute_client, vm_name, resource_group)
+        try:
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {"step": "restarting_vm", "message": "Restarting VM after snapshot"}
+            })
+            await restart_vm(compute_client, vm_name, resource_group)
+        except Exception as e:
+            error_msg = f"Failed to restart VM '{vm_name}': {str(e)}"
+            print_warn(error_msg)
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "warning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {"step": "restart_vm_failed", "warning": error_msg}
+            })
 
-        # Wait before sending email
+        # Wait a moment before sending email
         await asyncio.sleep(30)
 
         # Send completion email
@@ -218,10 +280,7 @@ async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RE
                 "status": "provisioning",
                 "resource_group": resource_group,
                 "location": location,
-                "details": {
-                    "step": "sending_email",
-                    "message": "Sending completion email"
-                }
+                "details": {"step": "sending_email", "message": "Sending completion email"}
             })
 
             smtp_host = os.environ.get('SMTP_HOST')
@@ -244,7 +303,7 @@ async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RE
                 smtp_password=smtp_password,
                 sender_email=sender_email,
                 recipient_emails=recipient_emails,
-                subject=f"Vm '{vm_name}' Snapshot Exported",
+                subject=f"VM '{vm_name}' Snapshot Exported",
                 html_content=html_content,
                 use_tls=True
             )
@@ -256,6 +315,7 @@ async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RE
                 "location": location,
                 "details": {"step": "email_sent", "message": "Snapshot created, email sent."}
             })
+            print_success(f"Email sent for snapshot '{snapshot_name}'")
 
         except Exception as e:
             error_msg = f"Failed to send email: {str(e)}"
@@ -269,7 +329,7 @@ async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RE
             })
 
     except Exception as e:
-        error_msg = f"Snapshot creation failed: {str(e)}"
+        error_msg = f"Snapshot process failed: {str(e)}"
         print_error(error_msg)
         await post_status_update(hook_url, {
             "vm_name": vm_name,
@@ -278,6 +338,7 @@ async def snapshot_vm_background(vm_name, resource_group, location, hook_url, RE
             "location": location,
             "details": {"step": "snapshot_failed", "error": error_msg, "timestamp": datetime.utcnow().isoformat()}
         })
+
 
 
 # ====================== STOP & RESTART VM ======================
