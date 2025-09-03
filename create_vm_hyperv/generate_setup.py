@@ -53,7 +53,7 @@ function Set-RegistryValue {{
 # --- SYSTEM CLEANUP & DEBLOAT ---
 
 # OOBE completed
-Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" -Name "ImageState" -Value "IMAGE_STATE_COMPLETE"
+Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" -Name "ImageState" -Value 7 
 Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" -Name "OOBEInProgress" -Value 0
 Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" -Name "SetupPhase" -Value 0
 Set-RegistryValue -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" -Name "SystemSetupInProgress" -Value 0
