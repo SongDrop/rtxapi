@@ -28,7 +28,7 @@ function Notify-Webhook {{
     }}
 }}
 
-# --- Log Setup ---
+# --- Log setup ---
 $logDir = "C:\\Program Files\\Logs"
 $installLog = "$logDir\\setup_hyperv_log.txt"
 try {{
@@ -46,22 +46,36 @@ function Set-RegistryValue {{
         [Object]$Value,
         [Microsoft.Win32.RegistryValueKind]$Type = [Microsoft.Win32.RegistryValueKind]::DWord
     )
-    if (-not (Test-Path $Path)) {{ New-Item -Path $Path -Force | Out-Null }}
-    try {{ New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null }}
-    catch {{ Write-Warning "Failed to set $Path\$Name: $_" }}
+
+    if (-not (Test-Path $Path)) {{
+        try {{
+            New-Item -Path $Path -Force | Out-Null
+        }} catch {{
+            $msg = ("Failed to create registry path {{0}}: {{1}}" -f $Path, $_)
+            Write-Warning $msg
+            Add-Content -Path $installLog -Value $msg
+            return
+        }}
+    }}
+
+    try {{
+        New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
+    }} catch {{
+        $msg = ("Failed to set registry value {{0}}\\{{1}}: {{2}}" -f $Path, $Name, $_)
+        Write-Warning $msg
+        Add-Content -Path $installLog -Value $msg
+    }}
 }}
 
-# --- SYSTEM CLEANUP & DEBLOAT (HKLM/SYSTEM) ---
+# --- SYSTEM CLEANUP & DEBLOAT (HKLM + SYSTEM) ---
 $systemKeys = @{{ 
-    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" = @{{ 
-        "ImageState" = 7; "OOBEInProgress" = 0; "SetupPhase" = 0; "SystemSetupInProgress" = 0 
-    }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" = @{{ "AllowCortana" = 0 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge" = @{{ "HideFirstRunExperience" = 1 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU" = @{{ "NoAutoUpdate" = 1 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System" = @{{ "NoConnectedUser" = 3 }}
-    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection" = @{{ "AllowTelemetry" = 0 }}
-    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" = @{{ "fAllowToGetHelp" = 0 }}
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" = @{{ "ImageState"=7; "OOBEInProgress"=0; "SetupPhase"=0; "SystemSetupInProgress"=0 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" = @{{ "AllowCortana"=0 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge" = @{{ "HideFirstRunExperience"=1 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU" = @{{ "NoAutoUpdate"=1 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System" = @{{ "NoConnectedUser"=3 }}
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection" = @{{ "AllowTelemetry"=0 }}
+    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" = @{{ "fAllowToGetHelp"=0 }}
 }}
 
 foreach ($path in $systemKeys.Keys) {{
@@ -70,7 +84,7 @@ foreach ($path in $systemKeys.Keys) {{
     }}
 }}
 
-# Stop unnecessary SYSTEM services
+# Stop SYSTEM services
 $services = @("WSearch","DiagTrack","WerSvc")
 foreach ($svc in $services) {{
     try {{ Stop-Service $svc -Force -ErrorAction SilentlyContinue }} catch {{}}
@@ -81,39 +95,31 @@ foreach ($svc in $services) {{
 $hkcuProfiles = Get-ChildItem "C:\\Users" -Directory | Where-Object {{ Test-Path "$($_.FullName)\\NTUSER.DAT" }}
 
 $userKeys = @(
-    @{{ Path="Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager"; Values=@{{ 
-        "RotatingLockScreenEnabled"=0; "RotatingLockScreenOverlayEnabled"=0; "SubscribedContent-338388Enabled"=0; 
-        "SubscribedContent-310093Enabled"=0; "SystemPaneSuggestionsEnabled"=0; "SubscribedContent-SettingsEnabled"=0;
-        "SubscribedContent-AppsEnabled"=0; "SubscribedContent-338387Enabled"=0 
-    }} }},
-    @{{ Path="Software\\Microsoft\\OneDrive"; Values=@{{ "DisableFirstRun"=1 }} }},
-    @{{ Path="Software\\Microsoft\\Xbox"; Values=@{{ "ShowFirstRunUI"=0 }} }},
-    @{{ Path="Software\\Microsoft\\GameBar"; Values=@{{ "ShowStartupPanel"=0 }} }},
-    @{{ Path="Software\\Microsoft\\Office\\16.0\\Common\\General"; Values=@{{ "ShownFirstRunOptIn"=1 }} }},
-    @{{ Path="Software\\Microsoft\\Office\\16.0\\Common\\Internet"; Values=@{{ "SignInOptions"=3 }} }},
-    @{{ Path="Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\feedbackhub"; Values=@{{ "Value"=2 }} }},
-    @{{ Path="Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"; Values=@{{ "PeopleBand"=0 }} }},
-    @{{ Path="Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"; Values=@{{ "TaskbarDa"=0; "EnableBalloonTips"=0 }} }},
-    @{{ Path="Software\\Microsoft\\Windows\\CurrentVersion\\Pen"; Values=@{{ "PenWorkspaceButton"=0 }} }},
-    @{{ Path="Software\\Microsoft\\Windows\\CurrentVersion\\Appx"; Values=@{{ "DisabledByPolicy"=1 }} }},
-    @{{ Path="Software\\Policies\\Microsoft\\WindowsStore"; Values=@{{ "AutoDownload"=2 }} }},
-    @{{ Path="Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications"; Values=@{{ "NoToastApplicationNotification"=1 }} }}
+    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager"; Values=@{{"RotatingLockScreenEnabled"=0;"RotatingLockScreenOverlayEnabled"=0;"SubscribedContent-338388Enabled"=0;"SubscribedContent-310093Enabled"=0;"SystemPaneSuggestionsEnabled"=0;"SubscribedContent-SettingsEnabled"=0;"SubscribedContent-AppsEnabled"=0;"SubscribedContent-338387Enabled"=0}}}},
+    @{{Path="Software\\Microsoft\\OneDrive"; Values=@{{"DisableFirstRun"=1}}}},
+    @{{Path="Software\\Microsoft\\Xbox"; Values=@{{"ShowFirstRunUI"=0}}}},
+    @{{Path="Software\\Microsoft\\GameBar"; Values=@{{"ShowStartupPanel"=0}}}},
+    @{{Path="Software\\Microsoft\\Office\\16.0\\Common\\General"; Values=@{{"ShownFirstRunOptIn"=1}}}},
+    @{{Path="Software\\Microsoft\\Office\\16.0\\Common\\Internet"; Values=@{{"SignInOptions"=3}}}},
+    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\feedbackhub"; Values=@{{"Value"=2}}}},
+    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"; Values=@{{"PeopleBand"=0}}}},
+    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"; Values=@{{"TaskbarDa"=0;"EnableBalloonTips"=0}}}},
+    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Pen"; Values=@{{"PenWorkspaceButton"=0}}}},
+    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Appx"; Values=@{{"DisabledByPolicy"=1}}}},
+    @{{Path="Software\\Policies\\Microsoft\\WindowsStore"; Values=@{{"AutoDownload"=2}}}},
+    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications"; Values=@{{"NoToastApplicationNotification"=1}}}}
 )
 
 foreach ($profile in $hkcuProfiles) {{
-    $ntuser = "$($profile.FullName)\\NTUSER.DAT"
-    try {{
-        $tempKey = "HKU\\TempHive_$($profile.Name)"
-        reg.exe load $tempKey $ntuser
-        foreach ($key in $userKeys) {{
-            $fullPath = "$tempKey\\$($key.Path)"
-            if (-not (Test-Path $fullPath)) {{ New-Item -Path $fullPath -Force | Out-Null }}
-            foreach ($kv in $key.Values.GetEnumerator()) {{
-                try {{ Set-RegistryValue -Path $fullPath -Name $kv.Key -Value $kv.Value }} catch {{}}
-            }}
+    foreach ($key in $userKeys) {{
+        foreach ($kv in $key.Values.GetEnumerator()) {{
+            try {{
+                $fullPath = "HKU:\\$($profile.SID)\\$($key.Path)"
+                if (-not (Test-Path $fullPath)) {{ New-Item -Path $fullPath -Force | Out-Null }}
+                Set-RegistryValue -Path $fullPath -Name $kv.Key -Value $kv.Value
+            }} catch {{}}
         }}
-    }} catch {{ Write-Warning "Failed to apply HKCU for $($profile.Name): $_" }}
-    finally {{ reg.exe unload $tempKey }}
+    }}
 }}
 
 # --- Enable Hyper-V ---
