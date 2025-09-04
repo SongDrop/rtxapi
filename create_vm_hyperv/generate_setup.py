@@ -176,12 +176,35 @@ try {{
     }} catch {{ }}
 
     # Re-apply policy keys to suppress new network dialog
+    # Update NetworkList profile categories to Private
+    try {{
+        $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
+        if (Test-Path $profilesPath) {{
+            Get-ChildItem $profilesPath | ForEach-Object {{
+                Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
+            }}
+        }}
+    }} catch {{}}
+
+    # Apply network registry policies
     try {{
         New-Item -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Force | Out-Null
         New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
         New-Item -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Force | Out-Null
         New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
-    }} catch {{ }}
+    }} catch {{}}
+
+    # Disable Network Discovery firewall rules
+    try {{ Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue }} catch {{}}
+
+    # --- Disable Network Discovery services permanently ---
+    try {{
+        $servicesToDisable = @("FDResPub","FDHost","UPnPDeviceHost")
+        foreach ($svc in $servicesToDisable) {{
+            try {{ Stop-Service $svc -Force -ErrorAction SilentlyContinue }} catch {{}}
+            try {{ Set-Service $svc -StartupType Disabled }} catch {{}}
+        }}
+    }} catch {{ Write-Warning "Failed to disable Network Discovery services: $_" }}
 
     # Create Hyper-V Manager shortcut in Public Desktop so all users see it
     try {{
