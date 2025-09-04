@@ -1173,7 +1173,7 @@ async def provision_vm_background(
                     smtp_password=smtp_password,
                     sender_email=sender_email,
                     recipient_emails=recipient_emails,
-                    subject=f"Vm'{vm_name}' Created",
+                    subject=f"'{vm_name}' VM created",
                     html_content=html_content,
                     use_tls=True
                 )

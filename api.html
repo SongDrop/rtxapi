@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Azure + Hyper-V Image Factory</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #111827;
+            --muted: #94a3b8;
+            --text: #e5e7eb;
+            --brand: #60a5fa;
+            --ok: #22c55e;
+            --bad: #ef4444;
+            --warn: #f59e0b;
+            --input: #1f2937;
+            --border: #374151;
+            --card: #0b1220;
+            --btn: #2563eb;
+            --btnH: #1e40af;
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html,
+        body {
+            height: 100%
+        }
+
+        body {
+            margin: 0;
+            font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;
+            background: linear-gradient(180deg, #0b1220, #0f172a 30%, #0f172a);
+            color: var(--text);
+            -webkit-font-smoothing: antialiased
+        }
+
+        .wrap {
+            max-width: 1100px;
+            margin: 24px auto;
+            padding: 0 16px
+        }
+
+        header {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 18px;
+            flex-wrap: wrap
+        }
+
+        .title {
+            display: flex;
+            align-items: center;
+            gap: 12px
+        }
+
+        .title h1 {
+            font-size: 20px;
+            margin: 0;
+            font-weight: 700;
+            letter-spacing: .2px
+        }
+
+        .title small {
+            color: var(--muted)
+        }
+
+        .grid {
+            display: grid;
+            gap: 14px;
+            grid-template-columns: repeat(12, 1fr)
+        }
+
+        .card {
+            grid-column: span 12;
+            background: linear-gradient(180deg, #0b1220, #0a1020);
+            border: 1px solid #0b2440;
+            border-radius: 16px;
+            padding: 16px;
+            box-shadow: 0 10px 24px rgba(2, 6, 23, .6), inset 0 0 80px rgba(96, 165, 250, .06)
+        }
+
+        @media(min-width:900px) {
+            .card.span-6 {
+                grid-column: span 6
+            }
+
+            .card.span-4 {
+                grid-column: span 4
+            }
+        }
+
+        .card h2 {
+            margin: 0 0 8px 0;
+            font-size: 16px;
+            font-weight: 700
+        }
+
+        .card p {
+            margin: 0 0 12px 0;
+            color: var(--muted);
+            font-size: 13px
+        }
+
+        .row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap
+        }
+
+        .field {
+            flex: 1 1 180px;
+            min-width: 180px
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            color: var(--muted);
+            margin: 0 0 6px 0
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            background: var(--input);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 14px;
+            outline: none
+        }
+
+        textarea {
+            min-height: 76px;
+            resize: vertical
+        }
+
+        .btn {
+            appearance: none;
+            border: 1px solid #1f3b73;
+            background: linear-gradient(180deg, #2563eb, #1d4ed8);
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer
+        }
+
+        .btn:hover {
+            background: linear-gradient(180deg, #2b6bf0, #2048c9)
+        }
+
+        .btn:disabled {
+            opacity: .6;
+            cursor: not-allowed
+        }
+
+        .bad {
+            color: var(--bad)
+        }
+
+        .ok {
+            color: var(--ok)
+        }
+
+        .warn {
+            color: var(--warn)
+        }
+
+        .muted {
+            color: var(--muted)
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+            flex-wrap: wrap
+        }
+
+        .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace
+        }
+
+        .log {
+            background: linear-gradient(180deg, #0a0f1b, #0a0f1b);
+            border: 1px solid #0b2440;
+            border-radius: 14px;
+            padding: 12px;
+            max-height: 320px;
+            overflow: auto;
+            font-size: 12.5px;
+            line-height: 1.45
+        }
+
+        .log .line {
+            white-space: pre-wrap;
+            word-break: break-word;
+            border-left: 2px solid #0b2440;
+            padding-left: 8px;
+            margin: 6px 0
+        }
+
+        .pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            border: 1px solid #1f3b73;
+            background: #0d1b2f
+        }
+
+        .sep {
+            height: 1px;
+            background: #0b2440;
+            margin: 12px 0
+        }
+
+        .hint {
+            font-size: 12px;
+            color: var(--muted)
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <header>
+            <div class="title">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="#60a5fa" aria-hidden="true">
+                    <path
+                        d="M3 5a2 2 0 012-2h6v6H3V5zm10-2h6a2 2 0 012 2v4h-8V3zM3 13h8v8H5a2 2 0 01-2-2v-6zm10 0h8v6a2 2 0 01-2 2h-6v-8z" />
+                </svg>
+                <div>
+                    <h1>Azure/Hyper-V Image Factory</h1>
+                    <small>Orchestrate VM builds, exports, and SIG images</small>
+                </div>
+            </div>
+            <div class="toolbar" style="flex:1">
+                <div class="field" style="min-width:260px">
+                    <label>Base API URL</label>
+                    <input id="baseUrl" placeholder="https://api.example.com" />
+                </div>
+                <button class="btn" id="pingBtn" title="Test connectivity">Test API</button>
+            </div>
+        </header>
+
+        <!-- Common parameters -->
+        <div class="card">
+            <h2>Common Parameters</h2>
+            <p>These are used as defaults for calls below. You can still override per action.</p>
+            <div class="row">
+                <div class="field"><label>Subscription ID</label><input id="subId"
+                        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+                <div class="field"><label>Resource Group</label><input id="rg" placeholder="my-resource-group"></div>
+                <div class="field"><label>Location</label><input id="location" placeholder="eastus"></div>
+            </div>
+            <div class="row">
+                <div class="field"><label>Storage Account (for exports)</label><input id="storageAccount"
+                        placeholder="mystorageacct"></div>
+                <div class="field"><label>Container</label><input id="container" placeholder="vhds"></div>
+                <div class="field"><label>Webhook URL (optional)</label><input id="webhookUrl"
+                        placeholder="https://webhook.site/..."></div>
+            </div>
+            <div class="hint">Tip: Fill these once, then use the specific action cards.</div>
+        </div>
+
+        <div class="grid">
+            <!-- create_vm_windows -->
+            <div class="card span-6">
+                <h2>create_vm_windows</h2>
+                <p>Create a default Windows VM.</p>
+                <div class="row">
+                    <div class="field"><label>VM Name</label><input id="cvw_vm" placeholder="vm-win"></div>
+                    <div class="field"><label>Size</label><input id="cvw_size" placeholder="Standard_D4s_v5"></div>
+                    <div class="field"><label>Admin Username</label><input id="cvw_user" placeholder="azureuser"></div>
+                </div>
+                <button class="btn" data-endpoint="create_vm_windows">Run</button>
+            </div>
+
+            <!-- create_vm (from gallery image) -->
+            <div class="card span-6">
+                <h2>create_vm</h2>
+                <p>Create VM from a gallery image.</p>
+                <div class="row">
+                    <div class="field"><label>VM Name</label><input id="cv_vm" placeholder="vm-from-gallery"></div>
+                    <div class="field"><label>Gallery Image ID</label><input id="cv_image"
+                            placeholder="/subscriptions/.../galleries/.../images/.../versions/..."></div>
+                    <div class="field"><label>Size</label><input id="cv_size" placeholder="Standard_D4s_v5"></div>
+                </div>
+                <button class="btn" data-endpoint="create_vm">Run</button>
+            </div>
+
+            <!-- create_vm_hyperv -->
+            <div class="card span-6">
+                <h2>create_vm_hyperv</h2>
+                <p>Create Windows VM and enable Hyper-V via Custom Script Extension.</p>
+                <div class="row">
+                    <div class="field"><label>VM Name</label><input id="cvh_vm" placeholder="vm-hyperv"></div>
+                    <div class="field"><label>Size</label><input id="cvh_size" placeholder="Standard_D4s_v5"></div>
+                    <div class="field"><label>Set Admin Password?</label>
+                        <select id="cvh_setpwd">
+                            <option value="false">No</option>
+                            <option value="true">Yes</option>
+                        </select>
+                    </div>
+                </div>
+                <button class="btn" data-endpoint="create_vm_hyperv">Run</button>
+            </div>
+
+            <!-- snapshot_vm -->
+            <div class="card span-6">
+                <h2>snapshot_vm</h2>
+                <p>Snapshot a running VM and return a SAS for the snapshot or the disk (depending on backend).</p>
+                <div class="row">
+                    <div class="field"><label>VM Name</label><input id="sn_vm" placeholder="vm-name"></div>
+                    <div class="field"><label>Snapshot Name (optional)</label><input id="sn_name"
+                            placeholder="vm-snap-001"></div>
+                    <div class="field"><label>Expire (hours)</label><input id="sn_hours" type="number" value="24"></div>
+                </div>
+                <button class="btn" data-endpoint="snapshot_vm">Run</button>
+            </div>
+
+            <!-- generate_sas_url -->
+            <div class="card span-6">
+                <h2>generate_sas_url</h2>
+                <p>Generate a SAS URL for uploads to your storage account.</p>
+                <div class="row">
+                    <div class="field"><label>Blob Name</label><input id="sas_blob" placeholder="my.vhd"></div>
+                    <div class="field"><label>Permissions</label><input id="sas_perm" placeholder="rwd"></div>
+                    <div class="field"><label>Expire (hours)</label><input id="sas_hours" type="number" value="24">
+                    </div>
+                </div>
+                <button class="btn" data-endpoint="generate_sas_url">Run</button>
+            </div>
+
+            <!-- delete_vm -->
+            <div class="card span-6">
+                <h2>delete_vm</h2>
+                <p>Delete any VM by name (in the specified resource group).</p>
+                <div class="row">
+                    <div class="field"><label>VM Name</label><input id="del_vm" placeholder="vm-to-delete"></div>
+                    <div class="field"><label>Delete Disks?</label>
+                        <select id="del_disks">
+                            <option value="false">No</option>
+                            <option value="true">Yes</option>
+                        </select>
+                    </div>
+                </div>
+                <button class="btn" data-endpoint="delete_vm">Run</button>
+            </div>
+
+            <!-- export_vm -->
+            <div class="card span-6">
+                <h2>export_vm</h2>
+                <p>Create VM (Windows + Hyper-V), snapshot, generate managed-disk SAS, and upload VHD to Storage.</p>
+                <div class="row">
+                    <div class="field"><label>VM Name</label><input id="ex_vm" placeholder="vm-export"></div>
+                    <div class="field"><label>Target VHD Name</label><input id="ex_vhd" placeholder="exported.vhd">
+                    </div>
+                    <div class="field"><label>AzCopy Concurrency (opt)</label><input id="ex_conc" placeholder="16">
+                    </div>
+                </div>
+                <button class="btn" data-endpoint="export_vm">Run</button>
+            </div>
+
+            <!-- create_gallery_image_vm -->
+            <div class="card span-6">
+                <h2>create_gallery_image_vm</h2>
+                <p>Capture a running VM into a Shared Image Gallery image version.</p>
+                <div class="row">
+                    <div class="field"><label>Source VM Name</label><input id="sig_vm" placeholder="vm-to-capture">
+                    </div>
+                    <div class="field"><label>Gallery Name</label><input id="sig_gallery" placeholder="myGallery"></div>
+                    <div class="field"><label>Image Definition</label><input id="sig_def" placeholder="win-11-hyperv">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="field"><label>Image Version</label><input id="sig_ver" placeholder="1.0.0"></div>
+                    <div class="field"><label>Publisher</label><input id="sig_pub" placeholder="contoso"></div>
+                    <div class="field"><label>Offer</label><input id="sig_offer" placeholder="win11"></div>
+                </div>
+                <button class="btn" data-endpoint="create_gallery_image_vm">Run</button>
+            </div>
+        </div>
+
+        <!-- Output / logs -->
+        <div class="card">
+            <h2>Output</h2>
+            <p class="muted">Responses and progress will appear here.</p>
+            <div id="output" class="log mono" aria-live="polite"></div>
+        </div>
+
+        <div class="sep"></div>
+        <p class="hint">Pro tip: if your backend supports webhooks, paste it above—this UI doesn’t need to poll, you’ll
+            see progress streamed here as your server echoes it back.</p>
+    </div>
+
+    <script>
+        const $ = (id) => document.getElementById(id);
+        const out = $("output");
+
+        function line(text, level = "info") {
+            const el = document.createElement("div");
+            el.className = "line";
+            let color = "";
+            if (level === "error") color = "bad";
+            if (level === "warn") color = "warn";
+            if (level === "ok") color = "ok";
+            el.innerHTML = `<span class="pill ${color}">${level.toUpperCase()}</span> ${escapeHtml(text)}`;
+            out.prepend(el);
+        }
+
+        function escapeHtml(s) {
+            return (s ?? "").toString()
+                .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+        }
+
+        async function callApi(endpoint, payload, btn) {
+            const base = $("baseUrl").value.trim().replace(/\/+$/, "");
+            if (!base) {
+                line("Base API URL is empty.", "error");
+                return;
+            }
+            const url = `${base}/${endpoint}`;
+            btn && (btn.disabled = true);
+
+            // include common params automatically (but allow per-call override if present)
+            const common = {
+                subscription_id: $("subId").value.trim() || undefined,
+                resource_group: $("rg").value.trim() || undefined,
+                location: $("location").value.trim() || undefined,
+                storage_account: $("storageAccount").value.trim() || undefined,
+                container: $("container").value.trim() || undefined,
+                webhook_url: $("webhookUrl").value.trim() || undefined
+            };
+            const body = { ...common, ...payload };
+
+            line(`POST ${url}\n${JSON.stringify(body, null, 2)}`, "warn");
+            try {
+                const res = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body)
+                });
+                const text = await res.text();
+                let parsed;
+                try { parsed = JSON.parse(text); } catch { parsed = text; }
+
+                if (!res.ok) {
+                    line(`HTTP ${res.status}: ${text}`, "error");
+                } else {
+                    line(typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2), "ok");
+                }
+            } catch (err) {
+                line(`Fetch failed: ${err}`, "error");
+            } finally {
+                btn && (btn.disabled = false);
+            }
+        }
+
+        // Bind buttons
+        document.querySelectorAll("button.btn[data-endpoint]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const ep = btn.getAttribute("data-endpoint");
+                switch (ep) {
+                    case "create_vm_windows":
+                        callApi(ep, {
+                            vm_name: $("cvw_vm").value.trim(),
+                            size: $("cvw_size").value.trim() || undefined,
+                            admin_username: $("cvw_user").value.trim() || undefined
+                        }, btn);
+                        break;
+                    case "create_vm":
+                        callApi(ep, {
+                            vm_name: $("cv_vm").value.trim(),
+                            image_id: $("cv_image").value.trim(),
+                            size: $("cv_size").value.trim() || undefined
+                        }, btn);
+                        break;
+                    case "create_vm_hyperv":
+                        callApi(ep, {
+                            vm_name: $("cvh_vm").value.trim(),
+                            size: $("cvh_size").value.trim() || undefined,
+                            set_admin_password: $("cvh_setpwd").value === "true"
+                        }, btn);
+                        break;
+                    case "snapshot_vm":
+                        callApi(ep, {
+                            vm_name: $("sn_vm").value.trim(),
+                            snapshot_name: $("sn_name").value.trim() || undefined,
+                            expire_hours: parseInt($("sn_hours").value || "24", 10)
+                        }, btn);
+                        break;
+                    case "generate_sas_url":
+                        callApi(ep, {
+                            blob_name: $("sas_blob").value.trim(),
+                            permissions: $("sas_perm").value.trim() || "rwd",
+                            expire_hours: parseInt($("sas_hours").value || "24", 10)
+                        }, btn);
+                        break;
+                    case "delete_vm":
+                        callApi(ep, {
+                            vm_name: $("del_vm").value.trim(),
+                            delete_disks: $("del_disks").value === "true"
+                        }, btn);
+                        break;
+                    case "export_vm":
+                        callApi(ep, {
+                            vm_name: $("ex_vm").value.trim(),
+                            target_vhd_name: $("ex_vhd").value.trim(),
+                            azcopy_concurrency: $("ex_conc").value.trim() || undefined
+                        }, btn);
+                        break;
+                    case "create_gallery_image_vm":
+                        callApi(ep, {
+                            vm_name: $("sig_vm").value.trim(),
+                            gallery_name: $("sig_gallery").value.trim(),
+                            image_definition: $("sig_def").value.trim(),
+                            image_version: $("sig_ver").value.trim(),
+                            publisher: $("sig_pub").value.trim() || undefined,
+                            offer: $("sig_offer").value.trim() || undefined
+                        }, btn);
+                        break;
+                }
+            });
+        });
+
+        $("pingBtn").addEventListener("click", async () => {
+            const base = $("baseUrl").value.trim().replace(/\/+$/, "");
+            if (!base) { line("Base API URL is empty.", "error"); return; }
+            const url = `${base}/healthz`;
+            try {
+                const res = await fetch(url);
+                const text = await res.text();
+                line(`GET ${url}\n${text}`, res.ok ? "ok" : "error");
+            } catch (e) {
+                line(`GET ${url} failed: ${e}`, "error");
+            }
+        });
+    </script>
+</body>
+
+</html>

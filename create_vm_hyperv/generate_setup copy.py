@@ -90,11 +90,13 @@ $systemKeys = @{{
     "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System" = @{{ "NoConnectedUser" = 3 }}
     "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection" = @{{ "AllowTelemetry" = 0 }}
     "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" = @{{ "fAllowToGetHelp" = 0 }}
+
     "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" = @{{ "NC_ShowSharedAccessUI" = 0 }}
-    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" = @{{ "NewNetworkWindowOff" = 1; "Category" = 1 }}
+    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network\\NewNetworkWindowOff" = @{{}}
+    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" = @{{ "Category" = 1 }}
+
 }}
 
-# Force networks to Private + suppress popup
 Get-NetConnectionProfile | ForEach-Object {{
     try {{
         Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
@@ -152,18 +154,10 @@ try {{
         Notify-Webhook -Status "provisioning" -Step "hyperv_enable" -Message "Enabling Hyper-V..."
         Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All -NoRestart
 
-        # Schedule post-reboot continuation (creates shortcut too)
+        # Schedule post-reboot continuation
         $taskName = "PostHyperVSetup"
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -Command `" 
-            `$desktopPath = [Environment]::GetFolderPath('Desktop');
-            `$shortcutPath = Join-Path `$desktopPath 'Hyper-V Manager.lnk';
-            `$targetPath = `$env:windir + '\\System32\\virtmgmt.msc';
-            `$wsh = New-Object -ComObject WScript.Shell;
-            `$sc = `$wsh.CreateShortcut(`$shortcutPath);
-            `$sc.TargetPath = `$targetPath;
-            `$sc.IconLocation = `$targetPath + ',0';
-            `$sc.Save();`""
+        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
         $trigger = New-ScheduledTaskTrigger -AtStartup
         $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
@@ -179,5 +173,15 @@ try {{
     Notify-Webhook -Status "failed" -Step "hyperv_enable" -Message "Hyper-V installation failed: $_"
     exit 1
 }}
+# --- Create Hyper-V Manager shortcut on desktop ---
+$desktopPath = [Environment]::GetFolderPath("Desktop")
+$shortcutPath = Join-Path $desktopPath "Hyper-V Manager.lnk"
+$targetPath = "$env:windir\\System32\\virtmgmt.msc"
+
+$wsh = New-Object -ComObject WScript.Shell
+$shortcut = $wsh.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = $targetPath
+$shortcut.IconLocation = "$env:windir\\System32\\virtmgmt.msc,0"
+$shortcut.Save()
 '''
     return script
