@@ -314,6 +314,10 @@
             </p>
             <h3>Key endpoints</h3>
             <ul>
+                <li><code>/api/create_vm_s_control</code> — Creates the control center to use the service - Very
+                    important!</li>
+                <li><code>/api/create_vm_s_api</code> — Setup the API for you to use - Very
+                    important!</li>
                 <li><code>/api/api_gateway</code> — helps to add or remove new api functions without breaking the
                     system.
                     Also adds extra security.</li>
@@ -343,21 +347,65 @@
                     more
                     resources than
                     currently allocated.</li>
-                <li><code>/api/clone_vm</code> — creates a clonable virtual image with virtual gallery what you can
-                    dispose any time.</li>
+                <li><code>/api/clone_vm</code> — creates a clonable virtual image in a virtual gallery what you can
+                    use to spin up Windows VMs.</li>
                 <li><code>/api/list_images</code> — lists all available virtual images you created so far.</li>
                 <li><code>/api/create_vm</code> — Creates a Windows 10 disposable VM from any of your saved virtual
                     images. This is what you connect via RDS or Moonlight(low-latency streaming)</li>
-
                 <li><code>/api/hook_vm</code> — Hook VM helps to generate a json file in Azure storage to monitor the
                     process of vm creation. The json saved in a temporary storage, and deleted on failure or success.
-                    Your front-end use this to connect after the first api. Implemented to overcome 4-minutes api
-                    timeout on front-end, as most of the functions running as background tasks from avg. 4-50 minutes.
+                    Your front-end use this to monitor the installation progress after the first API call as a hook.
+                    Implemented to overcome 4-minutes API
+                    timeout on front-end, as most of the functions running in background tasks from avg. 4-50 minutes to
+                    create, delete, clone etc.
                 </li>
                 <li><code>/api/get_function_keys</code> — It allows to get the secured function token. Without function
                     tokens the API is not working. It helps security.</li>
                 <li><code>/api/default_azure_function</code> — Default Azure function to learn. Written in Python3.10,
                     and it uses Azure Python API V1 version.</li>
+                <li><code>/api/email_vm</code> — Send an email about your virtual machine reminder. It requires an smtp
+                    email server to send emails.</li>
+                <li><code>/api/list_vm_html</code> — Lists your running virtual machines in an easy to read html file in
+                    browser.</li>
+                <li><code>/api/create_vm_s_forgejo</code> — Creates a private GitHub clone with GitLFS large file
+                    storage for your software/game development and code-sharing git repository</li>
+                <li><code>/api/create_vm_s_vscode</code> — Creates a browser based code editor VSCode onlines</li>
+                <li><code>/api/create_vm_s_mailcow</code> — Creates a MailCow Email server. WARNING: Microsoft Azure
+                    blocks
+                    port
+                    25, so at this moment you need to use extra smtp email services wth this such as SendGrid to send
+                    emails -
+                    which is important
+                    for email based notifications in this API. However you can create as many email users and domains
+                    for free</li>
+                <li><code>/api/create_vm_s_gitgpt</code> — GitGPT: A custom-made GPT front-end for development purposes.
+                </li>
+                <li><code>/api/create_vm_s_bytestash</code> — ByteStash: Share private or public code snippets easily.
+                </li>
+                <li><code>/api/create_vm_s_plane</code> — Plane: Lightweight project and team management platform.</li>
+                <li><code>/api/create_vm_s_n8n</code> — N8N: Automate workflows and tasks easily.</li>
+                <li><code>/api/create_vm_s_searngx</code> — SearNGX: Privacy-focused search engine for teams.</li>
+                <li><code>/api/create_vm_s_zammad</code> — Zammad: A helpdesk/customer support system.</li>
+                <li><code>/api/create_vm_s_paperless</code> — Paperless: Document management system to scan, index, and
+                    archive
+                    documents.</li>
+                <li><code>/api/create_vm_s_answer</code> — Answer: A Q&A platform software for teams at any scale.</li>
+                <li><code>/api/create_vm_s_dagu</code> — Dagu: CRON job/workflow engine for enterprise and small teams.
+                </li>
+                <li><code>/api/create_vm_s_apprise</code> — Apprise: Push notifications that work with nearly every
+                    platform.</li>
+                <li><code>/api/create_vm_s_audioscript</code> — AudioScript™️: Audio recording software for video
+                    characters.</li>
+                <li><code>/api/create_vm_s_y2drag</code> — Y2Drag: Resize and drag multiple videos on the screen.</li>
+                <li><code>/api/create_vm_s_listurls</code> — ListURLs: Save multiple links and share them as one URL.
+                </li>
+                <li><code>/api/create_vm_s_openspypro</code> — OpenSpyPro: Collaborative VPN for game building and
+                    hosting servers.</li>
+                <li><code>/api/create_vm_s_openvpn</code> — OpenVPN: Create a VPN (useful for Incredibuild 5.0
+                    distributed builds).</li>
+                <li>...AND YOUR APPS...</li>
+                <li><code>/api/create_vm_s_</code> — Add your custom softwares in this format, so the community can
+                    enjoy your creations and they can easily integrate your app into their API</li>
             </ul>
             <h3>Why use the API?</h3>
             <ul>
