@@ -69,21 +69,9 @@ function Set-RegistryValue {{
 
 # --- SYSTEM CLEANUP & DEBLOAT (HKLM + SYSTEM) ---
 $systemKeys = @{{ 
-    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" = @{{ 
-        "ImageState" = 7
-        "OOBEInProgress" = 0
-        "SetupPhase" = 0
-        "SystemSetupInProgress" = 0
-    }}
-    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE" = @{{ 
-        "PrivacyConsentStatus" = 1
-        "DisablePrivacyExperience" = 1
-        "SkipMachineOOBE" = 1
-        "SkipUserOOBE" = 1
-    }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\OOBE" = @{{ 
-        "DisablePrivacyExperience" = 1
-    }}
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" = @{{ "ImageState" = 7; "OOBEInProgress" = 0; "SetupPhase" = 0; "SystemSetupInProgress" = 0 }}
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE" = @{{ "PrivacyConsentStatus" = 1; "DisablePrivacyExperience" = 1; "SkipMachineOOBE" = 1; "SkipUserOOBE" = 1 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\OOBE" = @{{ "DisablePrivacyExperience" = 1 }}
     "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" = @{{ "AllowCortana" = 0 }}
     "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge" = @{{ "HideFirstRunExperience" = 1 }}
     "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU" = @{{ "NoAutoUpdate" = 1 }}
@@ -94,12 +82,10 @@ $systemKeys = @{{
     "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" = @{{ "NewNetworkWindowOff" = 1; "Category" = 1 }}
 }}
 
-# Force networks to Private where possible (will run now)
+# Force networks to Private where possible
 try {{
     Get-NetConnectionProfile | ForEach-Object {{
-        try {{
-            Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
-        }} catch {{ }}
+        try {{ Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue }} catch {{ }}
     }}
 }} catch {{ }}
 
@@ -148,84 +134,55 @@ foreach ($profile in $hkcuProfiles) {{
     }}
 }}
 
-# Create a post-reboot helper script that will:
-# - force network profiles to Private (again, after networking is ready)
-# - update NetworkList Profile categories in registry to Private
-# - create Hyper-V Manager shortcut in Public Desktop
-# - remove the scheduled task and delete itself
+# --- Post-reboot helper script ---
 $helperPath = "C:\\ProgramData\\PostHyperVSetup.ps1"
 $helperContent = @'
 try {{
-    # Force all NetConnectionProfiles to Private
-    try {{
-        Get-NetConnectionProfile | ForEach-Object {{
-            try {{ Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue }} catch {{ }}
-        }}
-    }} catch {{ }}
 
-    # Update NetworkList profile categories in registry to Private (1)
-    try {{
-        $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
-        if (Test-Path $profilesPath) {{
-            Get-ChildItem $profilesPath | ForEach-Object {{
-                try {{
-                    Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-                }} catch {{ }}
-            }}
-        }}
-    }} catch {{ }}
-
-    # Re-apply policy keys to suppress new network dialog
-    # Update NetworkList profile categories to Private
-    try {{
-        $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
-        if (Test-Path $profilesPath) {{
-            Get-ChildItem $profilesPath | ForEach-Object {{
-                Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-            }}
-        }}
-    }} catch {{}}
-
-    # Apply network registry policies
-    try {{
-        New-Item -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Force | Out-Null
-        New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
-        New-Item -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Force | Out-Null
-        New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
-    }} catch {{}}
+    # Set all network profiles to Private
+    Get-NetConnectionProfile | ForEach-Object {{ Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue }}
 
     # Disable Network Discovery firewall rules
-    try {{ Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue }} catch {{}}
+    Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
 
-    # --- Disable Network Discovery services permanently ---
-    try {{
-        $servicesToDisable = @("FDResPub","FDHost","UPnPDeviceHost")
-        foreach ($svc in $servicesToDisable) {{
-            try {{ Stop-Service $svc -Force -ErrorAction SilentlyContinue }} catch {{}}
-            try {{ Set-Service $svc -StartupType Disabled }} catch {{}}
+    # Stop and disable discovery services
+    $servicesToDisable = @("FDResPub","FDHost","UPnPHost","SSDPSRV")
+    foreach ($svc in $servicesToDisable) {{
+        Stop-Service $svc -Force -ErrorAction SilentlyContinue
+        Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
+    }}
+
+    # Update NetworkList Profile categories in registry to Private
+    $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
+    if (Test-Path $profilesPath) {{
+        Get-ChildItem $profilesPath | ForEach-Object {{
+            Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
         }}
-    }} catch {{ Write-Warning "Failed to disable Network Discovery services: $_" }}
+    }}
 
-    # Create Hyper-V Manager shortcut in Public Desktop so all users see it
-    try {{
-        $publicDesktop = "C:\\Users\\Public\\Desktop"
-        if (-not (Test-Path $publicDesktop)) {{ New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }}
-        $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
-        $target = "$env:windir\\System32\\virtmgmt.msc"
-        $wsh = New-Object -ComObject WScript.Shell
-        $sc = $wsh.CreateShortcut($shortcutPath)
-        $sc.TargetPath = $target
-        $sc.IconLocation = "$env:windir\\System32\\virtmgmt.msc,0"
-        $sc.Save()
-    }} catch {{ }}
+    # Apply network registry policies
+    New-Item -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
+    New-Item -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
 
-    # Remove the scheduled task (self-cleanup)
-    try {{
-        Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
-    }} catch {{ }}
+    # Create Hyper-V Manager shortcut in Public Desktop
+    $publicDesktop = "C:\\Users\\Public\\Desktop"
+    if (-not (Test-Path $publicDesktop)) {{ New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }}
+    $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
+    $target = "$env:windir\\System32\\virtmgmt.msc"
+    $wsh = New-Object -ComObject WScript.Shell
+    $sc = $wsh.CreateShortcut($shortcutPath)
+    $sc.TargetPath = $target
+    $sc.IconLocation = "$env:windir\\System32\\virtmgmt.msc,0"
+    $sc.Save()
+
+    # Remove the scheduled task
+    Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
 
     # Delete self
-    try {{ Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue }} catch {{ }}
+    Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
+
 }} catch {{ Write-Output "PostHyperVSetup encountered an error: $_" }}
 '@
 
@@ -256,25 +213,22 @@ try {{
     if ($hyperVFeature.State -ne "Enabled") {{
         Notify-Webhook -Status "provisioning" -Step "hyperv_enable" -Message "Enabling Hyper-V..."
         Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All -NoRestart
-
         Notify-Webhook -Status "info" -Step "hyperv_enable" -Message "Scheduled post-reboot continuation."
         Notify-Webhook -Status "provisioning" -Step "hyperv_restart" -Message "Restarting computer to complete Hyper-V installation..."
         Restart-Computer -Force
         exit
     }} else {{
         Notify-Webhook -Status "provisioning" -Step "hyperv_enable" -Message "Hyper-V already enabled."
-        # If Hyper-V already enabled, create the public desktop shortcut immediately (no reboot)
-        try {{
-            $publicDesktopNow = "C:\\Users\\Public\\Desktop"
-            if (-not (Test-Path $publicDesktopNow)) {{ New-Item -Path $publicDesktopNow -ItemType Directory -Force | Out-Null }}
-            $shortcutPathNow = Join-Path $publicDesktopNow "Hyper-V Manager.lnk"
-            $targetNow = "$env:windir\\System32\\virtmgmt.msc"
-            $wshNow = New-Object -ComObject WScript.Shell
-            $scNow = $wshNow.CreateShortcut($shortcutPathNow)
-            $scNow.TargetPath = $targetNow
-            $scNow.IconLocation = "$env:windir\\System32\\virtmgmt.msc,0"
-            $scNow.Save()
-        }} catch {{ Add-Content -Path $installLog -Value "Failed creating shortcut immediate: $_" }}
+        # Create shortcut immediately if Hyper-V already enabled
+        $publicDesktopNow = "C:\\Users\\Public\\Desktop"
+        if (-not (Test-Path $publicDesktopNow)) {{ New-Item -Path $publicDesktopNow -ItemType Directory -Force | Out-Null }}
+        $shortcutPathNow = Join-Path $publicDesktopNow "Hyper-V Manager.lnk"
+        $targetNow = "$env:windir\\System32\\virtmgmt.msc"
+        $wshNow = New-Object -ComObject WScript.Shell
+        $scNow = $wshNow.CreateShortcut($shortcutPathNow)
+        $scNow.TargetPath = $targetNow
+        $scNow.IconLocation = "$env:windir\\System32\\virtmgmt.msc,0"
+        $scNow.Save()
     }}
 }} catch {{
     Notify-Webhook -Status "failed" -Step "hyperv_enable" -Message "Hyper-V installation failed: $_"

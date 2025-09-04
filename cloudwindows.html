@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Windows Image Builder Documentation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0 2rem;
+            background: #f9f9f9;
+        }
+
+        h1,
+        h2,
+        h3 {
+            color: #2c3e50;
+        }
+
+        pre {
+            background: #ecf0f1;
+            padding: 1rem;
+            border-radius: 6px;
+            overflow-x: auto;
+        }
+
+        code {
+            background: #ecf0f1;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+
+        section {
+            margin-bottom: 2rem;
+        }
+
+        ul {
+            margin: 0.5rem 0 1rem 1.5rem;
+        }
+
+        .note {
+            background: #ffeaa7;
+            padding: 0.5rem 1rem;
+            border-left: 5px solid #fdcb6e;
+            margin: 1rem 0;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Cloud Windows Image Builder</h1>
+    <p>
+        This project allows you to create, customize, and export Windows virtual machines (VMs) using Hyper-V and
+        snapshots in a cloud workflow.
+        The goal is to provide a seamless way to build Windows images with all the software you need and then export
+        them as bootable VHDs to USB drives.
+    </p>
+
+    <section>
+        <h2>Why This Project Exists</h2>
+        <p>
+            Normally, when you create a new Windows VM using <code>create_vm_windows</code>, you can build your setup
+            and even generate a virtual image to clone later.
+            However, exporting a full, bootable OS image (for example 256GB) from Azure is cumbersome, manual, and can
+            take hours.
+        </p>
+        <p>
+            This workflow automates the process: you can build your VM in the cloud, snapshot it, convert it into a
+            bootable fixed-size VHD, and export it for offline use.
+            This allows you to:
+        </p>
+        <ul>
+            <li>Rapidly build customized Windows images with all your creative software installed.</li>
+            <li>Share images online or offline easily.</li>
+            <li>Save time and clicks compared to doing this manually in the Azure portal.</li>
+        </ul>
+    </section>
+
+    <section>
+        <h2>Workflow Overview</h2>
+        <ol>
+            <li><strong>Create VM:</strong> Use <code>create_vm_windows</code> or <code>create_vm_ubuntu</code> to
+                launch a cloud VM.</li>
+            <li><strong>Install software and configure:</strong> Customize the VM as you like.</li>
+            <li><strong>Snapshot:</strong> Use <code>snapshot_vm</code> to save the VM state.</li>
+            <li><strong>Hyper-V creation:</strong> Use <code>create_vm_hyperv</code> to generate a VM that can be
+                converted to a bootable fixed-size VHD.</li>
+            <li><strong>Export:</strong> Use <code>export_vm</code> to get the VHD, ready to download or use on a USB
+                drive with <code>vhdusbdownloader</code>.</li>
+        </ol>
+    </section>
+
+    <section>
+        <h2>API Reference</h2>
+        <ul>
+            <li>
+                <code>create_vm_windows</code>: Create a new Windows VM in the cloud. Configure CPU, RAM, disk size, and
+                network.
+            </li>
+            <li>
+                <code>create_vm_hyperv</code>: Converts an existing VM into a Hyper-V VM, sets up networking, enables
+                Hyper-V, and prepares it for fixed-size VHD export.
+            </li>
+            <li>
+                <code>snapshot_vm</code>: Take a snapshot of a VM at its current state. Useful for rollbacks or cloning.
+            </li>
+            <li>
+                <code>clone_vm</code>: Duplicate an existing VM from a snapshot or image.
+            </li>
+            <li>
+                <code>create_vm</code>: Generic VM creation endpoint supporting both Windows and Linux.
+            </li>
+            <li>
+                <code>delete_vm</code>: Deletes a VM and optionally its storage.
+            </li>
+            <li>
+                <code>list_vm</code>: Lists all existing VMs with their status, size, and configuration.
+            </li>
+            <li>
+                <code>request_quotas</code>: Request additional cloud quotas if current limits are insufficient.
+            </li>
+            <li>
+                <code>list_quotas</code>: Lists current quota usage and limits.
+            </li>
+            <li>
+                <code>create_vm_ubuntu</code>: Creates an Ubuntu VM in the cloud.
+            </li>
+            <li>
+                <code>export_vm</code>: Converts a Hyper-V VM into a bootable VHD and prepares it for download.
+            </li>
+        </ul>
+    </section>
+
+    <section>
+        <h2>Summary</h2>
+        <p>
+            In short, this project uses the cloud to build Windows VMs with all the software and configurations you
+            need, then automates exporting them as bootable VHDs.
+            It simplifies the complex and manual process of creating large OS images in Azure, while giving you
+            flexibility to share your creations offline.
+        </p>
+    </section>
+
+</body>
+
+</html>
