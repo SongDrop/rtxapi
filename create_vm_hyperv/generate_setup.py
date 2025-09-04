@@ -138,51 +138,39 @@ foreach ($profile in $hkcuProfiles) {{
 $helperPath = "C:\\ProgramData\\PostHyperVSetup.ps1"
 $helperContent = @'
 try {{
-
-    # Set all network profiles to Private
-    Get-NetConnectionProfile | ForEach-Object {{ Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue }}
-
+    # --- NETWORK: FORCE PRIVATE & SILENT ---
+    Get-NetConnectionProfile | ForEach-Object {{
+        Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+    }}
     # Disable Network Discovery firewall rules
     Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
-
-    # Stop and disable discovery services
+    # Stop discovery services
     $servicesToDisable = @("FDResPub","FDHost","UPnPHost","SSDPSRV")
     foreach ($svc in $servicesToDisable) {{
         Stop-Service $svc -Force -ErrorAction SilentlyContinue
         Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
     }}
-
-    # Update NetworkList Profile categories in registry to Private
+    # Registry to suppress network prompts
     $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
     if (Test-Path $profilesPath) {{
-        Get-ChildItem $profilesPath | ForEach-Object {{
-            Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-        }}
+        Get-ChildItem $profilesPath | ForEach-Object {{ Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue }}
     }}
-
-    # Apply network registry policies
-    New-Item -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Force | Out-Null
     New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-Item -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Force | Out-Null
     New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
 
-    # Create Hyper-V Manager shortcut in Public Desktop
+    # Create Hyper-V Manager shortcut
     $publicDesktop = "C:\\Users\\Public\\Desktop"
     if (-not (Test-Path $publicDesktop)) {{ New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }}
     $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
-    $target = "$env:windir\\System32\\virtmgmt.msc"
     $wsh = New-Object -ComObject WScript.Shell
     $sc = $wsh.CreateShortcut($shortcutPath)
-    $sc.TargetPath = $target
+    $sc.TargetPath = "$env:windir\\System32\\virtmgmt.msc"
     $sc.IconLocation = "$env:windir\\System32\\virtmgmt.msc,0"
     $sc.Save()
 
-    # Remove the scheduled task
+    # Cleanup
     Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
-
-    # Delete self
     Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
-
 }} catch {{ Write-Output "PostHyperVSetup encountered an error: $_" }}
 '@
 

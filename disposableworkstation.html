@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DISPOSABLE DEVELOPMENT ENVIRONMENT</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background: #f4f4f4;
+            color: #333;
+        }
+
+        header {
+            background: #1e1e2f;
+            color: #fff;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+        }
+
+        section {
+            padding: 2rem;
+            max-width: 1000px;
+            margin: 2rem auto;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        h2 {
+            color: #1e1e2f;
+        }
+
+        h3 {
+            color: #0078d4;
+            margin-top: 1.5rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+        }
+
+        ul {
+            margin-left: 1.5rem;
+        }
+
+        code {
+            background: #eee;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>DISPOSABLE DEVELOPMENT ENVIRONMENT</h1>
+    </header>
+
+    <section>
+        <h2>Concept Overview</h2>
+        <p>This system turns a VM into a disposable, fully-prepared development environment that is automated and
+            collaborative. You can spin up multiple Unreal Engine projects, sync code, connect to OpenVPN, and trigger
+            builds without manual intervention. Each VM is project-agnostic, allowing you to clone, test, and delete
+            instances efficiently.</p>
+    </section>
+
+    <section>
+        <h2>How It Works</h2>
+
+        <h3>1️⃣ VM Setup for Multiple UE Projects</h3>
+        <ul>
+            <li>Start from a base UE3 VM image.</li>
+            <li>On startup, a PowerShell script automatically:
+                <ul>
+                    <li>Connects to OpenVPN</li>
+                    <li>Checks if project repositories exist and pulls updates</li>
+                    <li>Clones missing repositories</li>
+                    <li>Opens projects in UE3 automatically</li>
+                </ul>
+            </li>
+            <li>Result: same base image can run multiple projects instantly.</li>
+        </ul>
+
+        <h3>2️⃣ Git Integration + Collaboration</h3>
+        <ul>
+            <li>VS2022 runs locally while paired with VS Code Online or browser-based IDEs.</li>
+            <li>Developers can collaborate in real-time using GitHub/Forgejo.</li>
+            <li>VM startup scripts detect new commits and pull them into local VS2022 environment.</li>
+            <li>Optional webhooks can trigger builds automatically when updates occur.</li>
+        </ul>
+
+        <h3>3️⃣ OpenVPN + Incredibuild Automation</h3>
+        <ul>
+            <li>OpenVPN connects automatically at VM boot.</li>
+            <li>Incredibuild sees all build agents and distributes builds across machines.</li>
+            <li>No manual network configuration required.</li>
+        </ul>
+
+        <h3>4️⃣ Compilation Workflow</h3>
+        <ul>
+            <li>Edit code locally in VS2022 or via VS Code Online.</li>
+            <li>Push changes to Git; VM automatically triggers headless builds using MSBuild or UnrealBuildTool.</li>
+            <li>Build logs and optional notifications (webhooks) are captured.</li>
+            <li>No manual clicks needed — fully automated workflow.</li>
+        </ul>
+
+        <h3>5️⃣ Optional Enhancements</h3>
+        <ul>
+            <li>Multiple VM profiles for different projects using the same base image.</li>
+            <li>Auto-update scripts for Unreal Engine, VS, and dependencies.</li>
+            <li>Shortcuts to open latest projects immediately.</li>
+            <li>Automated rollback to snapshots if builds fail.</li>
+        </ul>
+    </section>
+
+    <section>
+        <h2>Azure Community Platform & Cloud VM Management</h2>
+        <p>The platform is free, open-source, and community-driven. It allows developers to manage Windows and Ubuntu
+            VMs with pre-configured development tools and automated workflows.</p>
+
+        <h3>Included Features</h3>
+        <ul>
+            <li>Win10 Remote: GPU Windows 10 computers for development.</li>
+            <li>Forgejo: Self-hosted Git alternative.</li>
+            <li>VSCode Server: Browser-based code editor.</li>
+            <li>MailCow, Plane, N8N, SearNGX, Zammad, Paperless, Answer, ByteStash: pre-configured apps for full
+                development workflow.</li>
+        </ul>
+
+        <h3>Automated VM Workflow</h3>
+        <ol>
+            <li>Provide credentials for GitHub & Azure.</li>
+            <li>Automatic setup of Azure Function Apps, GitHub Actions workflows, and environment variables.</li>
+            <li>Template sync to pre-configured applications.</li>
+            <li>Platform ready for production with automated deployment.</li>
+        </ol>
+    </section>
+
+    <section>
+        <h2>Cloud Windows Image Builder</h2>
+        <p>This tool allows creating, customizing, and exporting Windows VMs as bootable VHDs.</p>
+
+        <h3>Benefits</h3>
+        <ul>
+            <li>Rapidly build customized Windows images with all creative software installed.</li>
+            <li>Export images online or offline.</li>
+            <li>Save time compared to manual setup in Azure portal.</li>
+        </ul>
+
+        <h3>Workflow</h3>
+        <ol>
+            <li>Create VM using <code>create_vm_windows</code> or <code>create_vm_ubuntu</code>.</li>
+            <li>Install software and configure environment.</li>
+            <li>Snapshot VM to save state.</li>
+            <li>Convert VM into Hyper-V fixed-size VHD using <code>create_vm_hyperv</code>.</li>
+            <li>Export VHD for USB or cloud deployment.</li>
+        </ol>
+
+        <h3>API Endpoints</h3>
+        <ul>
+            <li><code>/api/create_vm_windows</code></li>
+            <li><code>/api/create_vm_ubuntu</code></li>
+            <li><code>/api/create_vm_hyperv</code></li>
+            <li><code>/api/snapshot_vm</code></li>
+            <li><code>/api/clone_vm</code></li>
+            <li><code>/api/delete_vm</code></li>
+            <li><code>/api/list_vm</code></li>
+        </ul>
+    </section>
+
+    <section>
+        <h2>Summary</h2>
+        <p>This platform and workflow let you:</p>
+        <ul>
+            <li>Spin up disposable development VMs instantly.</li>
+            <li>Sync code automatically from Git repositories.</li>
+            <li>Connect to OpenVPN and use Incredibuild for distributed builds.</li>
+            <li>Collaborate with others using VS Code Online while retaining full local compilation.</li>
+            <li>Export fully-configured Windows images for offline or cloud use.</li>
+        </ul>
+        <p>Essentially, it’s a fully automated, collaborative, and reusable development environment for complex projects
+            like Unreal Engine, reducing setup time from hours to minutes.</p>
+    </section>
+
+</body>
+
+</html>

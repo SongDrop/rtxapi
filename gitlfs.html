@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hybrid Automated Dev VM + Collaborative Remote Editing</title>
+</head>
+
+<body>
+    <h1>Hybrid Automated Dev VM + Collaborative Remote Editing Environment</h1>
+    <p>Let me break down how that could work in practice and where the automation fits in:</p>
+
+    <h2>1️⃣ VM Setup for Multiple UE Projects</h2>
+    <p>You have a base UE3 VM image. Instead of creating separate VMs for each project, on VM startup, a PowerShell
+        script could:</p>
+    <ul>
+        <li>Connect to OpenVPN (so your build server network is available)</li>
+        <li>Check for each Unreal project repo (Forgejo/Git)</li>
+        <li>If missing → <code>git clone &lt;repo&gt;</code></li>
+        <li>If existing → <code>git pull</code> to update</li>
+        <li>Map the folder into UE3 or automatically open it in the engine</li>
+    </ul>
+    <p>This makes the VM project-agnostic: same base image, multiple projects can spin up instantly.</p>
+
+    <h2>2️⃣ Git Integration + Collaboration</h2>
+    <p>VS2022 has a local copy of your project. You could pair it with VS Code Online / Codespaces / your own
+        browser-based IDE:</p>
+    <ul>
+        <li>Anyone with access can open the project in a browser, make changes, and push commits</li>
+        <li>Your VM startup script could detect new commits and pull automatically into the local VS2022 environment
+        </li>
+        <li>Optionally, integrate webhooks or a small watcher script to notify VS2022 or trigger a rebuild when changes
+            happen</li>
+    </ul>
+    <p>Effectively: your VM stays in sync with online collaboration, but still has the full power of local compilation.
+    </p>
+
+    <h2>3️⃣ OpenVPN + Incredibuild Automation</h2>
+    <ul>
+        <li>OpenVPN connects automatically on VM boot via a PowerShell or batch script</li>
+        <li>Once connected, Incredibuild sees all your build agents in the network</li>
+        <li>Builds can then be distributed automatically, without manual intervention</li>
+    </ul>
+
+    <h2>4️⃣ How Compilation Works</h2>
+    <ul>
+        <li>You can edit in VS2022 locally or via VS Code Online</li>
+        <li>After code changes are pushed, the VM can trigger a headless build via PowerShell + MSBuild or
+            UnrealBuildTool</li>
+        <li>Build logs are captured, optional notifications via webhook</li>
+        <li>No human clicks required — it’s fully automated</li>
+    </ul>
+
+    <h2>5️⃣ Optional Enhancements</h2>
+    <ul>
+        <li>Multiple VM profiles: each VM can run different projects but use the same base image</li>
+        <li>Auto-update scripts: keep Unreal, VS, and dependencies updated without manual intervention</li>
+        <li>Shortcut to instantly open the latest project after syncing repos</li>
+        <li>Automated rollback: if the build fails, you can automatically reset the VM snapshot</li>
+    </ul>
+
+    <p>If desired, a concrete example PowerShell “startup automation” script for your UE3 VM could:</p>
+    <ul>
+        <li>Connect OpenVPN automatically</li>
+        <li>Pull/update multiple Unreal projects from Git</li>
+        <li>Optionally open them in Unreal Engine or Visual Studio</li>
+        <li>Prepare for headless or distributed builds with Incredibuild</li>
+    </ul>
+
+    <p>This would essentially give you one VM image, multiple projects, and a fully automated startup workflow.</p>
+</body>
+
+</html>
