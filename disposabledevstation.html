@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Disposable Development Environment</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-light: #3b82f6;
+            --primary-dark: #1d4ed8;
+            --secondary: #64748b;
+            --accent: #10b981;
+            --light: #f8fafc;
+            --lighter: #ffffff;
+            --dark: #1e293b;
+            --darker: #0f172a;
+            --border: #e2e8f0;
+            --highlight: #fffbeb;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background: var(--light);
+            color: var(--dark);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Header Styles */
+        header {
+            background: linear-gradient(120deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            padding: 3rem 2rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            margin-bottom: 3rem;
+        }
+
+        header:before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, transparent 70%);
+            transform: rotate(30deg);
+            pointer-events: none;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 2.8rem;
+            font-weight: 700;
+            text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.2);
+            position: relative;
+        }
+
+        .tagline {
+            font-size: 1.3rem;
+            margin: 1rem 0 2rem;
+            opacity: 0.9;
+            font-weight: 300;
+            position: relative;
+        }
+
+        /* Main Content Styles */
+        .content-section {
+            background: var(--lighter);
+            border-radius: 12px;
+            padding: 2.5rem;
+            margin-bottom: 2.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            border: 1px solid var(--border);
+        }
+
+        h2 {
+            color: var(--primary);
+            font-size: 1.8rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        h3 {
+            color: var(--primary-dark);
+            margin: 1.8rem 0 1rem;
+            font-size: 1.4rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        p {
+            margin-bottom: 1.2rem;
+            font-size: 1.05rem;
+            line-height: 1.7;
+        }
+
+        .highlight {
+            background: var(--highlight);
+            border-left: 4px solid var(--warning);
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            border-radius: 0 8px 8px 0;
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        strong {
+            color: var(--primary-dark);
+            font-weight: 600;
+        }
+
+        /* List Styles */
+        ul {
+            margin-left: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        li {
+            margin-bottom: 0.8rem;
+            position: relative;
+        }
+
+        li:before {
+            content: "•";
+            color: var(--accent);
+            font-weight: bold;
+            position: absolute;
+            left: -1rem;
+        }
+
+        ol {
+            margin-left: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        ol li {
+            margin-bottom: 0.8rem;
+        }
+
+        /* Code Styles */
+        code {
+            background: #f1f5f9;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+            color: var(--primary-dark);
+            border: 1px solid var(--border);
+        }
+
+        /* Feature Blocks */
+        .feature-block {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            border-left: 4px solid var(--primary);
+        }
+
+        .feature-block h4 {
+            color: var(--primary);
+            margin-bottom: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* API List */
+        .api-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin: 1.5rem 0;
+        }
+
+        .api-item {
+            background: #f1f5f9;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.9rem;
+            border: 1px solid var(--border);
+            transition: all 0.2s ease;
+        }
+
+        .api-item:hover {
+            background: #e2e8f0;
+            transform: translateY(-2px);
+        }
+
+        /* Summary Section */
+        .summary {
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            padding: 2.5rem;
+            border-radius: 12px;
+            margin: 2.5rem 0;
+            border: 1px solid var(--border);
+        }
+
+        .summary h2 {
+            color: var(--primary-dark);
+            border-bottom: 2px solid var(--primary-light);
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 2.5rem;
+            margin-top: 3rem;
+            background: var(--lighter);
+            border-top: 1px solid var(--border);
+            color: var(--secondary);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 2.2rem;
+            }
+            
+            .tagline {
+                font-size: 1.1rem;
+            }
+            
+            .content-section {
+                padding: 1.8rem;
+            }
+            
+            .api-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div class="container">
+            <h1>Disposable Development Environment</h1>
+            <p class="tagline">Spin up. Code. Build. Discard. Repeat.</p>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="content-section">
+            <h2><i class="fas fa-lightbulb"></i> Concept Overview</h2>
+            <p>Transform virtual machines into <strong>disposable, fully-prepared development environments</strong> that are automated and collaborative. Spin up multiple Unreal Engine projects, sync code, connect to OpenVPN, and trigger builds without manual intervention.</p>
+            <p>Each VM is project-agnostic, allowing you to clone, test, and delete instances efficiently. It's development infrastructure designed to be used and discarded like a paper cup.</p>
+            
+            <div class="highlight">
+                Think about it:
+            </div>
+            <p>
+                Traditionally, starting a team meant <strong>huge upfront costs</strong>: $2k per machine, software licenses, networking, maintenance… tens of thousands before even touching a single line of code.
+            </p>
+            <p>
+                Now, with <strong>disposable development workstations</strong>, you can spin up full-featured dev environments in the cloud, perfectly pre-configured, fully automated, and completely disposable.
+            </p>
+            <p>
+                Want to test a new project? Spin up a VM. Done? Delete it. Start fresh for the next project or team member — no wasted money, no wasted time.
+            </p>
+            <p>
+                You also remove hardware bottlenecks — your team can run on laptops, old PCs, or even tablets, because the "heavy lifting" is offloaded to the cloud.
+            </p>
+            <p>
+                It's not just a workflow improvement — it's <strong>enabling game development teams to exist at scale without scale-level costs</strong>.
+            </p>
+        </div>
+
+        <div class="content-section">
+            <h2><i class="fas fa-cogs"></i> How It Works</h2>
+
+            <div class="feature-block">
+                <h4><i class="fas fa-desktop"></i> VM Setup for Multiple UE Projects</h4>
+                <ul>
+                    <li>Start from a base UE3 VM image</li>
+                    <li>PowerShell automation handles everything</li>
+                    <li>OpenVPN connection at boot</li>
+                    <li>Git repository synchronization</li>
+                    <li>Automatic project opening in UE3</li>
+                </ul>
+            </div>
+
+            <div class="feature-block">
+                <h4><i class="fab fa-git-alt"></i> Git Integration + Collaboration</h4>
+                <ul>
+                    <li>VS2022 with browser-based IDEs</li>
+                    <li>Real-time collaboration via GitHub/Forgejo</li>
+                    <li>Automatic commit detection</li>
+                    <li>Webhook-triggered builds</li>
+                </ul>
+            </div>
+
+            <div class="feature-block">
+                <h4><i class="fas fa-network-wired"></i> OpenVPN + Incredibuild Automation</h4>
+                <ul>
+                    <li>Zero-config VPN connectivity</li>
+                    <li>Distributed builds across machines</li>
+                    <li>No manual network setup</li>
+                </ul>
+            </div>
+
+            <h3><i class="fas fa-wrench"></i> Compilation Workflow</h3>
+            <ul>
+                <li>Edit code locally in VS2022 or via VS Code Online</li>
+                <li>Push changes to Git; triggers automated headless builds</li>
+                <li>Build logs and optional notifications captured</li>
+                <li>Completely hands-off compilation process</li>
+            </ul>
+
+            <h3><i class="fas fa-magic"></i> Optional Enhancements</h3>
+            <ul>
+                <li>Multiple VM profiles from same base image</li>
+                <li>Auto-update scripts for UE, VS, and dependencies</li>
+                <li>Quick-access project shortcuts</li>
+                <li>Automated snapshot rollback on failures</li>
+            </ul>
+        </div>
+
+        <div class="content-section">
+            <h2><i class="fas fa-cloud"></i> Azure Community Platform</h2>
+            <p>Free, open-source, community-driven platform for managing Windows and Ubuntu VMs with pre-configured development tools and automated workflows.</p>
+
+            <h3><i class="fas fa-star"></i> Included Features</h3>
+            <ul>
+                <li><strong>Win10 Remote</strong>: GPU Windows 10 computers for development</li>
+                <li><strong>Forgejo</strong>: Self-hosted Git alternative</li>
+                <li><strong>VSCode Server</strong>: Browser-based code editor</li>
+                <li><strong>Full Dev Suite</strong>: MailCow, Plane, N8N, SearNGX, Zammad, Paperless, Answer, ByteStash</li>
+            </ul>
+
+            <h3><i class="fas fa-robot"></i> Automated VM Workflow</h3>
+            <ol>
+                <li>Provide credentials for GitHub & Azure</li>
+                <li>Automatic setup of Azure Function Apps and GitHub Actions</li>
+                <li>Template sync to pre-configured applications</li>
+                <li>Production-ready platform with automated deployment</li>
+            </ol>
+        </div>
+
+        <div class="content-section">
+            <h2><i class="fas fa-server"></i> Cloud Windows Image Builder</h2>
+            <p>Create, customize, and export Windows VMs as bootable VHDs with all creative software pre-installed.</p>
+
+            <h3><i class="fas fa-trophy"></i> Benefits</h3>
+            <ul>
+                <li>Rapid customized Windows image creation</li>
+                <li>Online or offline image export</li>
+                <li>Massive time savings vs manual Azure setup</li>
+            </ul>
+
+            <h3><i class="fas fa-list-ol"></i> Workflow</h3>
+            <ol>
+                <li>Create VM using <code>create_vm_windows</code> or <code>create_vm_ubuntu</code></li>
+                <li>Install software and configure environment</li>
+                <li>Snapshot VM to save state</li>
+                <li>Convert to Hyper-V fixed-size VHD using <code>create_vm_hyperv</code></li>
+                <li>Export VHD for USB or cloud deployment</li>
+            </ol>
+
+            <h3><i class="fas fa-code"></i> API Endpoints</h3>
+            <div class="api-grid">
+                <div class="api-item">/api/create_vm_windows</div>
+                <div class="api-item">/api/create_vm_ubuntu</div>
+                <div class="api-item">/api/create_vm_hyperv</div>
+                <div class="api-item">/api/snapshot_vm</div>
+                <div class="api-item">/api/clone_vm</div>
+                <div class="api-item">/api/delete_vm</div>
+                <div class="api-item">/api/list_vm</div>
+            </div>
+        </div>
+
+        <div class="summary">
+            <h2><i class="fas fa-check-circle"></i> Summary</h2>
+            <p>This platform and workflow let you:</p>
+            <ul>
+                <li>Spin up disposable development VMs instantly</li>
+                <li>Sync code automatically from Git repositories</li>
+                <li>Connect to OpenVPN and use Incredibuild for distributed builds</li>
+                <li>Collaborate with others using VS Code Online while retaining full local compilation</li>
+                <li>Export fully-configured Windows images for offline or cloud use</li>
+            </ul>
+            <p>Essentially, it's a fully automated, collaborative, and reusable development environment for complex projects like Unreal Engine, reducing setup time from hours to minutes.</p>
+        </div>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Disposable Development Workstation &copy; 2023 | Revolutionizing Development Environments</p>
+        </div>
+    </footer>
+</body>
+
+</html>
