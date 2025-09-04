@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "quota_create_request",
+      "route": "create_quotas",
       "methods": ["get", "post"]
     },
     {

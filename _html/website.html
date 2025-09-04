@@ -314,6 +314,9 @@
             </p>
             <h3>Key endpoints</h3>
             <ul>
+                <li><code>/api/api_gateway</code> — helps to add or remove new api functions without breaking the
+                    system.
+                    Also adds extra security.</li>
                 <li><code>/api/create_vm_windows</code> — create a Windows virtual machine with configurable options
                     such as size,
                     disk type, and networking.</li>
@@ -334,12 +337,27 @@
                 <li><code>/api/list_quotas</code> — check the current resource quotas (e.g., CPU, memory, disk, VM
                     count) assigned
                     to your account.</li>
-                <li><code>/api/request_quotas</code> — submit a request to increase your quotas when you need more
+                <li><code>/api/list_quotas</code> — list how much CPU, GPU, SSD, Memory an AI quotas you have.
+                </li>
+                <li><code>/api/create_quotas</code> — submit a request to increase your quotas when you need
+                    more
                     resources than
                     currently allocated.</li>
                 <li><code>/api/clone_vm</code> — creates a clonable virtual image with virtual gallery what you can
                     dispose any time.</li>
                 <li><code>/api/list_images</code> — lists all available virtual images you created so far.</li>
+                <li><code>/api/create_vm</code> — Creates a Windows 10 disposable VM from any of your saved virtual
+                    images. This is what you connect via RDS or Moonlight(low-latency streaming)</li>
+
+                <li><code>/api/hook_vm</code> — Hook VM helps to generate a json file in Azure storage to monitor the
+                    process of vm creation. The json saved in a temporary storage, and deleted on failure or success.
+                    Your front-end use this to connect after the first api. Implemented to overcome 4-minutes api
+                    timeout on front-end, as most of the functions running as background tasks from avg. 4-50 minutes.
+                </li>
+                <li><code>/api/get_function_keys</code> — It allows to get the secured function token. Without function
+                    tokens the API is not working. It helps security.</li>
+                <li><code>/api/default_azure_function</code> — Default Azure function to learn. Written in Python3.10,
+                    and it uses Azure Python API V1 version.</li>
             </ul>
             <h3>Why use the API?</h3>
             <ul>
