@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hybrid Dev VM Flow</title>
+    <style>
+        :root {
+            --bg: #f4f4f4;
+            --card: #fff;
+            --ink: #222;
+            --accent: #1e1e2f;
+            --accent2: #0078d4;
+            --muted: #666;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--ink);
+        }
+
+        header {
+            background: var(--accent);
+            color: #fff;
+            text-align: center;
+            padding: 1.5rem;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 1.8rem;
+        }
+
+        .flow-container {
+            max-width: 1100px;
+            margin: 2rem auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .flow-step {
+            background: var(--card);
+            border-radius: 10px;
+            padding: 1.2rem;
+            box-shadow: 0 6px 18px rgba(19, 24, 30, 0.08);
+            text-align: center;
+            flex: 1;
+        }
+
+        .flow-step h3 {
+            margin-top: 0.5rem;
+            color: var(--accent2);
+        }
+
+        .emoji {
+            font-size: 2rem;
+        }
+
+        /* arrows between steps */
+        .arrow {
+            text-align: center;
+            font-size: 1.5rem;
+            color: var(--accent);
+        }
+
+        /* horizontal layout for large screens */
+        @media (min-width: 900px) {
+            .flow-container {
+                flex-direction: row;
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 1.5rem;
+            }
+
+            .flow-group {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+            }
+
+            .arrow {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>Hybrid Automated Dev VM Workflow</h1>
+    </header>
+
+    <main class="flow-container">
+        <div class="flow-group">
+            <div class="flow-step">
+                <div class="emoji">💻</div>
+                <h3>VM Startup</h3>
+                <p>Spin up base UE VM image with startup automation script.</p>
+            </div>
+            <div class="arrow">➡️</div>
+            <div class="flow-step">
+                <div class="emoji">☁️</div>
+                <h3>OpenVPN Connect</h3>
+                <p>Auto-connects to build network on boot.</p>
+            </div>
+        </div>
+
+        <div class="flow-group">
+            <div class="flow-step">
+                <div class="emoji">📂</div>
+                <h3>Repo Sync</h3>
+                <p>Clone or pull UE projects into the VM automatically.</p>
+            </div>
+            <div class="arrow">➡️</div>
+            <div class="flow-step">
+                <div class="emoji">📝</div>
+                <h3>Collaboration</h3>
+                <p>VS2022 + VSCode Online enable real-time edits + commits.</p>
+            </div>
+        </div>
+
+        <div class="flow-group">
+            <div class="flow-step">
+                <div class="emoji">⚡</div>
+                <h3>Incredibuild</h3>
+                <p>Distributes builds across agents seamlessly.</p>
+            </div>
+            <div class="arrow">➡️</div>
+            <div class="flow-step">
+                <div class="emoji">🛠️</div>
+                <h3>Headless Build</h3>
+                <p>Trigger automated builds via MSBuild / UBT scripts.</p>
+            </div>
+        </div>
+
+        <div class="flow-group">
+            <div class="flow-step">
+                <div class="emoji">🔄</div>
+                <h3>Optional Enhancements</h3>
+                <p>Snapshots, auto-updates, instant project shortcuts, rollback.</p>
+            </div>
+            <div class="arrow">➡️</div>
+            <div class="flow-step">
+                <div class="emoji">🚀</div>
+                <h3>Release</h3>
+                <p>Export VM as VHD/USB or ship builds to distribution platforms.</p>
+            </div>
+        </div>
+    </main>
+</body>
+
+</html>

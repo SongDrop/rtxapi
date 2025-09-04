@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>DISPOSABLE DEVELOPMENT ENVIRONMENT</title>
+    <style>
+        :root {
+            --bg: #f4f4f4;
+            --card: #ffffff;
+            -- ink: #222;
+            --accent: #1e1e2f;
+            --accent2: #0078d4;
+            --muted: #666;
+            --glass: rgba(255, 255, 255, 0.8);
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+            background: var(--bg);
+            color: var(--ink);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        header {
+            background: var(--accent);
+            color: #fff;
+            padding: 2rem 1rem;
+            text-align: center;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 2rem;
+            letter-spacing: 0.2px
+        }
+
+        header p {
+            margin: .5rem 0 0;
+            color: rgba(255, 255, 255, 0.85)
+        }
+
+        /* page layout */
+        .container {
+            max-width: 1100px;
+            margin: 1.25rem auto 5.5rem;
+            /* bottom space for tabbar */
+            padding: 0 1rem;
+        }
+
+        .card {
+            background: var(--card);
+            border-radius: 10px;
+            padding: 1.5rem;
+            box-shadow: 0 6px 20px rgba(19, 24, 30, 0.06);
+            margin-bottom: 1rem;
+        }
+
+        h2 {
+            color: var(--accent);
+            margin-top: 0
+        }
+
+        h3 {
+            color: var(--accent2);
+            margin-bottom: 0.5rem
+        }
+
+        p {
+            color: var(--muted);
+            line-height: 1.55
+        }
+
+        ul {
+            margin: 0.5rem 0 1rem 1.25rem;
+            color: var(--muted)
+        }
+
+        ol {
+            margin: 0.5rem 0 1rem 1.25rem;
+            color: var(--muted)
+        }
+
+        code {
+            background: #f2f2f2;
+            padding: .15rem .4rem;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: .95em
+        }
+
+        /* tab panels */
+        .tab-panel {
+            display: none;
+            animation: fade .18s ease
+        }
+
+        .tab-panel.active {
+            display: block
+        }
+
+        @keyframes fade {
+            from {
+                opacity: 0;
+                transform: translateY(6px)
+            }
+
+            to {
+                opacity: 1;
+                transform: none
+            }
+        }
+
+        /* bottom tab bar */
+        .tabbar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 68px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 12px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(245, 245, 245, 0.8));
+            border-top: 1px solid rgba(0, 0, 0, 0.06);
+            backdrop-filter: blur(6px);
+            z-index: 999;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            max-width: 1200px;
+            width: 100%;
+            justify-content: space-between;
+        }
+
+        .tab {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            padding: 8px 12px;
+            min-width: 88px;
+            border-radius: 10px;
+            cursor: pointer;
+            user-select: none;
+            color: var(--muted);
+            transition: all .15s ease;
+            text-align: center;
+            font-size: 12px;
+        }
+
+        .tab .emoji {
+            font-size: 18px
+        }
+
+        .tab.active {
+            background: linear-gradient(90deg, var(--accent) 0%, var(--accent2) 100%);
+            color: #fff;
+            box-shadow: 0 8px 28px rgba(30, 30, 47, 0.18);
+        }
+
+        .tab:focus {
+            outline: 3px solid rgba(0, 120, 212, 0.12);
+            outline-offset: 3px
+        }
+
+        .tab:hover {
+            transform: translateY(-2px)
+        }
+
+        /* responsive */
+        @media (max-width:720px) {
+            .tab {
+                min-width: 64px;
+                font-size: 11px;
+                padding: 6px 8px
+            }
+
+            header h1 {
+                font-size: 1.3rem
+            }
+
+            .container {
+                margin-bottom: 6.75rem
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>DISPOSABLE DEVELOPMENT ENVIRONMENT</h1>
+        <p>Spin up fully-prepared, disposable developer workstations in the cloud — automated, collaborative, and
+            ready-to-use.</p>
+    </header>
+
+    <main class="container" id="main">
+        <!-- Overview -->
+        <section id="overview" class="card tab-panel active" role="region" aria-labelledby="tab-overview">
+            <h2>Overview</h2>
+            <p>
+                This system turns a VM into a disposable, fully-prepared development environment that is automated and
+                collaborative.
+                Spin up multiple Unreal Engine projects, sync code, connect to OpenVPN, and trigger builds without
+                manual intervention.
+                Each VM is project-agnostic — clone, test, and delete instances efficiently.
+            </p>
+
+            <h3>Why "Disposable" matters</h3>
+            <ul>
+                <li>Massive reduction in upfront hardware costs — no need to buy expensive workstations for every team
+                    member.</li>
+                <li>Teams run on lightweight devices (laptops, tablets) while heavy builds execute in cloud VMs.</li>
+                <li>Easy reproducibility and sharing: one golden base image can serve many projects.</li>
+            </ul>
+
+            <h3>Primary components</h3>
+            <ul>
+                <li><strong>Image builder</strong>: Create and snapshot Windows VMs; convert to Hyper-V fixed-size VHDs.
+                </li>
+                <li><strong>Automation API</strong>: Provision, snapshot, convert, export and manage VMs
+                    programmatically.</li>
+                <li><strong>Control center</strong>: One-stop for deploying pre-configured apps and developer tooling.
+                </li>
+                <li><strong>VHDUSB</strong>: An Electron tool to download VHD to USB for offline/portable use.</li>
+            </ul>
+        </section>
+
+        <!-- Azure -->
+        <section id="azure" class="card tab-panel" role="region" aria-labelledby="tab-azure">
+            <h2>Connect with Azure</h2>
+            <p>
+                The platform uses Azure to run Windows and Ubuntu VMs on demand. Key steps to make it work:
+            </p>
+            <ol>
+                <li>Create an Azure Function App (Flex Consumption recommended for cost-efficiency).</li>
+                <li>Enable GitHub deployment or set up deployment via publish profile / service principal.</li>
+                <li>Provision required quotas (vCPUs, disk storage, GPU if needed) and set up networking.</li>
+                <li>Store secrets (publish profile, Azure credentials, GitHub token) securely in your repo or Azure Key
+                    Vault.</li>
+            </ol>
+
+            <h3>Automation notes</h3>
+            <ul>
+                <li>A dedicated GitHub Actions workflow builds and packages the Python function/API, installs
+                    dependencies, and deploys to Azure.</li>
+                <li>Use app settings (environment variables) to inject configuration like OPENAI_API_KEY, storage SAS
+                    tokens, etc.</li>
+                <li>Prefer CLI/ARM/Bicep or Terraform to provision resources reproducibly for production deployments.
+                </li>
+            </ul>
+        </section>
+
+        <!-- Control Panel -->
+        <section id="control" class="card tab-panel" role="region" aria-labelledby="tab-control">
+            <h2>Control Panel — pre-configured apps</h2>
+            <p>
+                The Control Panel is your personal mini-portal: manage Windows/Ubuntu VMs, stream desktops, and access
+                pre-installed services.
+            </p>
+
+            <h3>Core apps included</h3>
+            <ul>
+                <li><strong>Win10 Remote</strong> — GPU-enabled Windows machines for heavy workloads.</li>
+                <li><strong>Forgejo</strong> — self-hosted Git service.</li>
+                <li><strong>VSCode Server</strong> — browser-based editor for quick edits.</li>
+                <li><strong>MailCow, Plane, N8N</strong> — mail, project management and workflow automation.</li>
+                <li><strong>ByteStash, Answer, Zammad</strong> — developer utilities and team tools.</li>
+            </ul>
+
+            <h3>How to use</h3>
+            <ol>
+                <li>Pick an app from the Control Panel and click <em>Create</em>.</li>
+                <li>Configuration templates (username/password, subdomain, repo) are filled from your JSON manifest.
+                </li>
+                <li>Service is deployed automatically; use the provided subdomain or custom domain.</li>
+            </ol>
+        </section>
+
+        <!-- API -->
+        <section id="api" class="card tab-panel" role="region" aria-labelledby="tab-api">
+            <h2>API — automation backbone</h2>
+            <p><em>The API is the central layer that makes disposable development environments scalable and
+                    reproducible.</em></p>
+            <div style="margin: 1rem 0;">
+                <button>Install API</button>
+                <button>Access API in VSCode Online</button>
+            </div>
+            <p>
+                The API gives https URL links to programmatically manage VMs, snapshots, image conversion and export.
+                This
+                is how automation & scale happen.
+            </p>
+            <p>
+                Once you installed your api, it will clone the original builds from our repo, and spins up a Premium
+                Function
+                App in your Microsoft Azure. This will be synced all the time with your private github repo(you need
+                GitHub account, and a token), so you can access and modify and sync your own API even in VSCode
+                online (VSCode Online - a code editor running in your browser - which can be setup in the Controller
+                panel). This is
+                important to be able to add or remove new one-click softwares when you wish.
+            </p>
+            <h3>Key endpoints</h3>
+            <ul>
+                <li><code>/api/create_vm_windows</code> — create a Windows virtual machine with configurable options
+                    such as size,
+                    disk type, and networking.</li>
+                <li><code>/api/create_vm_ubuntu</code> — create an Linux Ubuntu-based virtual machine for browser
+                    based softwares</li>
+                <li><code>/api/create_vm_hyperv</code> — Windows 10 with Hyper-V enabled for creating bootable .vhd to
+                    export to usb</li>
+                <li><code>/api/snapshot_vm</code> — take a snapshot of a VM for cloning or downloading for Hyper-V to
+                    turn into a fixed size bootable vhd.</li>
+                <li><code>/api/export_vm</code> — take a snapshot of a VM, generating a SAS URL, spin of a Windows 10
+                    with Hyper-V, automatising fixed size bootable vhd creation, and upload it to storage and give a
+                    downloadable url to put onto usb.
+                </li>
+                <li><code>/api/list_vm</code> — retrieve a list of all available virtual machines, including their
+                    details and
+                    statuses from the same group.</li>
+                <li><code>/api/delete_vm</code> — remove or terminate a specific virtual machine.</li>
+                <li><code>/api/list_quotas</code> — check the current resource quotas (e.g., CPU, memory, disk, VM
+                    count) assigned
+                    to your account.</li>
+                <li><code>/api/request_quotas</code> — submit a request to increase your quotas when you need more
+                    resources than
+                    currently allocated.</li>
+                <li><code>/api/clone_vm</code> — creates a clonable virtual image with virtual gallery what you can
+                    dispose any time.</li>
+                <li><code>/api/list_images</code> — lists all available virtual images you created so far.</li>
+            </ul>
+            <h3>Why use the API?</h3>
+            <ul>
+                <li>Automate repetitive tasks (build pipelines, image exports, scheduled snapshots).</li>
+                <li>Integrate with CI systems, dashboard UIs, or self-service developer portals.</li>
+                <li>Enable reproducible build environments and fast provisioning.</li>
+            </ul>
+        </section>
+
+        <!-- Custom Apps -->
+        <section id="custom" class="card tab-panel" role="region" aria-labelledby="tab-custom">
+            <h2>Custom Apps — extend the ecosystem</h2>
+            <p>
+                The platform lets you add or remove services dynamically via a JSON manifest and a small set of
+                customization files.
+            </p>
+
+            <h3>Service manifest example</h3>
+            <pre
+                style="background:#f7f7f7;padding:.75rem;border-radius:6px;color:var(--muted);font-family:monospace;overflow:auto">
+{
+  "logo":"https://example.com/logo.png",
+  "title":"Your Custom App",
+  "description":"What the app does",
+  "github_url":"https://github.com/you/your-app",
+  "subdomain":"yourapp",
+  "username":"admin",
+  "password":"strong-password",
+  "azure_create_api_url":"/api/create_vm_yourapp"
+}
+    </pre>
+
+            <h3>Three files per service</h3>
+            <ul>
+                <li><code>__init__.py</code> — function logic to provision the VM or service.</li>
+                <li><code>generate_setup.py</code> — scripts (PowerShell/Bash) installed into the VM to configure
+                    software.</li>
+                <li><code>send_html_email.py</code> — email templates/notifications on successful deploy or errors.</li>
+            </ul>
+
+            <p>Drop the manifest + files into your repo and the platform will sync and expose the new service in the
+                Control Panel.</p>
+        </section>
+
+        <!-- Create -->
+        <section id="create" class="card tab-panel" role="region" aria-labelledby="tab-create">
+            <h2>Create — building images & workflows</h2>
+            <p>
+                This is the workflow to go from a fresh VM to a fully-configured, exportable image:
+            </p>
+
+            <ol>
+                <li><strong>create_vm_windows / create_vm_ubuntu</strong> — provision a VM from templates.</li>
+                <li><strong>Install software</strong> — automatically via Chocolatey/Winget or custom scripts
+                    (generate_setup).</li>
+                <li><strong>snapshot_vm</strong> — capture the configured state for rollback or cloning.</li>
+                <li><strong>create_vm_hyperv</strong> — prepare VM for Hyper-V conversion (enable Hyper-V, convert disks
+                    to fixed-size VHD).</li>
+                <li><strong>export_vm</strong> — produce a downloadable VHD (SAS URL) and optionally push to
+                    vhdusbdownloader for USB creation.</li>
+            </ol>
+
+            <h3>Automation tips</h3>
+            <ul>
+                <li>Use <code>generate_setup.py</code> to orchestrate runtime provisioning and post-reboot helpers
+                    (network quieting, shortcuts).</li>
+                <li>Package complex installers via Chocolatey or Winget where possible.</li>
+                <li>For interactive installers (legacy games or tools), use AutoIt or PowerShell automation scripts to
+                    replicate UI steps headlessly.</li>
+            </ul>
+        </section>
+
+        <!-- VHDUSB -->
+        <section id="vhdusb" class="card tab-panel" role="region" aria-labelledby="tab-vhdusb">
+            <h2>VHDUSB — Export & offline usage</h2>
+            <p>
+                The VHDUSB workflow is what lets you take a cloud VM and make it physically portable on a USB stick:
+            </p>
+
+            <h3>How it works</h3>
+            <ol>
+                <li>Create and snapshot VM in Azure (full configured system).</li>
+                <li>Convert disks to a fixed-size Hyper-V VHD (bootable) using the Hyper-V tooling and internal scripts.
+                </li>
+                <li>Upload the VHD to Azure Storage and generate a SAS download URL (<code>export_vm</code> provides
+                    this).</li>
+                <li>Use <strong>vhdusbdownloader</strong> (Electron app) to download the VHD directly to a USB drive and
+                    make it bootable.</li>
+            </ol>
+
+            <h3>Notes & caveats</h3>
+            <ul>
+                <li>Creating very large OS VHDs (eg. 256GB) via the portal is slow/manual; automation saves hours.</li>
+                <li>Ensure the target USB drive is fast and large enough; fixed-size VHDs require contiguous space.</li>
+                <li>Test bootability on target hardware — differences in firmware (UEFI/legacy) matter.</li>
+            </ul>
+        </section>
+
+        <!-- Hybrid -->
+        <section id="hybrid" class="card tab-panel" role="region" aria-labelledby="tab-hybrid">
+            <h2>Hybrid Automated Dev VM + Collaborative Remote Editing</h2>
+            <p>
+                This workflow combines automated VM provisioning with real-time collaboration tools — giving you
+                one disposable image for multiple Unreal Engine projects, synced automatically with Git and IDEs.
+            </p>
+
+            <h3>1️⃣ VM Setup for Multiple UE Projects</h3>
+            <ul>
+                <li>Base UE3 VM image reused across projects.</li>
+                <li>On startup: PowerShell script connects to OpenVPN, checks repos, clones/pulls updates, and
+                    auto-opens in UE3.</li>
+                <li>Result: project-agnostic, instant spin-up with zero reinstall.</li>
+            </ul>
+
+            <h3>2️⃣ Git Integration + Collaboration</h3>
+            <ul>
+                <li>VS2022 runs locally with a synced copy of your project.</li>
+                <li>VS Code Online / Codespaces allows browser-based editing.</li>
+                <li>Commits pulled automatically into VS2022; optional webhooks trigger rebuilds.</li>
+            </ul>
+
+            <h3>3️⃣ OpenVPN + Incredibuild Automation</h3>
+            <ul>
+                <li>OpenVPN starts automatically on VM boot.</li>
+                <li>Incredibuild detects all agents and distributes builds with no manual setup.</li>
+            </ul>
+
+            <h3>4️⃣ Compilation Workflow</h3>
+            <ul>
+                <li>Edit locally in VS2022 or remotely in VS Code Online.</li>
+                <li>Commits trigger headless builds via MSBuild or UnrealBuildTool.</li>
+                <li>Logs captured; optional webhooks notify teams.</li>
+                <li>No human clicks — fully automated.</li>
+            </ul>
+
+            <h3>5️⃣ Optional Enhancements</h3>
+            <ul>
+                <li>VM profiles per project.</li>
+                <li>Auto-updates for Unreal, VS, and dependencies.</li>
+                <li>Shortcuts to open latest project instantly.</li>
+                <li>Rollback to snapshot if builds fail.</li>
+            </ul>
+        </section>
+
+        <!-- Release -->
+        <section id="release" class="card tab-panel" role="region" aria-labelledby="tab-release">
+            <h2>Release — shipping your game or app</h2>
+            <p>
+                Once builds are automated and reproducible, releasing becomes a matter of packaging and distribution.
+            </p>
+
+            <h3>Formats</h3>
+            <ul>
+                <li>Cloud image (VHD / VM image) for enterprise or partner distribution.</li>
+                <li>Portable USB image (via VHDUSB) for offline demos, events, or QA.</li>
+                <li>Traditional game packages (installers, ZIPs, Steam/Epic builds) produced from the automated build
+                    pipelines.</li>
+            </ul>
+
+            <h3>Distribution strategies</h3>
+            <ul>
+                <li>Continuous Delivery: auto-upload build artifacts to storage/CDN and notify QA via webhooks.</li>
+                <li>Staged releases: snapshot stable VMs and export them as golden images for distribution to partners.
+                </li>
+                <li>Local testing: give QA a USB with the VHD for reproducible offline testing environments.</li>
+            </ul>
+        </section>
+    </main>
+
+    <!-- Bottom tab bar -->
+    <nav class="tabbar" aria-label="Primary">
+        <div class="tabs" role="tablist" aria-orientation="horizontal">
+            <button class="tab active" role="tab" aria-selected="true" aria-controls="overview" id="tab-overview"
+                data-target="overview" tabindex="0">
+                <div class="emoji">📘</div>
+                <div>Overview</div>
+            </button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="azure" id="tab-azure"
+                data-target="azure" tabindex="-1">
+                <div class="emoji">☁️</div>
+                <div>Azure</div>
+            </button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="control" id="tab-control"
+                data-target="control" tabindex="-1">
+                <div class="emoji">🛠️</div>
+                <div>Control Panel</div>
+            </button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="api" id="tab-api" data-target="api"
+                tabindex="-1">
+                <div class="emoji">🔌</div>
+                <div>API</div>
+            </button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="custom" id="tab-custom"
+                data-target="custom" tabindex="-1">
+                <div class="emoji">🧩</div>
+                <div>Custom Apps</div>
+            </button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="create" id="tab-create"
+                data-target="create" tabindex="-1">
+                <div class="emoji">🏗️</div>
+                <div>Create</div>
+            </button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="vhdusb" id="tab-vhdusb"
+                data-target="vhdusb" tabindex="-1">
+                <div class="emoji">💾</div>
+                <div>VHDUSB</div>
+            </button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="hybrid" id="tab-hybrid"
+                data-target="hybrid" tabindex="-1">
+                <div class="emoji">🎬</div>
+                <div>Direct</div>
+            </button>
+
+            <button class="tab" role="tab" aria-selected="false" aria-controls="release" id="tab-release"
+                data-target="release" tabindex="-1">
+                <div class="emoji">🚀</div>
+                <div>Release</div>
+            </button>
+        </div>
+    </nav>
+
+    <script>
+        (function () {
+            const tabs = Array.from(document.querySelectorAll('.tab'));
+            const panels = Array.from(document.querySelectorAll('.tab-panel'));
+
+            function activate(targetId, focusTab = true) {
+                // tab buttons
+                tabs.forEach(t => {
+                    const is = (t.dataset.target === targetId);
+                    t.classList.toggle('active', is);
+                    t.setAttribute('aria-selected', is ? 'true' : 'false');
+                    t.tabIndex = is ? 0 : -1;
+                    if (is && focusTab) t.focus({ preventScroll: true });
+                });
+                // panels
+                panels.forEach(p => p.classList.toggle('active', p.id === targetId));
+                // store
+                try { localStorage.setItem('dde.activeTab', targetId); } catch (e) { }
+            }
+
+            // click handlers
+            tabs.forEach(t => {
+                t.addEventListener('click', () => activate(t.dataset.target));
+                t.addEventListener('keydown', (ev) => {
+                    // left/right arrows rotate tabs
+                    if (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft') {
+                        ev.preventDefault();
+                        const idx = tabs.indexOf(t);
+                        const dir = ev.key === 'ArrowRight' ? 1 : -1;
+                        const next = (idx + dir + tabs.length) % tabs.length;
+                        activate(tabs[next].dataset.target);
+                    }
+                    if (ev.key === 'Home') { ev.preventDefault(); activate(tabs[0].dataset.target); }
+                    if (ev.key === 'End') { ev.preventDefault(); activate(tabs[tabs.length - 1].dataset.target); }
+                });
+            });
+
+            // initialize to last tab or overview
+            const last = localStorage.getItem('dde.activeTab') || 'overview';
+            activate(last, false);
+
+            // support hash links: example page.html#api
+            if (location.hash) {
+                const h = location.hash.replace('#', '');
+                if (document.getElementById(h)) activate(h, false);
+            }
+        })();
+    </script>
+
+</body>
+
+</html>
