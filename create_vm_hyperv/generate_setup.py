@@ -61,9 +61,6 @@ function Set-RegistryValue {
     try {
         New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
     } catch {
-        $msg = ("Failed to set registry value {0}\{1}: {2}" -f $Path, $Name, $_)
-        Write-Warning $msg
-        Add-Content -Path $installLog -Value $msg
     }
 }
 
@@ -79,7 +76,7 @@ $systemKeys = @{
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" = @{ "AllowTelemetry" = 0 }
     "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance" = @{ "fAllowToGetHelp" = 0 }
     "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" = @{ "NC_ShowSharedAccessUI" = 0 }
-    # CRITICAL: Disable network location wizard completely - COMBINED INTO SINGLE ENTRY
+    # CRITICAL: Disable network location wizard completely
     "HKLM:\SYSTEM\CurrentControlSet\Control\Network" = @{ "NewNetworkWindowOff" = 1; "Category" = 1 }
     "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" = @{ "NC_StdDomainUserSetLocation" = 1; "NC_EnableNetSetupWizard" = 0 }
     # CRITICAL: Disable firewall notifications
@@ -111,7 +108,7 @@ $hkcuProfiles = Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "
 
 $userKeys = @(
     @{
-        Path="Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager"
+        Path="Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
         Values=@{
             "RotatingLockScreenEnabled" = 0
             "RotatingLockScreenOverlayEnabled" = 0
@@ -124,86 +121,86 @@ $userKeys = @(
         }
     }
     @{
-        Path="Software\\Microsoft\\OneDrive"
+        Path="Software\Microsoft\OneDrive"
         Values=@{
             "DisableFirstRun" = 1
         }
     }
     @{
-        Path="Software\\Microsoft\\Xbox"
+        Path="Software\Microsoft\Xbox"
         Values=@{
             "ShowFirstRunUI" = 0
         }
     }
     @{
-        Path="Software\\Microsoft\\GameBar"
+        Path="Software\Microsoft\GameBar"
         Values=@{
             "ShowStartupPanel" = 0
         }
     }
     @{
-        Path="Software\\Microsoft\\Office\\16.0\\Common\\General"
+        Path="Software\Microsoft\Office\16.0\Common\General"
         Values=@{
             "ShownFirstRunOptIn" = 1
         }
     }
     @{
-        Path="Software\\Microsoft\\Office\\16.0\\Common\\Internet"
+        Path="Software\Microsoft\Office\16.0\Common\Internet"
         Values=@{
             "SignInOptions" = 3
         }
     }
     @{
-        Path="Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\feedbackhub"
+        Path="Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\feedbackhub"
         Values=@{
             "Value" = 2
         }
     }
     @{
-        Path="Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"
+        Path="Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
         Values=@{
             "PeopleBand" = 0
         }
     }
     @{
-        Path="Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"
+        Path="Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
         Values=@{
             "TaskbarDa" = 0
             "EnableBalloonTips" = 0
         }
     }
     @{
-        Path="Software\\Microsoft\\Windows\\CurrentVersion\\Pen"
+        Path="Software\Microsoft\Windows\CurrentVersion\Pen"
         Values=@{
             "PenWorkspaceButton" = 0
         }
     }
     @{
-        Path="Software\\Microsoft\\Windows\\CurrentVersion\\Appx"
+        Path="Software\Microsoft\Windows\CurrentVersion\Appx"
         Values=@{
             "DisabledByPolicy" = 1
         }
     }
     @{
-        Path="Software\\Policies\\Microsoft\\WindowsStore"
+        Path="Software\Policies\Microsoft\WindowsStore"
         Values=@{
             "AutoDownload" = 2
         }
     }
     @{
-        Path="Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications"
+        Path="Software\Microsoft\Windows\CurrentVersion\PushNotifications"
         Values=@{
             "NoToastApplicationNotification" = 1
         }
     }
     @{
-        Path="Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings"
+        Path="Software\Microsoft\Windows\CurrentVersion\Notifications\Settings"
         Values=@{
             "NOC_GLOBAL_SETTING_TOASTS_ENABLED" = 0
         }
     }
     @{
-        Path="Software\\Microsoft\\Windows Defender Security Center\\Notifications"
+        Path="Software\Microsoft\Windows Defender Security Center\Notifications"
         Values=@{
             "DisableNotifications" = 1
         }
@@ -319,7 +316,9 @@ try {
     # Cleanup
     Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
     Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
-} catch { Write-Output "PostHyperVSetup encountered an error: $_" }
+} catch { 
+    Write-Output "PostHyperVSetup encountered an error: $_" 
+}
 '@
 
 # Write helper script
