@@ -124,21 +124,93 @@ $userKeys = @(
             "SubscribedContent-338387Enabled" = 0
         }
     }
-    @{Path="Software\Microsoft\OneDrive"; Values=@{"DisableFirstRun"=1}}},
-    @{Path="Software\Microsoft\Xbox"; Values=@{"ShowFirstRunUI"=0}}},
-    @{Path="Software\Microsoft\GameBar"; Values=@{"ShowStartupPanel"=0}}},
-    @{Path="Software\Microsoft\Office\16.0\Common\General"; Values=@{"ShownFirstRunOptIn"=1}}},
-    @{Path="Software\Microsoft\Office\16.0\Common\Internet"; Values=@{"SignInOptions"=3}}},
-    @{Path="Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\feedbackhub"; Values=@{"Value"=2}}},
-    @{Path="Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"; Values=@{"PeopleBand"=0}}},
-    @{Path="Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"; Values=@{"TaskbarDa"=0;"EnableBalloonTips"=0}}},
-    @{Path="Software\Microsoft\Windows\CurrentVersion\Pen"; Values=@{"PenWorkspaceButton"=0}}},
-    @{Path="Software\Microsoft\Windows\CurrentVersion\Appx"; Values=@{"DisabledByPolicy"=1}}},
-    @{Path="Software\Policies\Microsoft\WindowsStore"; Values=@{"AutoDownload"=2}}},
-    @{Path="Software\Microsoft\Windows\CurrentVersion\PushNotifications"; Values=@{"NoToastApplicationNotification"=1}}},
-    @{Path="Software\Microsoft\Windows\CurrentVersion\Notifications\Settings"; Values=@{"NOC_GLOBAL_SETTING_TOASTS_ENABLED"=0}}},
-    @{Path="Software\Microsoft\Windows Defender Security Center\Notifications"; Values=@{"DisableNotifications"=1}}}
+    @{
+        Path="Software\Microsoft\OneDrive"
+        Values=@{
+            "DisableFirstRun" = 1
+        }
+    }
+    @{
+        Path="Software\Microsoft\Xbox"
+        Values=@{
+            "ShowFirstRunUI" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\GameBar"
+        Values=@{
+            "ShowStartupPanel" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\Office\16.0\Common\General"
+        Values=@{
+            "ShownFirstRunOptIn" = 1
+        }
+    }
+    @{
+        Path="Software\Microsoft\Office\16.0\Common\Internet"
+        Values=@{
+            "SignInOptions" = 3
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\feedbackhub"
+        Values=@{
+            "Value" = 2
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+        Values=@{
+            "PeopleBand" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+        Values=@{
+            "TaskbarDa" = 0
+            "EnableBalloonTips" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\Pen"
+        Values=@{
+            "PenWorkspaceButton" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\Appx"
+        Values=@{
+            "DisabledByPolicy" = 1
+        }
+    }
+    @{
+        Path="Software\Policies\Microsoft\WindowsStore"
+        Values=@{
+            "AutoDownload" = 2
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\PushNotifications"
+        Values=@{
+            "NoToastApplicationNotification" = 1
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\Notifications\Settings"
+        Values=@{
+            "NOC_GLOBAL_SETTING_TOASTS_ENABLED" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows Defender Security Center\Notifications"
+        Values=@{
+            "DisableNotifications" = 1
+        }
+    }
 )
+
 
 foreach ($profile in $hkcuProfiles) {
     foreach ($key in $userKeys) {
