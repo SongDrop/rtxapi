@@ -103,7 +103,7 @@ foreach ($svc in $services) {{
     try {{ Set-Service $svc -StartupType Disabled }} catch {{ }}
 }}
 
-# --- USER CLEANUP & DEBLOAT (HKCU) ---
+# --- USER CLEANUP & DEBLOAT (HKCU) ------
 $hkcuProfiles = Get-ChildItem "C:\\Users" -Directory | Where-Object {{ Test-Path "$($_.FullName)\\NTUSER.DAT" }}
 
 $userKeys = @(
