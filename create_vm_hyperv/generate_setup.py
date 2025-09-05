@@ -51,9 +51,6 @@ function Set-RegistryValue {
         try {
             New-Item -Path $Path -Force | Out-Null
         } catch {
-            $msg = ("Failed to create registry path {0}: {1}" -f $Path, $_)
-            Write-Warning $msg
-            Add-Content -Path $installLog -Value $msg
             return
         }
     }
@@ -76,10 +73,8 @@ $systemKeys = @{
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" = @{ "AllowTelemetry" = 0 }
     "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance" = @{ "fAllowToGetHelp" = 0 }
     "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" = @{ "NC_ShowSharedAccessUI" = 0 }
-    # CRITICAL: Disable network location wizard completely
     "HKLM:\SYSTEM\CurrentControlSet\Control\Network" = @{ "NewNetworkWindowOff" = 1; "Category" = 1 }
     "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" = @{ "NC_StdDomainUserSetLocation" = 1; "NC_EnableNetSetupWizard" = 0 }
-    # CRITICAL: Disable firewall notifications
     "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" = @{ "DisableAntiSpywareNotification" = 1 }
     "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" = @{ "DisableNotifications" = 1 }
     "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" = @{ "DisableEnhancedNotifications" = 1 }
@@ -221,7 +216,10 @@ foreach ($profile in $hkcuProfiles) {
 
 # ---- Post-reboot helper script ----
 $helperPath = "C:\ProgramData\PostHyperVSetup.ps1"
+
+# Create helper script content directly without nested here-strings
 $helperContent = @'
+# Post-reboot setup script
 try {
     # Force all current network profiles to Private
     Get-NetConnectionProfile | ForEach-Object {
@@ -238,15 +236,12 @@ try {
         Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
     }
 
-    # --- CRITICAL: COMPLETELY DISABLE NETWORK LOCATION PROMPT ---
-    # These registry keys completely disable the network location wizard
+    # Disable network location wizard
     New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
-        
     New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
-        
     New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard" -Value 0 -PropertyType DWord -Force | Out-Null
 
-    # Set all existing network profiles to Private in registry
+    # Set existing network profiles to Private
     $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
     if (Test-Path $profilesPath) {
         Get-ChildItem $profilesPath | ForEach-Object {
@@ -254,7 +249,7 @@ try {
         }
     }
 
-    # Disable Network Location Awareness service (the main culprit)
+    # Disable Network Location Awareness service
     Stop-Service "NlaSvc" -Force -ErrorAction SilentlyContinue
     Set-Service "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
 
@@ -262,46 +257,10 @@ try {
     Set-NetFirewallRule -Group "@FirewallAPI.dll,-32752" -Enabled False -ErrorAction SilentlyContinue
     Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
 
-    # --- CRITICAL: DISABLE FIREWALL NOTIFICATIONS ---
-    # Disable Windows Defender/Firewall notifications
+    # Disable firewall notifications
     New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" -Name "DisableAntiSpywareNotification" -Value 1 -PropertyType DWord -Force | Out-Null
-        
     New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
-        
     New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableEnhancedNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
-
-    # --- Suppress notifications for all users ---
-    # This approach works better than trying to modify user hives as SYSTEM
-    # Create a scheduled task that runs when any user logs on
-    $userScriptPath = "C:\ProgramData\SuppressUserNotifications.ps1"
-    
-    # Create the user script content
-    $userScriptContent = @'
-# This script runs in user context to suppress notifications
-try {
-    # Disable all toast notifications
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings" -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Value 0 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
-    
-    # Disable balloon tips
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "EnableBalloonTips" -Value 0 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
-        
-    # Disable Windows Defender Security Center notifications
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
-        
-    # Disable network setup notifications
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Network\Nla\Wizard" -Name "WizardShown" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
-} catch { }
-'@
-    
-    $userScriptContent | Out-File -FilePath $userScriptPath -Encoding UTF8 -Force
-
-    # Create scheduled task that runs for all users at logon
-    $taskName = "SuppressUserNotifications"
-    $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$userScriptPath`""
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 
     # Create Hyper-V Manager shortcut
     $publicDesktop = "C:\Users\Public\Desktop"
@@ -321,7 +280,6 @@ try {
 }
 '@
 
-# Write helper script
 try {
     $helperContent | Out-File -FilePath $helperPath -Encoding UTF8 -Force
     Add-Content -Path $installLog -Value "Wrote helper script to $helperPath"
