@@ -111,7 +111,19 @@ foreach ($svc in $services) {
 $hkcuProfiles = Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" }
 
 $userKeys = @(
-    @{Path="Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"; Values=@{"RotatingLockScreenEnabled"=0;"RotatingLockScreenOverlayEnabled"=0;"SubscribedContent-338388Enabled"=0;"SubscribedContent-310093Enabled"=0;"SystemPaneSuggestionsEnabled"=0;"SubscribedContent-SettingsEnabled"=0;"SubscribedContent-AppsEnabled"=0;"SubscribedContent-338387Enabled"=0}}},
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+        Values=@{
+            "RotatingLockScreenEnabled" = 0
+            "RotatingLockScreenOverlayEnabled" = 0
+            "SubscribedContent-338388Enabled" = 0
+            "SubscribedContent-310093Enabled" = 0
+            "SystemPaneSuggestionsEnabled" = 0
+            "SubscribedContent-SettingsEnabled" = 0
+            "SubscribedContent-AppsEnabled" = 0
+            "SubscribedContent-338387Enabled" = 0
+        }
+    }
     @{Path="Software\Microsoft\OneDrive"; Values=@{"DisableFirstRun"=1}}},
     @{Path="Software\Microsoft\Xbox"; Values=@{"ShowFirstRunUI"=0}}},
     @{Path="Software\Microsoft\GameBar"; Values=@{"ShowStartupPanel"=0}}},
