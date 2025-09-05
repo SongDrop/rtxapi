@@ -134,7 +134,7 @@ foreach ($profile in $hkcuProfiles) {{
     }}
 }}
 
-# --- Post-reboot helper script ---
+# ---- Post-reboot helper script ----
 $helperPath = "C:\\ProgramData\\PostHyperVSetup.ps1"
 $helperContent = @'
 try {{
