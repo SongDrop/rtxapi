@@ -138,7 +138,7 @@ foreach ($profile in $hkcuProfiles) {{
 $helperPath = "C:\\ProgramData\\PostHyperVSetup.ps1"
 $helperContent = @'
 try {{
-    # --- NETWORK: FORCE PRIVATE & SILENT ---
+    # Force all current network profiles to Private
     Get-NetConnectionProfile | ForEach-Object {{
         Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
     }}
@@ -146,41 +146,57 @@ try {{
     # Disable Network Discovery firewall rules
     Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
 
-    # Stop discovery services
+    # Stop discovery-related services
     $servicesToDisable = @("FDResPub","FDHost","UPnPHost","SSDPSRV")
     foreach ($svc in $servicesToDisable) {{
         Stop-Service $svc -Force -ErrorAction SilentlyContinue
         Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
     }}
 
-    # --- Registry to suppress network prompts & enforce defaults ---
-    $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
+    # --- Registry: enforce Private & suppress prompts ---
+    $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
     if (Test-Path $profilesPath) {{
         Get-ChildItem $profilesPath | ForEach-Object {{
-            # Force existing profiles to Private
             Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
             New-ItemProperty -Path $_.PSPath -Name "NetworkCategory" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue
         }}
     }}
 
     # Suppress the "Set Network Location" popup globally
-    New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" `
+        -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
 
-    # Enforce Private as default for NEW networks
-    New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "DefaultNetworkCategory" -Value 1 -PropertyType DWord -Force | Out-Null
+    # Enforce Private as default for any NEW network profiles
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" `
+        -Name "DefaultNetworkCategory" -Value 1 -PropertyType DWord -Force | Out-Null
 
     # Harden network UI
-    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_AllowNetBridge_NLA" -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" `
+        -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" `
+        -Name "NC_AllowNetBridge_NLA" -Value 1 -PropertyType DWord -Force | Out-Null
 
-    # --- Disable Network Discovery globally ---
+    # Disable Network Discovery globally
     Set-NetFirewallRule -Group "@FirewallAPI.dll,-32752" -Enabled False -ErrorAction SilentlyContinue
     Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
 
-    # --- Suppress network and system notifications ---
-    New-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings" -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Value 0 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" -Name "EnableBalloonTips" -Value 0 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" -Name "NoWelcomeScreen" -Value 1 -PropertyType DWord -Force | Out-Null
+    # --- Suppress network/system notifications for all logged-in users ---
+    $hkcuProfiles = Get-ChildItem "C:\Users" -Directory | Where-Object {{ Test-Path "$($_.FullName)\NTUSER.DAT" }}
+    foreach ($profile in $hkcuProfiles) {{
+        try {{
+            $sid = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($profile.Name)").SID
+            if ($sid) {{
+                New-ItemProperty -Path "HKU:\$sid\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings" `
+                    -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Value 0 -PropertyType DWord -Force | Out-Null
+                New-ItemProperty -Path "HKU:\$sid\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" `
+                    -Name "EnableBalloonTips" -Value 0 -PropertyType DWord -Force | Out-Null
+            }}
+        }} catch {{}}
+    }}
+
+    # Suppress Welcome screen
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" `
+        -Name "NoWelcomeScreen" -Value 1 -PropertyType DWord -Force | Out-Null
 
     # Create Hyper-V Manager shortcut
     $publicDesktop = "C:\\Users\\Public\\Desktop"
