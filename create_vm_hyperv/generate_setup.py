@@ -80,6 +80,13 @@ $systemKeys = @{{
     "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" = @{{ "fAllowToGetHelp" = 0 }}
     "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" = @{{ "NC_ShowSharedAccessUI" = 0 }}
     "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" = @{{ "NewNetworkWindowOff" = 1; "Category" = 1 }}
+    # CRITICAL: Disable network location wizard completely
+    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network\\NewNetworkWindowOff" = @{{ "" = 1 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" = @{{ "NC_StdDomainUserSetLocation" = 1; "NC_EnableNetSetupWizard" = 0 }}
+    # CRITICAL: Disable firewall notifications (from the article)
+    "HKLM:\\SOFTWARE\\Microsoft\\Windows Defender\\Features" = @{{ "DisableAntiSpywareNotification" = 1 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Security Center\\Notifications" = @{{ "DisableNotifications" = 1 }}
+    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows Defender Security Center\\Notifications" = @{{ "DisableEnhancedNotifications" = 1 }}
 }}
 
 # Force networks to Private where possible
@@ -119,7 +126,10 @@ $userKeys = @(
     @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Pen"; Values=@{{"PenWorkspaceButton"=0}}}},
     @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Appx"; Values=@{{"DisabledByPolicy"=1}}}},
     @{{Path="Software\\Policies\\Microsoft\\WindowsStore"; Values=@{{"AutoDownload"=2}}}},
-    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications"; Values=@{{"NoToastApplicationNotification"=1}}}}
+    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications"; Values=@{{"NoToastApplicationNotification"=1}}}},
+    # CRITICAL: Disable user-level firewall notifications
+    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings"; Values=@{{"NOC_GLOBAL_SETTING_TOASTS_ENABLED"=0}}}},
+    @{{Path="Software\\Microsoft\\Windows Defender Security Center\\Notifications"; Values=@{{"DisableNotifications"=1}}}}
 )
 
 foreach ($profile in $hkcuProfiles) {{
@@ -134,53 +144,96 @@ foreach ($profile in $hkcuProfiles) {{
     }}
 }}
 
-# --- Post-reboot helper script ---
+# ---- Post-reboot helper script ----
 $helperPath = "C:\\ProgramData\\PostHyperVSetup.ps1"
 $helperContent = @'
 try {{
-    # --- NETWORK: FORCE PRIVATE & SILENT ---
+    # Force all current network profiles to Private
     Get-NetConnectionProfile | ForEach-Object {{
         Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
     }}
+
     # Disable Network Discovery firewall rules
     Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
-    # Stop discovery services
+
+    # Stop discovery-related services
     $servicesToDisable = @("FDResPub","FDHost","UPnPHost","SSDPSRV")
     foreach ($svc in $servicesToDisable) {{
         Stop-Service $svc -Force -ErrorAction SilentlyContinue
         Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
     }}
-    # Registry to suppress network prompts
-    $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
+
+    # --- CRITICAL: COMPLETELY DISABLE NETWORK LOCATION PROMPT ---
+    # These registry keys completely disable the network location wizard
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" `
+        -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
+        
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" `
+        -Name "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
+        
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" `
+        -Name "NC_EnableNetSetupWizard" -Value 0 -PropertyType DWord -Force | Out-Null
+
+    # Set all existing network profiles to Private in registry
+    $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
     if (Test-Path $profilesPath) {{
         Get-ChildItem $profilesPath | ForEach-Object {{
             Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
         }}
     }}
-    New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
 
-    # Suppress "Network location" prompt
-    $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
-    if (Test-Path $profilesPath) {{
-        Get-ChildItem $profilesPath | ForEach-Object {{
-            Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-            New-ItemProperty -Path $_.PSPath -Name "NetworkCategory" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue
-        }}
-    }}
+    # Disable Network Location Awareness service (the main culprit)
+    Stop-Service "NlaSvc" -Force -ErrorAction SilentlyContinue
+    Set-Service "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
 
-    # Disable "Network Discovery" globally
+    # Disable Network Discovery globally
     Set-NetFirewallRule -Group "@FirewallAPI.dll,-32752" -Enabled False -ErrorAction SilentlyContinue
     Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
 
-    # Registry hardening
-    New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
+    # --- CRITICAL: DISABLE FIREWALL NOTIFICATIONS (FROM THE ARTICLE) ---
+    # Disable Windows Defender/Firewall notifications
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" `
+        -Name "DisableAntiSpywareNotification" -Value 1 -PropertyType DWord -Force | Out-Null
+        
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" `
+        -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
+        
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" `
+        -Name "DisableEnhancedNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
 
-    # --- Suppress network and system notifications ---
-    New-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings" -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Value 0 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" -Name "EnableBalloonTips" -Value 0 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer" -Name "NoWelcomeScreen" -Value 1 -PropertyType DWord -Force | Out-Null
+    # --- Suppress notifications for all users ---
+    # This approach works better than trying to modify user hives as SYSTEM
+    # Create a scheduled task that runs when any user logs on
+    $userScriptPath = "C:\ProgramData\SuppressUserNotifications.ps1"
+    $userScriptContent = @'
+# This script runs in user context to suppress notifications
+try {{
+    # Disable all toast notifications
+    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings" `
+        -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Value 0 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+    
+    # Disable balloon tips
+    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" `
+        -Name "EnableBalloonTips" -Value 0 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+        
+    # Disable Windows Defender Security Center notifications
+    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows Defender Security Center\Notifications" `
+        -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+        
+    # Disable network setup notifications
+    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Network\Nla\Wizard" `
+        -Name "WizardShown" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+}} catch {{ }}
+'@
+    $userScriptContent | Out-File -FilePath $userScriptPath -Encoding UTF8 -Force
+
+    # Create scheduled task that runs for all users at logon
+    $taskName = "SuppressUserNotifications"
+    $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$userScriptPath`""
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 
     # Create Hyper-V Manager shortcut
     $publicDesktop = "C:\\Users\\Public\\Desktop"
