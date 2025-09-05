@@ -200,23 +200,27 @@ try {{
     # Create a scheduled task that runs when any user logs on
     $userScriptPath = "C:\ProgramData\SuppressUserNotifications.ps1"
     
-    # Create the user script content using here-string
-    $userScriptContent = @"
+    # Create the user script content - using single quotes and line continuation to avoid escaping issues
+    $userScriptContent = @'
 # This script runs in user context to suppress notifications
 try {{
     # Disable all toast notifications
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings" -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Value 0 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings" `
+        -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Value 0 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
     
     # Disable balloon tips
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "EnableBalloonTips" -Value 0 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" `
+        -Name "EnableBalloonTips" -Value 0 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
         
     # Disable Windows Defender Security Center notifications
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows Defender Security Center\Notifications" `
+        -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
         
     # Disable network setup notifications
-    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Network\Nla\Wizard" -Name "WizardShown" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+    New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Network\Nla\Wizard" `
+        -Name "WizardShown" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
 }} catch {{ }}
-"@
+'@
     
     $userScriptContent | Out-File -FilePath $userScriptPath -Encoding UTF8 -Force
 
