@@ -142,40 +142,40 @@ try {{
     Get-NetConnectionProfile | ForEach-Object {{
         Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
     }}
+
     # Disable Network Discovery firewall rules
     Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
+
     # Stop discovery services
     $servicesToDisable = @("FDResPub","FDHost","UPnPHost","SSDPSRV")
     foreach ($svc in $servicesToDisable) {{
         Stop-Service $svc -Force -ErrorAction SilentlyContinue
         Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
     }}
-    # Registry to suppress network prompts
-    $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
-    if (Test-Path $profilesPath) {{
-        Get-ChildItem $profilesPath | ForEach-Object {{
-            Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-        }}
-    }}
-    New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
 
-    # Suppress "Network location" prompt
+    # --- Registry to suppress network prompts & enforce defaults ---
     $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
     if (Test-Path $profilesPath) {{
         Get-ChildItem $profilesPath | ForEach-Object {{
+            # Force existing profiles to Private
             Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
             New-ItemProperty -Path $_.PSPath -Name "NetworkCategory" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue
         }}
     }}
 
-    # Disable "Network Discovery" globally
+    # Suppress the "Set Network Location" popup globally
+    New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
+
+    # Enforce Private as default for NEW networks
+    New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "DefaultNetworkCategory" -Value 1 -PropertyType DWord -Force | Out-Null
+
+    # Harden network UI
+    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_AllowNetBridge_NLA" -Value 1 -PropertyType DWord -Force | Out-Null
+
+    # --- Disable Network Discovery globally ---
     Set-NetFirewallRule -Group "@FirewallAPI.dll,-32752" -Enabled False -ErrorAction SilentlyContinue
     Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
-
-    # Registry hardening
-    New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
 
     # --- Suppress network and system notifications ---
     New-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings" -Name "NOC_GLOBAL_SETTING_TOASTS_ENABLED" -Value 0 -PropertyType DWord -Force | Out-Null
