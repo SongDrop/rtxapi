@@ -332,7 +332,11 @@
                     turn into a fixed size bootable vhd.</li>
                 <li><code>/api/export_vm</code> — take a snapshot of a VM, generating a SAS URL, spin of a Windows 10
                     with Hyper-V, automatising fixed size bootable vhd creation, and upload it to storage and give a
-                    downloadable url to put onto usb.
+                    downloadable url to put onto usb. <button>vhdusbdownloader</button> can help you to download
+                    'fixed-size-bootable.vhd'
+                    from URL to
+                    USB pendrive
+                </li>
                 </li>
                 <li><code>/api/list_vm</code> — retrieve a list of all available virtual machines, including their
                     details and
@@ -413,14 +417,16 @@
                 <li>Integrate with CI systems, dashboard UIs, or self-service developer portals.</li>
                 <li>Enable reproducible build environments and fast provisioning.</li>
             </ul>
+            <h3>Read more in the Custom Apps section</h3>
         </section>
 
         <!-- Custom Apps -->
         <section id="custom" class="card tab-panel" role="region" aria-labelledby="tab-custom">
             <h2>Custom Apps — extend the ecosystem</h2>
             <p>
-                The platform lets you add or remove services dynamically via a JSON manifest and a small set of
-                customization files.
+                The platform lets you add or remove a custom service list of softwares of your choice dynamically via a
+                JSON manifest and a small set of
+                customization files. - In order to costumise you need to setup your own API in the previous section.
             </p>
 
             <h3>Service manifest example</h3>
@@ -438,12 +444,21 @@
 }
     </pre>
 
-            <h3>Three files per service</h3>
+            <h3>Three files per service(using Azure Python API v1 - battle tested)</h3>
             <ul>
                 <li><code>__init__.py</code> — function logic to provision the VM or service.</li>
                 <li><code>generate_setup.py</code> — scripts (PowerShell/Bash) installed into the VM to configure
-                    software.</li>
-                <li><code>send_html_email.py</code> — email templates/notifications on successful deploy or errors.</li>
+                    software. - This is where the softwares automatically installed - this is what you focus on to
+                    create</li>
+                <li><code>send_html_email.py</code> — email templates/notifications on successful deploy or errors. -
+                    SMTP Email Server REQUIRED!</li>
+                <li><code>html_email.py</code> — email generation with printf returning the HTML with your dynamic
+                    imputs. <button>AI prompt to turn HTML to printf</button></li>
+                <li><code>function.json</code> — make sure you always edit this for the correct name for your api
+                    function
+                    <strong>"route": "create_vm_s_",</strong> without this the api function you add won't be recognised
+                    by api_gateway
+                </li>
             </ul>
 
             <p>Drop the manifest + files into your repo and the platform will sync and expose the new service in the
@@ -464,8 +479,9 @@
                 <li><strong>snapshot_vm</strong> — capture the configured state for rollback or cloning.</li>
                 <li><strong>create_vm_hyperv</strong> — prepare VM for Hyper-V conversion (enable Hyper-V, convert disks
                     to fixed-size VHD).</li>
-                <li><strong>export_vm</strong> — produce a downloadable VHD (SAS URL) and optionally push to
-                    vhdusbdownloader for USB creation.</li>
+                <li><strong>export_vm</strong> — it creates a downloadable fixed-size bootable VHD (SAS URL) what you
+                    can save to a portable USB - <button>vhdusbdownloader</button> can help you to download vhd to usb
+                </li>
             </ol>
 
             <h3>Automation tips</h3>
@@ -549,6 +565,25 @@
                 <li>Rollback to snapshot if builds fail.</li>
             </ul>
         </section>
+        <!-- BoxArt -->
+        <section id="boxart" class="card tab-panel" role="region" aria-labelledby="tab-boxart">
+            <h2>BoxArt — packaging your game or USB</h2>
+            <p>
+                BoxArt is the visual design for your game DVD, USB development kit, or software package. It helps make
+                your
+                project look professional and appealing.
+            </p>
+
+            <h3>Design tips</h3>
+            <ul>
+                <li>Create a front cover, spine, and back layout (for DVD cases or USB sleeves).</li>
+                <li>Include logos, screenshots, and key information about your software or game.</li>
+                <li>Use design tools like Photoshop, GIMP, Canva, or Figma for high-quality results.</li>
+                <li>Keep dimensions consistent with your medium: DVD case, USB sleeve, or digital thumbnail.</li>
+                <li>Consider adding a QR code or download link for users to quickly access the content.</li>
+                <li>Maintain branding and style consistency with your other materials.</li>
+            </ul>
+        </section>
 
         <!-- Release -->
         <section id="release" class="card tab-panel" role="region" aria-labelledby="tab-release">
@@ -617,6 +652,11 @@
                 data-target="hybrid" tabindex="-1">
                 <div class="emoji">🎬</div>
                 <div>Direct</div>
+            </button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="boxart" id="tab-boxart"
+                data-target="boxart" tabindex="-1">
+                <div class="emoji">🎨</div>
+                <div>BoxArt</div>
             </button>
 
             <button class="tab" role="tab" aria-selected="false" aria-controls="release" id="tab-release"
