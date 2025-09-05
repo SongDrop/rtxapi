@@ -79,9 +79,8 @@ $systemKeys = @{
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" = @{ "AllowTelemetry" = 0 }
     "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance" = @{ "fAllowToGetHelp" = 0 }
     "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" = @{ "NC_ShowSharedAccessUI" = 0 }
-    "HKLM:\SYSTEM\CurrentControlSet\Control\Network" = @{ "NewNetworkWindowOff" = 1; "Category" = 1 }
     # CRITICAL: Disable network location wizard completely
-    "HKLM:\SYSTEM\CurrentControlSet\Control\Network" = @{ "NewNetworkWindowOff" = 1 }
+    "HKLM:\SYSTEM\CurrentControlSet\Control\Network" = @{ "NewNetworkWindowOff" = 1; "Category" = 1 }
     "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" = @{ "NC_StdDomainUserSetLocation" = 1; "NC_EnableNetSetupWizard" = 0 }
     # CRITICAL: Disable firewall notifications
     "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" = @{ "DisableAntiSpywareNotification" = 1 }
