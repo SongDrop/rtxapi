@@ -327,24 +327,25 @@ try {
 
 # Register scheduled task to run the helper once at startup
 try {
-    # $taskName = "PostHyperVSetup"
-    # Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-    # $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$helperPath`""
-    # $trigger = New-ScheduledTaskTrigger -AtStartup
-    # $trigger = New-ScheduledTaskTrigger -AtLogOn
-    # $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
-    # Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
-    # Add-Content -Path $installLog -Value "Registered scheduled task $taskName"
-    # Create scheduled task to run at logon for all users
+    # Define the name of the scheduled task
     $taskName = "PostHyperVSetup"
+    # Remove any existing task with the same name to avoid conflicts
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    # Define the action the scheduled task will perform: run PowerShell with the helper script
     $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$helperPath`""
+    # Set the trigger for the task: run at user logon
     $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $principal = New-ScheduledTaskPrincipal -UserId "BUILTIN\Users" -RunLevel Highest
+    # Define the principal (user context) for the task:
+    # "Users" means any user account; RunLevel Highest runs with elevated privileges
+    $principal = New-ScheduledTaskPrincipal -UserId "Users" -RunLevel Highest
+    # Register (create) the scheduled task with the defined name, action, trigger, and principal
+    # -Force ensures it overwrites any existing task with the same name
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
 } catch {
+    # If anything fails, log the error message to the install log
     Add-Content -Path $installLog -Value "Failed to register scheduled task: $_"
 }
+
 
 # --- Enable Hyper-V ---
 try {
