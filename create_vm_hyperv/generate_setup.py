@@ -350,8 +350,8 @@ try {
     # Define task settings with proper Windows version and description
     # Create a ScheduledTaskSettingsSet for Windows 10
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
-    $settings.Description = "Post-Hyper-V setup script: configures network, disables popups, and creates Hyper-V Manager shortcut"
-    $settings.Author = "Windows 10 Developer"
+    # $settings.Description = "Post-Hyper-V setup script: configures network, disables popups, and creates Hyper-V Manager shortcut"
+    # $settings.Author = "Windows 10 Developer"
     # Define the principal (user context) for the task:
     # RunLevel Highest runs with elevated privileges
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
