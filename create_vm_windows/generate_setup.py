@@ -266,7 +266,12 @@ $helperContent = @'
 # Post-reboot setup script
 try {
     # Force all current network profiles to Private
-    Get-NetConnectionProfile | ForEach-Object { Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue }
+    # Correctly get the collection of network profiles
+    $profiles = Get-NetConnectionProfile
+    # Set each profile to Private
+    foreach ($profile in $profiles) {
+        Set-NetConnectionProfile -InterfaceIndex $profile.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+    }
     Restart-Service netprofm -Force -ErrorAction SilentlyContinue
     Restart-Service NlaSvc -Force -ErrorAction SilentlyContinue
 
