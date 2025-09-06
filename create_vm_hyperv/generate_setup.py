@@ -336,8 +336,8 @@ try {
     # Set the trigger for the task: run at user logon
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     # Define the principal (user context) for the task:
-    # "Users" means any user account; RunLevel Highest runs with elevated privileges
-    $principal = New-ScheduledTaskPrincipal -UserId "Users" -RunLevel Highest
+    # RunLevel Highest runs with elevated privileges
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
     # Register (create) the scheduled task with the defined name, action, trigger, and principal
     # -Force ensures it overwrites any existing task with the same name
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
