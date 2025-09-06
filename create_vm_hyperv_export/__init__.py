@@ -536,9 +536,10 @@ async def provision_vm_background(
         # Generate and upload setup script
         print_info("Generating PowerShell setup script...")
         ssl_email = os.environ.get('SENDER_EMAIL')
-        
+        global SNAPSHOT_URL
+
         ps_script = generate_setup.generate_setup(
-            SNAPSHOT_URL="",
+            SNAPSHOT_URL=SNAPSHOT_URL,
             WEBHOOK_URL=hook_url,
             AZURE_SAS_TOKEN=VHD_EXPORT_SAS_URL
         )

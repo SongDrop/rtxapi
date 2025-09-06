@@ -23,8 +23,8 @@ function Notify-Webhook {
         vm_name = $env:COMPUTERNAME
         status = $Status
         timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-        resource_group = windows_internal
-        location = windows_internal_script  
+        resource_group = "windows_internal"
+        location = "windows_internal_script"  
         details = @{ step = $Step; message = $Message }
     } | ConvertTo-Json -Depth 4
 

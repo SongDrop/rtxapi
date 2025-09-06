@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "export_vm",
+      "route": "create_vm_hyperv_export",
       "methods": ["get", "post"]
     },
     {

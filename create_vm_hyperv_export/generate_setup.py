@@ -1,4 +1,4 @@
-def generate_setup(WEBHOOK_URL: str = None) -> str:
+def generate_setup(WEBHOOK_URL: str = None, SNAPSHOT_URL: str = None, AZURE_SAS_TOKEN: str = None) -> str:
     script = r'''# Check for admin privileges
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -10,6 +10,8 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 
 $ErrorActionPreference = "Stop"
 $env:WEBHOOK_URL = "__WEBHOOK_URL__"
+$env:SNAPSHOT_URL = "__SNAPSHOT_URL__"
+$env:AZURE_SAS_TOKEN = "__AZURE_SAS_TOKEN__"
 
 # --- Webhook helper ---
 function Notify-Webhook {
@@ -393,7 +395,61 @@ try {
             $sc.TargetPath = "$env:windir\System32\virtmgmt.msc"
             $sc.IconLocation = "$env:windir\System32\virtmgmt.msc,0"
             $sc.Save()
-        } catch { Write-Warning "Failed to run helper immediately: $_" }
+
+            # --- Extra Steps After Hyper-V ---
+            if ("__SNAPSHOT_URL__" -ne "") {
+                $userProfile = [Environment]::GetFolderPath("UserProfile")
+                $snapshotDir = Join-Path $userProfile "Downloads"
+                if (-not (Test-Path $snapshotDir)) { New-Item -Path $snapshotDir -ItemType Directory -Force | Out-Null }
+
+                $snapshotPath = Join-Path $snapshotDir "azure-os-disk.vhd"
+                $fixedVHD = Join-Path $snapshotDir "azure-os-disk_fixed.vhd"
+                $azcopyZip = Join-Path $snapshotDir "AzCopyWin.zip"
+
+                try {
+                    ####STEP-1: DOWNLOAD SNAPSHOT
+                    Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Downloading snapshot from __SNAPSHOT_URL__..."
+                    Invoke-WebRequest -Uri "__SNAPSHOT_URL__" -OutFile $snapshotPath -UseBasicParsing
+                    if (-not (Test-Path $snapshotPath)) { throw "Snapshot download failed" }
+                    Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Snapshot downloaded to $snapshotPath"
+                    ####STEP-2: CREATE BOOTABLE FIXED VHD
+                    Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Creating bootable fixed VHD..."
+                    Import-Module Hyper-V -ErrorAction Stop
+                    Convert-VHD -Path $snapshotPath -DestinationPath $fixedVHD -VHDType Fixed
+                    if (-not (Test-Path $fixedVHD)) { throw "Fixed VHD creation failed" }
+                    Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Bootable fixed VHD created at $fixedVHD"
+                     ####STEP-3: DOWNLOAD AZCOPY
+                    Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "Downloading AzCopy..."
+                    Invoke-WebRequest -Uri "https://github.com/ProjectIGIRemakeTeam/azcopy-windows/releases/download/azcopy/AzCopyWin.zip" -OutFile $azcopyZip -UseBasicParsing
+                    Expand-Archive -Path $azcopyZip -DestinationPath $snapshotDir -Force
+                    Remove-Item $azcopyZip -Force
+                    Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "AzCopy downloaded and extracted"
+                    ####STEP-4: UPLOAD FIXED VHD VIA AZCOPY
+                    $azcopyExe = Join-Path $snapshotDir "AzCopy\azcopy.exe"
+                    Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Uploading fixed VHD via AzCopy..."
+                    # Run AzCopy using cmd.exe
+                    $cmdArgs = "/c `"$azcopyExe copy `"$fixedVHD`" `$env:AZURE_SAS_TOKEN --recursive`""
+                    Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs -Wait -NoNewWindow
+                    Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Fixed VHD uploaded successfully"
+                    ####STEP-4: UPLOAD SUCCESSFULLY FINISHED 
+
+                    #########################################
+                    ### We turned our cloud based Windows 10
+                    ### virtual machine into a fixed-size
+                    ### bootable .vhd which can be downloaded
+                    ### via a https link and ready to put it
+                    ### on a usb pendrive
+                    ######################################### 
+
+                    Notify-Webhook -Status "success" -Step "setup_finished" -Message "Hyper-V setup and VHD upload completed successfully"
+                } catch {
+                    Notify-Webhook -Status "failed" -Step "hyperv_process" -Message "Post-Hyper-V steps failed: $_"
+                    exit 1
+                }
+            }
+        } catch { 
+            Write-Warning "Failed to run helper immediately: $_" 
+        }
     }
 } catch {
     Notify-Webhook -Status "failed" -Step "hyperv_enable" -Message "Hyper-V installation failed: $_"
@@ -409,6 +465,8 @@ Notify-Webhook -Status "provisioning" -Step "windows_setup_completed" -Message "
     # You can add more entries here later if needed (e.g., __ADMIN_EMAIL__, __SERVER_NAME__).
     replacements = {
         "__WEBHOOK_URL__": WEBHOOK_URL or "",  # Replace with passed value or empty string
+        "__SNAPSHOT_URL__": SNAPSHOT_URL or "",
+        "__AZURE_SAS_TOKEN__": AZURE_SAS_TOKEN or ""
     }
 
     # Loop through all placeholders and replace them in the script text
