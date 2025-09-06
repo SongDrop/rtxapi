@@ -348,7 +348,14 @@ try {
     # Set the trigger for the task: run at user logon
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     # Define task settings with proper Windows version and description
-    $settings = New-ScheduledTaskSettingsSet -Compatibility Windows10 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
+    # [Microsoft.PowerShell.ScheduledJob.TaskCompatibility] enum value, valid enum values are:
+    # V1 – Windows XP / Server 2003
+    # V2 – Windows Vista / Server 2008
+    # V2_1 – Windows 7 / Server 2008 R2
+    # V2_2 – Windows 8 / Server 2012
+    # V2_3 – Windows 8.1 / Server 2012 R2
+    # V2_4 – Windows 10 / Server 2016+
+    $settings = New-ScheduledTaskSettingsSet -Compatibility V2_4 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
     $settings.Description = "Post-Hyper-V setup script: configures network, disables popups, and creates Hyper-V Manager shortcut"
     $settings.Author = "Windows 10 Developer"
     # Define the principal (user context) for the task:
@@ -401,9 +408,6 @@ try {
 }
 
 Add-Content -Path $installLog -Value "Setup script completed at $(Get-Date)"
-
-Notify-Webhook -Status "provisioning" -Step "windows_setup_completed" -Message "Setup script completed at $(Get-Date)"
-
 '''
     # Dictionary of placeholders -> values to insert into the script.
     # You can add more entries here later if needed (e.g., __ADMIN_EMAIL__, __SERVER_NAME__).
