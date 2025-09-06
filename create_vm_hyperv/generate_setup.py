@@ -343,16 +343,24 @@ try {
         Restart-Computer -Force
         exit
     } else {
-        Notify-Webhook -Status "provisioning" -Step "hyperv_enable" -Message "Hyper-V already enabled."
-        $publicDesktopNow = "C:\Users\Public\Desktop"
-        if (-not (Test-Path $publicDesktopNow)) { New-Item -Path $publicDesktopNow -ItemType Directory -Force | Out-Null }
-        $shortcutPathNow = Join-Path $publicDesktopNow "Hyper-V Manager.lnk"
-        $targetNow = "$env:windir\System32\virtmgmt.msc"
-        $wshNow = New-Object -ComObject WScript.Shell
-        $scNow = $wshNow.CreateShortcut($shortcutPathNow)
-        $scNow.TargetPath = $targetNow
-        $scNow.IconLocation = "$env:windir\System32\virtmgmt.msc,0"
-        $scNow.Save()
+        # --- RUN POST-HYPER-V HELPER IMMEDIATELY ---
+        try {
+            Get-NetConnectionProfile | ForEach-Object { Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue }
+            Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
+            $servicesToDisable = @("FDResPub","FDHost","UPnPHost","SSDPSRV","NlaSvc")
+            foreach ($svc in $servicesToDisable) { Stop-Service $svc -Force -ErrorAction SilentlyContinue; Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue }
+            New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard" -Value 0 -PropertyType DWord -Force | Out-Null
+            $publicDesktop = "C:\Users\Public\Desktop"
+            if (-not (Test-Path $publicDesktop)) { New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }
+            $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
+            $wsh = New-Object -ComObject WScript.Shell
+            $sc = $wsh.CreateShortcut($shortcutPath)
+            $sc.TargetPath = "$env:windir\System32\virtmgmt.msc"
+            $sc.IconLocation = "$env:windir\System32\virtmgmt.msc,0"
+            $sc.Save()
+        } catch { Write-Warning "Failed to run helper immediately: $_" }
     }
 } catch {
     Notify-Webhook -Status "failed" -Step "hyperv_enable" -Message "Hyper-V installation failed: $_"
@@ -361,4 +369,32 @@ try {
 
 Add-Content -Path $installLog -Value "Setup script completed at $(Get-Date)"
 '''
-    return script.replace("__WEBHOOK_URL__", WEBHOOK_URL or "")
+    # Dictionary of placeholders -> values to insert into the script.
+    # You can add more entries here later if needed (e.g., __ADMIN_EMAIL__, __SERVER_NAME__).
+    replacements = {
+        "__WEBHOOK_URL__": WEBHOOK_URL or "",  # Replace with passed value or empty string
+    }
+
+    # Loop through all placeholders and replace them in the script text
+    for placeholder, value in replacements.items():
+        script = script.replace(placeholder, value)
+
+    # Return the final PowerShell script with replacements applied
+    return script
+
+    # --- HOW TO ADD MULTIPLE VALUES ---
+    # 1. Add extra function parameters, e.g.:
+    #    def generate_setup(WEBHOOK_URL: str = None, ADMIN_EMAIL: str = None, SERVER_NAME: str = None) -> str:
+    #
+    # 2. Add new entries in the dictionary:
+    #    replacements = {
+    #        "__WEBHOOK_URL__": WEBHOOK_URL or "",
+    #        "__ADMIN_EMAIL__": ADMIN_EMAIL or "",
+    #        "__SERVER_NAME__": SERVER_NAME or "",
+    #    }
+    #
+    # 3. Place matching placeholders in your PowerShell script where needed:
+    #    $env:ADMIN_EMAIL = "__ADMIN_EMAIL__"
+    #    $env:SERVER_NAME = "__SERVER_NAME__"
+    #
+    # When the function runs, all placeholders get replaced automatically.
