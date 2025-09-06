@@ -1,45 +1,53 @@
 def generate_setup(WEBHOOK_URL: str = None) -> str:
-    script = f'''# Check for admin privileges
+    script = r'''# Check for admin privileges
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {{
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Host "Not running as Administrator. Relaunching as admin..."
-    $scriptPath = if ($MyInvocation.MyCommand.Definition) {{ $MyInvocation.MyCommand.Definition }} else {{ $PSCommandPath }}
+    $scriptPath = if ($MyInvocation.MyCommand.Definition) { $MyInvocation.MyCommand.Definition } else { $PSCommandPath }
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs -Wait
     exit
-}}
+}
 
 $ErrorActionPreference = "Stop"
-$env:WEBHOOK_URL = "{WEBHOOK_URL}"
+$env:WEBHOOK_URL = "__WEBHOOK_URL__"
 
 # --- Webhook helper ---
-function Notify-Webhook {{
+function Notify-Webhook {
     param([string]$Status, [string]$Step, [string]$Message)
-    if (-not $env:WEBHOOK_URL) {{ return }}
-    $payload = @{{ 
+    # Local log first (always visible)
+    Add-Content -Path $installLog -Value "[$(Get-Date -Format 'HH:mm:ss')] $Step -> $Message"
+    # Only call webhook if URL is set
+    if (-not $env:WEBHOOK_URL) { return }
+    # payload
+    $payload = @{
         vm_name = $env:COMPUTERNAME
         status = $Status
         timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-        details = @{{ step = $Step; message = $Message }}
-    }} | ConvertTo-Json -Depth 4
-    try {{
+        resource_group = windows_internal
+        location = windows_internal_script  
+        details = @{ step = $Step; message = $Message }
+    } | ConvertTo-Json -Depth 4
+
+    try {
         Invoke-RestMethod -Uri $env:WEBHOOK_URL -Method Post -ContentType 'application/json' -Body $payload -TimeoutSec 30
-    }} catch {{
-        Write-Warning "Failed to notify webhook: $_"
-    }}
-}}
+    } catch {
+        # Log locally if webhook fails
+        Add-Content -Path $installLog -Value "[$(Get-Date -Format 'HH:mm:ss')] Webhook failed: $_"
+    }
+}
 
 # --- Log setup ---
-$logDir = "C:\\Program Files\\Logs"
-$installLog = "$logDir\\setup_hyperv_log.txt"
-try {{
+$logDir = "C:\Program Files\Logs"
+$installLog = "$logDir\setup_hyperv_log.txt"
+try {
     New-Item -Path $logDir -ItemType Directory -Force | Out-Null
-}} catch {{
+} catch {
     Write-Warning "Failed to create log directory: $_"
-}}
+}
 Add-Content -Path $installLog -Value "=== Hyper-V Setup Script Started $(Get-Date) ==="
 
 # --- Registry helper ---
-function Set-RegistryValue {{
+function Set-RegistryValue {
     param(
         [string]$Path,
         [string]$Name,
@@ -47,209 +55,347 @@ function Set-RegistryValue {{
         [Microsoft.Win32.RegistryValueKind]$Type = [Microsoft.Win32.RegistryValueKind]::DWord
     )
 
-    if (-not (Test-Path $Path)) {{
-        try {{
+    if (-not (Test-Path $Path)) {
+        try {
             New-Item -Path $Path -Force | Out-Null
-        }} catch {{
-            $msg = ("Failed to create registry path {{0}}: {{1}}" -f $Path, $_)
-            Write-Warning $msg
-            Add-Content -Path $installLog -Value $msg
+        } catch {
             return
-        }}
-    }}
+        }
+    }
 
-    try {{
+    try {
         New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
-    }} catch {{
-        $msg = ("Failed to set registry value {{0}}\\\\{{1}}: {{2}}" -f $Path, $Name, $_)
-        Write-Warning $msg
-        Add-Content -Path $installLog -Value $msg
-    }}
-}}
+    } catch {
+    }
+}
 
 # --- SYSTEM CLEANUP & DEBLOAT (HKLM + SYSTEM) ---
-$systemKeys = @{{ 
-    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State" = @{{ 
-        "ImageState" = 7
-        "OOBEInProgress" = 0
-        "SetupPhase" = 0
-        "SystemSetupInProgress" = 0
-    }}
-    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE" = @{{ 
-        "PrivacyConsentStatus" = 1
-        "DisablePrivacyExperience" = 1
-        "SkipMachineOOBE" = 1
-        "SkipUserOOBE" = 1
-    }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\OOBE" = @{{ 
-        "DisablePrivacyExperience" = 1
-    }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" = @{{ "AllowCortana" = 0 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge" = @{{ "HideFirstRunExperience" = 1 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU" = @{{ "NoAutoUpdate" = 1 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\System" = @{{ "NoConnectedUser" = 3 }}
-    "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\DataCollection" = @{{ "AllowTelemetry" = 0 }}
-    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Remote Assistance" = @{{ "fAllowToGetHelp" = 0 }}
-    "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" = @{{ "NC_ShowSharedAccessUI" = 0 }}
-    "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" = @{{ "NewNetworkWindowOff" = 1; "Category" = 1 }}
-}}
+Notify-Webhook -Status "provisioning" -Step "debloat_windows" -Message "Debloating Windows"
 
-# Force networks to Private where possible (will run now)
-try {{
-    Get-NetConnectionProfile | ForEach-Object {{
-        try {{
-            Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
-        }} catch {{ }}
-    }}
-}} catch {{ }}
+# Create system keys hashtable with proper syntax
+$systemKeys = @{}
 
-# Apply systemKeys to registry
-foreach ($path in $systemKeys.Keys) {{
-    foreach ($kv in $systemKeys[$path].GetEnumerator()) {{
+# Add registry keys one by one to avoid syntax issues
+$systemKeys["HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State"] = @{ 
+    "ImageState" = 7; "OOBEInProgress" = 0; "SetupPhase" = 0; "SystemSetupInProgress" = 0 
+}
+$systemKeys["HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE"] = @{ 
+    "PrivacyConsentStatus" = 1; "DisablePrivacyExperience" = 1; "SkipMachineOOBE" = 1; "SkipUserOOBE" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE"] = @{ 
+    "DisablePrivacyExperience" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"] = @{ 
+    "AllowCortana" = 0 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Edge"] = @{ 
+    "HideFirstRunExperience" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"] = @{ 
+    "NoAutoUpdate" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"] = @{ 
+    "NoConnectedUser" = 3 
+}
+$systemKeys["HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection"] = @{ 
+    "AllowTelemetry" = 0 
+}
+$systemKeys["HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance"] = @{ 
+    "fAllowToGetHelp" = 0 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections"] = @{ 
+    "NC_ShowSharedAccessUI" = 0 
+}
+$systemKeys["HKLM:\SYSTEM\CurrentControlSet\Control\Network"] = @{ 
+    "NewNetworkWindowOff" = 1; "Category" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections"] = @{ 
+    "NC_StdDomainUserSetLocation" = 1; "NC_EnableNetSetupWizard" = 0 
+}
+$systemKeys["HKLM:\SOFTWARE\Microsoft\Windows Defender\Features"] = @{ 
+    "DisableAntiSpywareNotification" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications"] = @{ 
+    "DisableNotifications" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications"] = @{ 
+    "DisableEnhancedNotifications" = 1 
+}
+
+try {
+    Get-NetConnectionProfile | ForEach-Object {
+        try { Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue } catch { }
+    }
+} catch { }
+
+foreach ($path in $systemKeys.Keys) {
+    foreach ($kv in $systemKeys[$path].GetEnumerator()) {
         Set-RegistryValue -Path $path -Name $kv.Key -Value $kv.Value
-    }}
-}}
+    }
+}
 
-# Stop SYSTEM services
 $services = @("WSearch","DiagTrack","WerSvc")
-foreach ($svc in $services) {{
-    try {{ Stop-Service $svc -Force -ErrorAction SilentlyContinue }} catch {{ }}
-    try {{ Set-Service $svc -StartupType Disabled }} catch {{ }}
-}}
+foreach ($svc in $services) {
+    try { Stop-Service $svc -Force -ErrorAction SilentlyContinue } catch { }
+    try { Set-Service $svc -StartupType Disabled } catch { }
+}
 
 # --- USER CLEANUP & DEBLOAT (HKCU) ---
-$hkcuProfiles = Get-ChildItem "C:\\Users" -Directory | Where-Object {{ Test-Path "$($_.FullName)\\NTUSER.DAT" }}
+$hkcuProfiles = Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" }
 
 $userKeys = @(
-    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager"; Values=@{{"RotatingLockScreenEnabled"=0;"RotatingLockScreenOverlayEnabled"=0;"SubscribedContent-338388Enabled"=0;"SubscribedContent-310093Enabled"=0;"SystemPaneSuggestionsEnabled"=0;"SubscribedContent-SettingsEnabled"=0;"SubscribedContent-AppsEnabled"=0;"SubscribedContent-338387Enabled"=0}}}},
-    @{{Path="Software\\Microsoft\\OneDrive"; Values=@{{"DisableFirstRun"=1}}}},
-    @{{Path="Software\\Microsoft\\Xbox"; Values=@{{"ShowFirstRunUI"=0}}}},
-    @{{Path="Software\\Microsoft\\GameBar"; Values=@{{"ShowStartupPanel"=0}}}},
-    @{{Path="Software\\Microsoft\\Office\\16.0\\Common\\General"; Values=@{{"ShownFirstRunOptIn"=1}}}},
-    @{{Path="Software\\Microsoft\\Office\\16.0\\Common\\Internet"; Values=@{{"SignInOptions"=3}}}},
-    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\feedbackhub"; Values=@{{"Value"=2}}}},
-    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"; Values=@{{"PeopleBand"=0}}}},
-    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"; Values=@{{"TaskbarDa"=0;"EnableBalloonTips"=0}}}},
-    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Pen"; Values=@{{"PenWorkspaceButton"=0}}}},
-    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\Appx"; Values=@{{"DisabledByPolicy"=1}}}},
-    @{{Path="Software\\Policies\\Microsoft\\WindowsStore"; Values=@{{"AutoDownload"=2}}}},
-    @{{Path="Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications"; Values=@{{"NoToastApplicationNotification"=1}}}}
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+        Values=@{
+            "RotatingLockScreenEnabled" = 0
+            "RotatingLockScreenOverlayEnabled" = 0
+            "SubscribedContent-338388Enabled" = 0
+            "SubscribedContent-310093Enabled" = 0
+            "SystemPaneSuggestionsEnabled" = 0
+            "SubscribedContent-SettingsEnabled" = 0
+            "SubscribedContent-AppsEnabled" = 0
+            "SubscribedContent-338387Enabled" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\OneDrive"
+        Values=@{
+            "DisableFirstRun" = 1
+        }
+    }
+    @{
+        Path="Software\Microsoft\Xbox"
+        Values=@{
+            "ShowFirstRunUI" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\GameBar"
+        Values=@{
+            "ShowStartupPanel" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\Office\16.0\Common\General"
+        Values=@{
+            "ShownFirstRunOptIn" = 1
+        }
+    }
+    @{
+        Path="Software\Microsoft\Office\16.0\Common\Internet"
+        Values=@{
+            "SignInOptions" = 3
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\feedbackhub"
+        Values=@{
+            "Value" = 2
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+        Values=@{
+            "PeopleBand" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+        Values=@{
+            "TaskbarDa" = 0
+            "EnableBalloonTips" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\Pen"
+        Values=@{
+            "PenWorkspaceButton" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\Appx"
+        Values=@{
+            "DisabledByPolicy" = 1
+        }
+    }
+    @{
+        Path="Software\Policies\Microsoft\WindowsStore"
+        Values=@{
+            "AutoDownload" = 2
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\PushNotifications"
+        Values=@{
+            "NoToastApplicationNotification" = 1
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows\CurrentVersion\Notifications\Settings"
+        Values=@{
+            "NOC_GLOBAL_SETTING_TOASTS_ENABLED" = 0
+        }
+    }
+    @{
+        Path="Software\Microsoft\Windows Defender Security Center\Notifications"
+        Values=@{
+            "DisableNotifications" = 1
+        }
+    }
 )
 
-foreach ($profile in $hkcuProfiles) {{
-    foreach ($key in $userKeys) {{
-        foreach ($kv in $key.Values.GetEnumerator()) {{
-            try {{
-                $fullPath = "HKU:\\$($profile.SID)\\$($key.Path)"
-                if (-not (Test-Path $fullPath)) {{ New-Item -Path $fullPath -Force | Out-Null }}
+foreach ($profile in $hkcuProfiles) {
+    foreach ($key in $userKeys) {
+        foreach ($kv in $key.Values.GetEnumerator()) {
+            try {
+                $fullPath = "HKU:\$($profile.SID)\$($key.Path)"
+                if (-not (Test-Path $fullPath)) { New-Item -Path $fullPath -Force | Out-Null }
                 Set-RegistryValue -Path $fullPath -Name $kv.Key -Value $kv.Value
-            }} catch {{ }}
-        }}
-    }}
-}}
+            } catch { }
+        }
+    }
+}
 
-# Create a post-reboot helper script that will:
-# - force network profiles to Private (again, after networking is ready)
-# - update NetworkList Profile categories in registry to Private
-# - create Hyper-V Manager shortcut in Public Desktop
-# - remove the scheduled task and delete itself
-$helperPath = "C:\\ProgramData\\PostHyperVSetup.ps1"
+Notify-Webhook -Status "provisioning" -Step "post_reboot_script" -Message "Creating Windows Post-Reboot script"
+
+# ---- Post-reboot helper script ----
+$helperPath = "C:\ProgramData\PostHyperVSetup.ps1"
+
+# Create helper script content
 $helperContent = @'
-try {{
-    # Force all NetConnectionProfiles to Private
-    try {{
-        Get-NetConnectionProfile | ForEach-Object {{
-            try {{ Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue }} catch {{ }}
-        }}
-    }} catch {{ }}
-
-    # Update NetworkList profile categories in registry to Private (1)
-    try {{
-        $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
-        if (Test-Path $profilesPath) {{
-            Get-ChildItem $profilesPath | ForEach-Object {{
-                try {{
-                    Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-                }} catch {{ }}
-            }}
-        }}
-    }} catch {{ }}
-
-    # Re-apply policy keys to suppress new network dialog
-    # Update NetworkList profile categories to Private
-    try {{
-        $profilesPath = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\NetworkList\\Profiles"
-        if (Test-Path $profilesPath) {{
-            Get-ChildItem $profilesPath | ForEach-Object {{
-                Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-            }}
-        }}
-    }} catch {{}}
-
-    # Apply network registry policies
-    try {{
-        New-Item -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Force | Out-Null
-        New-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
-        New-Item -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Force | Out-Null
-        New-ItemProperty -Path "HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Network Connections" -Name "NC_ShowSharedAccessUI" -Value 0 -PropertyType DWord -Force | Out-Null
-    }} catch {{}}
+# Post-reboot setup script
+try {
+    # Force all current network profiles to Private
+    Get-NetConnectionProfile | ForEach-Object { Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue }
+    Restart-Service netprofm -Force -ErrorAction SilentlyContinue
+    Restart-Service NlaSvc -Force -ErrorAction SilentlyContinue
 
     # Disable Network Discovery firewall rules
-    try {{ Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue }} catch {{}}
+    Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
 
-    # --- Disable Network Discovery services permanently ---
-    try {{
-        $servicesToDisable = @("FDResPub","FDHost","UPnPDeviceHost")
-        foreach ($svc in $servicesToDisable) {{
-            try {{ Stop-Service $svc -Force -ErrorAction SilentlyContinue }} catch {{}}
-            try {{ Set-Service $svc -StartupType Disabled }} catch {{}}
-        }}
-    }} catch {{ Write-Warning "Failed to disable Network Discovery services: $_" }}
+    # Stop discovery-related services
+    $servicesToDisable = @("FDResPub","FDHost","UPnPHost","SSDPSRV")
+    foreach ($svc in $servicesToDisable) {
+        Stop-Service $svc -Force -ErrorAction SilentlyContinue
+        Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
+    }
 
-    # Create Hyper-V Manager shortcut in Public Desktop so all users see it
-    try {{
-        $publicDesktop = "C:\\Users\\Public\\Desktop"
-        if (-not (Test-Path $publicDesktop)) {{ New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }}
-        $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
-        $target = "$env:windir\\System32\\virtmgmt.msc"
-        $wsh = New-Object -ComObject WScript.Shell
-        $sc = $wsh.CreateShortcut($shortcutPath)
-        $sc.TargetPath = $target
-        $sc.IconLocation = "$env:windir\\System32\\virtmgmt.msc,0"
-        $sc.Save()
-    }} catch {{ }}
+    # Disable network location wizard
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard" -Value 0 -PropertyType DWord -Force | Out-Null
 
-    # Remove the scheduled task (self-cleanup)
-    try {{
-        Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
-    }} catch {{ }}
+    # Set existing network profiles to Private
+    $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
+    if (Test-Path $profilesPath) {
+        Get-ChildItem $profilesPath | ForEach-Object {
+            Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
+        }
+    }
 
-    # Delete self
-    try {{ Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue }} catch {{ }}
-}} catch {{ Write-Output "PostHyperVSetup encountered an error: $_" }}
+    # Disable Network Location Awareness service
+    Stop-Service "NlaSvc" -Force -ErrorAction SilentlyContinue
+    Set-Service "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
+
+    # Disable Network Discovery globally
+    Set-NetFirewallRule -Group "@FirewallAPI.dll,-32752" -Enabled False -ErrorAction SilentlyContinue
+    Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
+
+    # Disable firewall notifications
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" -Name "DisableAntiSpywareNotification" -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableEnhancedNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
+
+    # Create Hyper-V Manager shortcut for all users
+    $virt="$env:windir\System32\virtmgmt.msc"
+    if (Test-Path $virt) {
+        $users=Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" }
+        foreach ($u in $users) {
+            $desk=Join-Path $u.FullName "Desktop"
+            if (-not (Test-Path $desk)) { New-Item -Path $desk -ItemType Directory -Force | Out-Null }
+            $sc=Join-Path $desk "Hyper-V Manager.lnk"
+            $wsh=New-Object -ComObject WScript.Shell
+            $link=$wsh.CreateShortcut($sc)
+            $link.TargetPath=$virt
+            $link.IconLocation="$virt,0"
+            $link.Save()
+        }
+    }
+
+    # Cleanup
+    Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
+} catch { 
+    Write-Output "PostHyperVSetup encountered an error: $_" 
+}
 '@
 
-# Write helper script to disk
-try {{
+try {
     $helperContent | Out-File -FilePath $helperPath -Encoding UTF8 -Force
     Add-Content -Path $installLog -Value "Wrote helper script to $helperPath"
-}} catch {{
+} catch {
     Add-Content -Path $installLog -Value "Failed to write helper script: $_"
-}}
+}
 
-# Register scheduled task to run the helper once at startup as SYSTEM
-try {{
-    $taskName = "PostHyperVSetup"
+# Register scheduled task to run the helper once at startup
+try {
+    # Define the name of the scheduled task
+    $taskName = "PostWindowsSetup"
+    # Remove any existing task with the same name to avoid conflicts
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    # Define the action the scheduled task will perform: run PowerShell with the helper script
     $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$helperPath`""
-    $trigger = New-ScheduledTaskTrigger -AtStartup
+    # Set the trigger for the task: run at user logon
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    # Define task settings with proper Windows version and description
+    $settings = New-ScheduledTaskSettingsSet -Compatibility Windows10 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
+    $settings.Description = "Post-Hyper-V setup script: configures network, disables popups, and creates Hyper-V Manager shortcut"
+    $settings.Author = "Windows 10 Developer"
+    # Define the principal (user context) for the task:
+    # RunLevel Highest runs with elevated privileges
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
-    Add-Content -Path $installLog -Value "Registered scheduled task $taskName to run $helperPath at startup"
-}} catch {{
+    # Register (create) the scheduled task with the defined name, action, trigger, and principal
+    # -Force ensures it overwrites any existing task with the same name
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force
+} catch {
+    # If anything fails, log the error message to the install log
     Add-Content -Path $installLog -Value "Failed to register scheduled task: $_"
-}}
+}
+
+Notify-Webhook -Status "provisioning" -Step "enabling_hyperv" -Message "Enabling Windows Hyper-v"
+
 
 Add-Content -Path $installLog -Value "Setup script completed at $(Get-Date)"
+
+Notify-Webhook -Status "provisioning" -Step "windows_setup_completed" -Message "Setup script completed at $(Get-Date)"
+
 '''
+    # Dictionary of placeholders -> values to insert into the script.
+    # You can add more entries here later if needed (e.g., __ADMIN_EMAIL__, __SERVER_NAME__).
+    replacements = {
+        "__WEBHOOK_URL__": WEBHOOK_URL or "",  # Replace with passed value or empty string
+    }
+
+    # Loop through all placeholders and replace them in the script text
+    for placeholder, value in replacements.items():
+        script = script.replace(placeholder, value)
+
+    # Return the final PowerShell script with replacements applied
     return script
+
+    # --- HOW TO ADD MULTIPLE VALUES ---
+    # 1. Add extra function parameters, e.g.:
+    #    def generate_setup(WEBHOOK_URL: str = None, ADMIN_EMAIL: str = None, SERVER_NAME: str = None) -> str:
+    #
+    # 2. Add new entries in the dictionary:
+    #    replacements = {
+    #        "__WEBHOOK_URL__": WEBHOOK_URL or "",
+    #        "__ADMIN_EMAIL__": ADMIN_EMAIL or "",
+    #        "__SERVER_NAME__": SERVER_NAME or "",
+    #    }
+    #
+    # 3. Place matching placeholders in your PowerShell script where needed:
+    #    $env:ADMIN_EMAIL = "__ADMIN_EMAIL__"
+    #    $env:SERVER_NAME = "__SERVER_NAME__"
+    #
+    # When the function runs, all placeholders get replaced automatically.

@@ -14,17 +14,25 @@ $env:WEBHOOK_URL = "__WEBHOOK_URL__"
 # --- Webhook helper ---
 function Notify-Webhook {
     param([string]$Status, [string]$Step, [string]$Message)
+    # Local log first (always visible)
+    Add-Content -Path $installLog -Value "[$(Get-Date -Format 'HH:mm:ss')] $Step -> $Message"
+    # Only call webhook if URL is set
     if (-not $env:WEBHOOK_URL) { return }
+    # payload
     $payload = @{
         vm_name = $env:COMPUTERNAME
         status = $Status
         timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        resource_group = windows_internal
+        location = windows_internal_script  
         details = @{ step = $Step; message = $Message }
     } | ConvertTo-Json -Depth 4
+
     try {
         Invoke-RestMethod -Uri $env:WEBHOOK_URL -Method Post -ContentType 'application/json' -Body $payload -TimeoutSec 30
     } catch {
-        Write-Warning "Failed to notify webhook: $_"
+        # Log locally if webhook fails
+        Add-Content -Path $installLog -Value "[$(Get-Date -Format 'HH:mm:ss')] Webhook failed: $_"
     }
 }
 
@@ -62,6 +70,8 @@ function Set-RegistryValue {
 }
 
 # --- SYSTEM CLEANUP & DEBLOAT (HKLM + SYSTEM) ---
+Notify-Webhook -Status "provisioning" -Step "debloat_windows" -Message "Debloating Windows"
+
 # Create system keys hashtable with proper syntax
 $systemKeys = @{}
 
@@ -246,6 +256,8 @@ foreach ($profile in $hkcuProfiles) {
     }
 }
 
+Notify-Webhook -Status "provisioning" -Step "post_reboot_script" -Message "Creating Windows Post-Reboot script"
+
 # ---- Post-reboot helper script ----
 $helperPath = "C:\ProgramData\PostHyperVSetup.ps1"
 
@@ -335,17 +347,22 @@ try {
     $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$helperPath`""
     # Set the trigger for the task: run at user logon
     $trigger = New-ScheduledTaskTrigger -AtLogOn
+    # Define task settings with proper Windows version and description
+    $settings = New-ScheduledTaskSettingsSet -Compatibility Windows10 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
+    $settings.Description = "Post-Hyper-V setup script: configures network, disables popups, and creates Hyper-V Manager shortcut"
+    $settings.Author = "Windows 10 Developer"
     # Define the principal (user context) for the task:
     # RunLevel Highest runs with elevated privileges
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
     # Register (create) the scheduled task with the defined name, action, trigger, and principal
     # -Force ensures it overwrites any existing task with the same name
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force
 } catch {
     # If anything fails, log the error message to the install log
     Add-Content -Path $installLog -Value "Failed to register scheduled task: $_"
 }
 
+Notify-Webhook -Status "provisioning" -Step "enabling_hyperv" -Message "Enabling Windows Hyper-v"
 
 # --- Enable Hyper-V ---
 try {
@@ -367,6 +384,7 @@ try {
             New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
             New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
             New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard" -Value 0 -PropertyType DWord -Force | Out-Null
+            # Create Hyper-V Manager shortcut in Public Desktop (visible to all)
             $publicDesktop = "C:\Users\Public\Desktop"
             if (-not (Test-Path $publicDesktop)) { New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }
             $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
@@ -383,6 +401,9 @@ try {
 }
 
 Add-Content -Path $installLog -Value "Setup script completed at $(Get-Date)"
+
+Notify-Webhook -Status "provisioning" -Step "windows_setup_completed" -Message "Setup script completed at $(Get-Date)"
+
 '''
     # Dictionary of placeholders -> values to insert into the script.
     # You can add more entries here later if needed (e.g., __ADMIN_EMAIL__, __SERVER_NAME__).
