@@ -357,7 +357,7 @@ try {
     # V2_2 – Windows 8 / Server 2012
     # V2_3 – Windows 8.1 / Server 2012 R2
     # V2_4 – Windows 10 / Server 2016+
-    $settings = New-ScheduledTaskSettingsSet -Compatibility V2_4 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
+    $settings = New-ScheduledTaskSettingsSet -Compatibility ([Microsoft.PowerShell.ScheduledJob.TaskCompatibility]::V2_3) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
     $settings.Description = "Post-Hyper-V setup script: configures network, disables popups, and creates Hyper-V Manager shortcut"
     $settings.Author = "Windows 10 Developer"
     # Define the principal (user context) for the task:
