@@ -254,9 +254,9 @@ $helperContent = @'
 # Post-reboot setup script
 try {
     # Force all current network profiles to Private
-    Get-NetConnectionProfile | ForEach-Object {
-        Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
-    }
+    Get-NetConnectionProfile | ForEach-Object { Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue }
+    Restart-Service netprofm -Force -ErrorAction SilentlyContinue
+    Restart-Service NlaSvc -Force -ErrorAction SilentlyContinue
 
     # Disable Network Discovery firewall rules
     Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
@@ -294,15 +294,21 @@ try {
     New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
     New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableEnhancedNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
 
-    # Create Hyper-V Manager shortcut
-    $publicDesktop = "C:\Users\Public\Desktop"
-    if (-not (Test-Path $publicDesktop)) { New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }
-    $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
-    $wsh = New-Object -ComObject WScript.Shell
-    $sc = $wsh.CreateShortcut($shortcutPath)
-    $sc.TargetPath = "$env:windir\System32\virtmgmt.msc"
-    $sc.IconLocation = "$env:windir\System32\virtmgmt.msc,0"
-    $sc.Save()
+    # Create Hyper-V Manager shortcut for all users
+    $virt="$env:windir\System32\virtmgmt.msc"
+    if (Test-Path $virt) {
+        $users=Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" }
+        foreach ($u in $users) {
+            $desk=Join-Path $u.FullName "Desktop"
+            if (-not (Test-Path $desk)) { New-Item -Path $desk -ItemType Directory -Force | Out-Null }
+            $sc=Join-Path $desk "Hyper-V Manager.lnk"
+            $wsh=New-Object -ComObject WScript.Shell
+            $link=$wsh.CreateShortcut($sc)
+            $link.TargetPath=$virt
+            $link.IconLocation="$virt,0"
+            $link.Save()
+        }
+    }
 
     # Cleanup
     Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
@@ -321,13 +327,21 @@ try {
 
 # Register scheduled task to run the helper once at startup
 try {
+    # $taskName = "PostHyperVSetup"
+    # Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    # $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$helperPath`""
+    # $trigger = New-ScheduledTaskTrigger -AtStartup
+    # $trigger = New-ScheduledTaskTrigger -AtLogOn
+    # $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
+    # Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
+    # Add-Content -Path $installLog -Value "Registered scheduled task $taskName"
+    # Create scheduled task to run at logon for all users
     $taskName = "PostHyperVSetup"
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
     $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$helperPath`""
-    $trigger = New-ScheduledTaskTrigger -AtStartup
-    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $principal = New-ScheduledTaskPrincipal -UserId "BUILTIN\Users" -RunLevel Highest
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
-    Add-Content -Path $installLog -Value "Registered scheduled task $taskName"
 } catch {
     Add-Content -Path $installLog -Value "Failed to register scheduled task: $_"
 }

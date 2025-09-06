@@ -1,273 +1,282 @@
-def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed", WEBHOOK_URL=""):
-    github_url = "https://github.com/moonlight-stream/moonlight-embedded.git"
-    
-    # Define the Moonlight Embedded directory path
-    MOONLIGHT_EMBEDDED_DIR = f"{VOLUME_DIR}/moonlight-embedded"
-
-    libnice_git_url = "https://gitlab.freedesktop.org/libnice/libnice"
-    libsrtp_tar_url = "https://github.com/cisco/libsrtp/archive/v2.2.0.tar.gz"
-    usrsctp_git_url = "https://github.com/sctplab/usrsctp"
-    libwebsockets_git_url = "https://github.com/warmcat/libwebsockets.git"
-    janus_git_url = "https://github.com/meetecho/janus-gateway.git"
+def generate_setup(
+    DOMAIN_NAME,
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    FRONTEND_PORT=3000,
+    BACKEND_PORT=8000,
+    REACT_APP_APP_NAME='AI Chat Assistant',
+    REACT_APP_APP_LOGO='https://vhdvm.blob.core.windows.net/vhdvm/gitgpt.svg',
+    VECTOR_SEARCH_ENABLED='false',
+    VECTOR_SEARCH_ENDPOINT='your-search-index-endpoint',
+    VECTOR_SEARCH_INDEX='your-search-index-name',
+    VECTOR_SEARCH_KEY='your-search-index-ky',
+    VECTOR_SEARCH_SEMANTIC_CONFIG='azureml-default',
+    VECTOR_SEARCH_EMBEDDING_DEPLOYMENT='text-embedding-ada-002',
+    VECTOR_SEARCH_EMBEDDING_ENDPOINT='text-embedding-endpoint',
+    VECTOR_SEARCH_EMBEDDING_KEY='text-embedding-key',
+    VECTOR_SEARCH_STORAGE_ENDPOINT='vector-search-endpoint',
+    VECTOR_SEARCH_STORAGE_ACCESS_KEY='vector-search-key',
+    VECTOR_SEARCH_STORAGE_CONNECTION_STRING='vector-search-connection-string',
+    OPENAI_API_BASE="gpt-api-url",
+    OPENAI_API_KEY="gpt-api-key",
+    OPENAI_DEPLOYMENT_NAME="gpt-4.1-mini",
+    OPENAI_API_VERSION="2025-01-01-preview",
+    GPT_IMAGE_URL="gpt-image-url",
+    GPT_IMAGE_KEY="gpt-image-key",
+    GPT_IMAGE_VERSION="2025-04-01-preview"
+):
+    # URLs for certbot stuff, etc.
+    gpt_repo = "https://github.com/SongDrop/gpt.git"
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
 
-    # Webhook notification function with proper JSON structure
-    webhook_notification = ""
-    if WEBHOOK_URL:
-        webhook_notification = f'''
-notify_webhook() {{
-  local status=$1
-  local step=$2
-  local message=$3
-  
-  if [ -z "${{WEBHOOK_URL}}" ]; then
-    return 0
-  fi
-  
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Notifying webhook: status=$status step=$step"
-  
-  # Prepare the JSON payload matching Azure Function expectations
-  JSON_PAYLOAD=$(cat <<EOF
-{{
-  "vm_name": "$(hostname)",
-  "status": "$status",
-  "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-  "details": {{
-    "step": "$step",
-    "message": "$message"
-  }}
-}}
-EOF
-  )
+    MAX_UPLOAD_FILE_SIZE_IN_MB = 1024
+    INSTALL_DIR = "/opt/gpt"
+    LOG_DIR = f"{INSTALL_DIR}/logs"
 
-  curl -X POST \\
-    "${{WEBHOOK_URL}}" \\
-    -H "Content-Type: application/json" \\
-    -d "$JSON_PAYLOAD" \\
-    --connect-timeout 10 \\
-    --max-time 30 \\
-    --retry 2 \\
-    --retry-delay 5 \\
-    --silent \\
-    --output /dev/null \\
-    --write-out "Webhook notification result: %{{http_code}}"
-
-  return $?
-}}
-'''
-    else:
-        webhook_notification = '''
-notify_webhook() {
-  # No webhook URL configured
-  return 0
-}
-'''
-
-    script_template = f'''#!/bin/bash
+    script_template = f"""#!/bin/bash
 
 set -e
 
-export DEBIAN_FRONTEND=noninteractive
-
-# === User config ===
-DOMAIN_NAME="{DOMAIN_NAME}"
-ADMIN_EMAIL="{ADMIN_EMAIL}"
-FRONTEND_PORT={FRONTEND_PORT}
-BACKEND_PORT={BACKEND_PORT}
-VM_IP="{VM_IP}"
-PIN_URL="{PIN_URL}"
-INSTALL_DIR="{VOLUME_DIR}"
-LOG_DIR="${{INSTALL_DIR}}/logs"
-DOCKER_IMAGE_NAME="moonlight-embed-app"
-DOCKER_CONTAINER_NAME="moonlight-embed-container"
-JANUS_INSTALL_DIR="/opt/janus"
-MOONLIGHT_EMBEDDED_DIR="{MOONLIGHT_EMBEDDED_DIR}"
-WEBHOOK_URL="{WEBHOOK_URL}"
-
-{webhook_notification}
-
-# === Validate domain format ===
-if ! [[ "${{DOMAIN_NAME}}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
+# Validate domain
+if ! [[ "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
     echo "ERROR: Invalid domain format"
-    notify_webhook "failed" "validation" "Invalid domain format"
     exit 1
 fi
 
-notify_webhook "provisioning" "starting" "Beginning system setup"
+# Configuration
+DOMAIN_NAME="{DOMAIN_NAME}"
+INSTALL_DIR="{INSTALL_DIR}"
+LOG_DIR="{LOG_DIR}"
+GPT_REPO="{gpt_repo}"
 
-echo "[1/10] Updating system and installing base dependencies..."
-notify_webhook "provisioning" "system_update" "Updating system packages"
+# ========== SYSTEM SETUP ==========
+echo "[1/9] System updates and dependencies..."
 apt-get update
-apt-get install -y --no-install-recommends \\
-    curl git nginx certbot python3-certbot-nginx \\
-    docker.io ufw build-essential cmake autoconf automake libtool pkg-config \\
-    libmicrohttpd-dev libjansson-dev libssl-dev libsofia-sip-ua-dev \\
-    libglib2.0-dev libopus-dev libogg-dev libcurl4-openssl-dev libconfig-dev \\
-    libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+DEBIAN_FRONTEND=noninteractive apt-get install -y \\
+    curl git nginx certbot \\
+    python3-pip python3-venv jq make net-tools \\
+    python3-certbot-nginx \\
+    nodejs npm docker.io
 
-echo "[2/10] Installing libsrtp..."
-notify_webhook "provisioning" "install_libsrtp" "Installing libsrtp"
-cd /tmp
-wget {libsrtp_tar_url} -O libsrtp.tar.gz
-tar xzf libsrtp.tar.gz
-cd libsrtp-2.2.0
-./configure --prefix=/usr --enable-openssl
-make shared_library && make install
-ldconfig
-cd -
-
-echo "[3/10] Installing usrsctp..."
-notify_webhook "provisioning" "install_usrsctp" "Installing usrsctp"
-cd /tmp
-git clone {usrsctp_git_url}
-cd usrsctp
-./bootstrap
-./configure --prefix=/usr
-make && make install
-ldconfig
-cd -
-
-echo "[4/10] Installing libwebsockets..."
-notify_webhook "provisioning" "install_libwebsockets" "Installing libwebsockets"
-cd /tmp
-git clone {libwebsockets_git_url}
-cd libwebsockets
-git checkout v4.3-stable
-mkdir build
-cd build
-cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS="-fpic" ..
-make && make install
-ldconfig
-cd -
-
-echo "[5/10] Installing libnice..."
-notify_webhook "provisioning" "install_libnice" "Installing libnice"
-cd /tmp
-git clone {libnice_git_url}
-cd libnice
-./autogen.sh
-./configure --prefix=/usr
-make && make install
-ldconfig
-cd -
-
-echo "[6/10] Setting up installation directory..."
-notify_webhook "provisioning" "setup_directories" "Creating installation directories"
-mkdir -p "${{INSTALL_DIR}}"
-mkdir -p "${{LOG_DIR}}"
-cd "${{INSTALL_DIR}}"
-
-echo "[7/10] Installing Moonlight Embedded..."
-notify_webhook "provisioning" "install_moonlight" "Installing Moonlight Embedded"
-mkdir -p "${{MOONLIGHT_EMBEDDED_DIR}}"
-if [ ! -d "${{MOONLIGHT_EMBEDDED_DIR}}/.git" ]; then
-    git clone {github_url} "${{MOONLIGHT_EMBEDDED_DIR}}"
+# Install Node.js 20 if not available
+if ! command -v node &> /dev/null || [[ "$(node -v)" != v20* ]]; then
+    echo "Installing Node.js 20..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y nodejs
 fi
 
-cd "${{MOONLIGHT_EMBEDDED_DIR}}"
-git pull
-mkdir -p build
-cd build
-cmake .. && make -j$(nproc) && make install
+# Start Docker service (for systems with systemd)
+systemctl start docker || true
+systemctl enable docker || true
 
-echo "[8/10] Installing Janus Gateway..."
-notify_webhook "provisioning" "install_janus" "Installing Janus Gateway"
-if [ ! -d "${{JANUS_INSTALL_DIR}}" ]; then
-    git clone {janus_git_url} /tmp/janus-gateway
-    cd /tmp/janus-gateway
-    sh autogen.sh
-    ./configure --prefix="${{JANUS_INSTALL_DIR}}" --enable-post-processing \\
-        --enable-data-channels --enable-websockets --enable-rest \\
-        --enable-plugin-streaming
-    make
-    make install
-    make configs
-    
-    # Configure Janus for Moonlight streaming
-    cat > ${{JANUS_INSTALL_DIR}}/etc/janus/janus.plugin.streaming.jcfg <<EOF
-streaming: {{
-    enabled: true,
-    type: "rtp",
-    audio: true,
-    video: true,
-    videoport: 5004,
-    videopt: 96,
-    videortpmap: "H264/90000",
-    audiopt: 111,
-    audiortpmap: "opus/48000/2",
-    secret: "moonlightstream",
-    permanent: true
-}}
+# ========== REPOSITORY SETUP ==========
+echo "[2/9] Setting up GPT repository..."
+mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR"
+
+if [ -d ".git" ]; then
+    echo "Existing repository found, pulling latest changes..."
+    git pull
+elif [ -z "$(ls -A .)" ]; then
+    echo "Cloning fresh repository..."
+    git clone "$GPT_REPO" .
+else
+    echo "Directory not empty and not a git repo. Moving contents to backup..."
+    mkdir -p ../gpt_backup
+    mv * ../gpt_backup/ || true
+    git clone "$GPT_REPO" .
+fi
+
+# ========== GENERATE DOCKERFILE ==========
+echo "[3/9] Creating Dockerfile..."
+
+cat > "$INSTALL_DIR/Dockerfile" <<EOF
+# Base image
+FROM python:3.10-slim
+
+# Install system dependencies,  procps for pkill/pgrep, curl
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    build-essential \
+    libffi-dev \
+    libssl-dev \
+    libjpeg-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    libpq-dev \
+    libmagic-dev \
+    poppler-utils \
+    unzip \
+    procps \
+    gnupg \
+    python3-venv \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set work directory
+WORKDIR /app
+
+# Copy all files into container
+COPY . .
+
+# Create backend/.env file
+# Ensure backend and frontend folders exist
+RUN mkdir -p /app/backend /app/frontend
+
+# Create backend/.env
+RUN printf "#Backend Configuration\\n\
+APP_NAME{REACT_APP_APP_NAME}\\n\
+ENVIRONMENT=production\\n\
+# OpenAI API Configuration\\n\
+OPENAI_API_BASE={OPENAI_API_BASE}\\n\
+OPENAI_API_KEY={OPENAI_API_KEY}\\n\
+OPENAI_DEPLOYMENT_NAME={OPENAI_DEPLOYMENT_NAME}\\n\
+OPENAI_API_VERSION={OPENAI_API_VERSION}\\n\
+CORS_ORIGINS=http://localhost:{FRONTEND_PORT}\\n\
+OPENAI_TEMPERATURE=0.7\\n\
+OPENAI_MAX_TOKENS=4000\\n\
+OPENAI_TOP_P=0.95\\n\
+OPENAI_FREQUENCY_PENALTY=0\\n\
+OPENAI_PRESENCE_PENALTY=0\\n\
+# Vector Search Configuration\\n\
+VECTOR_SEARCH_ENABLED={VECTOR_SEARCH_ENABLED}\\n\
+VECTOR_SEARCH_ENDPOINT={VECTOR_SEARCH_ENDPOINT}\\n\
+VECTOR_SEARCH_KEY={VECTOR_SEARCH_KEY}\\n\
+VECTOR_SEARCH_INDEX={VECTOR_SEARCH_INDEX}\\n\
+VECTOR_SEARCH_SEMANTIC_CONFIG={VECTOR_SEARCH_SEMANTIC_CONFIG}\\n\
+VECTOR_SEARCH_EMBEDDING_DEPLOYMENT={VECTOR_SEARCH_EMBEDDING_DEPLOYMENT}\\n\
+VECTOR_SEARCH_EMBEDDING_ENDPOINT={VECTOR_SEARCH_EMBEDDING_ENDPOINT}\\n\
+VECTOR_SEARCH_EMBEDDING_KEY={VECTOR_SEARCH_EMBEDDING_KEY}\\n\
+# Vector Search Storage\\n\
+VECTOR_SEARCH_STORAGE_ENDPOINT={VECTOR_SEARCH_STORAGE_ENDPOINT}\\n\
+VECTOR_SEARCH_STORAGE_ACCESS_KEY={VECTOR_SEARCH_STORAGE_ACCESS_KEY}\\n\
+VECTOR_SEARCH_STORAGE_CONNECTION_STRING={VECTOR_SEARCH_STORAGE_CONNECTION_STRING}\\n\
+# Server Configuration\\n\
+HOST=0.0.0.0\\n\
+PORT={BACKEND_PORT}\\n\
+CORS_ORIGINS=http://localhost:{FRONTEND_PORT},http://localhost:{BACKEND_PORT},https://{DOMAIN_NAME}, wss://{DOMAIN_NAME}/ws\\n\
+\\n\
+SYSTEM_PROMPT=\\"You are an AI assistant. You aim to be helpful, honest, and direct in your interactions.\\"\\n" > /app/backend/.env
+
+# Create frontend/.env
+RUN printf "#Frontend Configuration\\n\
+REACT_APP_API_URL=https://{DOMAIN_NAME}\\n\
+REACT_APP_WS_URL=wss://{DOMAIN_NAME}/ws\\n\
+WDS_SOCKET_PORT=0\\n\
+REACT_APP_APP_NAME={REACT_APP_APP_NAME}\\n\
+REACT_APP_APP_LOGO={REACT_APP_APP_LOGO}\\n\
+NODE_ENV=production\\n\
+REACT_APP_PASSWORD={ADMIN_PASSWORD}\\n\
+REACT_APP_GPT_IMAGE_URL={GPT_IMAGE_URL}\\n\
+REACT_APP_GPT_IMAGE_KEY={GPT_IMAGE_KEY}\\n\
+REACT_APP_GPT_IMAGE_VERSION={GPT_IMAGE_VERSION}\\n" > /app/frontend/.env
+
+######IF YOU RUN IT ON LOCALHOST#####################
+#REACT_APP_API_URL=http://localhost:{BACKEND_PORT}\\n\
+#REACT_APP_WS_URL=ws://localhost:{BACKEND_PORT}/ws\\n\
+######IF YOU RUN IT ON DOMAIN ws->wss
+#REACT_APP_API_URL=https://{DOMAIN_NAME}\\n\
+#REACT_APP_WS_URL=wss://{DOMAIN_NAME}/ws\\n\
+######################################################
+
+# Ensure install.sh is executable
+RUN chmod +x ./docker_install.sh
+
+# Run install-only mode for dependency install
+RUN ./docker_install.sh install-only
+
+# Expose backend port
+EXPOSE 8000 3000
+
+RUN chmod +x ./docker_restart_services.sh
+RUN chmod +x ./docker_refresh_github.sh
+
+# Default run command
+# Use restart_services.sh as the container's default command
+CMD ["./docker_restart_services.sh"]
+
 EOF
-fi
 
-echo "[9/10] Setting up systemd services..."
-notify_webhook "provisioning" "setup_services" "Configuring system services"
+echo "[4/9] Building Docker image..."
+docker build -t gpt-app "$INSTALL_DIR"
 
-# Janus service
-cat > /etc/systemd/system/janus.service <<EOF
+echo "[5/9] Stopping existing container if any..."
+docker stop gpt-container || true
+docker rm gpt-container || true
+
+echo "[6/9] Starting Docker container..."
+docker run -d --name gpt-container -p {BACKEND_PORT}:{BACKEND_PORT} -p {FRONTEND_PORT}:{FRONTEND_PORT} gpt-app
+
+# Create systemd service to manage the Docker container
+echo "[7/9] Creating systemd service for Docker container..."
+
+cat > /etc/systemd/system/gpt-docker.service <<EOF
 [Unit]
-Description=Janus WebRTC Server
-After=network.target
+Description=GPT Docker Container
+After=docker.service
+Requires=docker.service
 
 [Service]
-Type=simple
-User=root
-ExecStart=${{JANUS_INSTALL_DIR}}/bin/janus
-Restart=on-failure
-RestartSec=5
+Restart=always
+ExecStart=/usr/bin/docker start -a gpt-container
+ExecStop=/usr/bin/docker stop -t 10 gpt-container
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Moonlight streaming service
-cat > /etc/systemd/system/moonlight-stream.service <<EOF
-[Unit]
-Description=Moonlight to Janus Streaming Service
-After=network.target janus.service
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/moonlight stream ${{VM_IP}} -app Steam -codec h264 -bitrate 20000 -fps 60 -unsupported -remote -rtp 127.0.0.1 5004 5005
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
+# Enable and start Docker service
 systemctl daemon-reload
-systemctl enable janus.service moonlight-stream.service
-systemctl start janus.service moonlight-stream.service
+systemctl enable gpt-docker.service
+systemctl start gpt-docker.service
 
-echo "[10/10] Configuring firewall and SSL..."
-notify_webhook "provisioning" "security_setup" "Configuring firewall and SSL"
-ufw allow 22/tcp
+# ========== LOGS DIRECTORY ==========
+echo "[8/9] Creating logs directory..."
+mkdir -p "$LOG_DIR"
+
+# ========== NETWORK SECURITY ==========
+echo "[9/9] Configuring firewall..."
+ufw allow 22/tcp 
 ufw allow 80/tcp
 ufw allow 443/tcp
-ufw allow 5004:5005/udp
-ufw allow 7088/tcp
-ufw allow 8088/tcp
-ufw allow 10000-10200/udp
+ufw allow {FRONTEND_PORT}/tcp
+ufw allow {BACKEND_PORT}/tcp
 ufw --force enable
 
+# ========== SSL CERTIFICATE ==========
+echo "[10/10] Setting up SSL certificate..."
+
+# Download Let's Encrypt configuration files
 mkdir -p /etc/letsencrypt
-curl -s {letsencrypt_options_url} > /etc/letsencrypt/options-ssl-nginx.conf
-curl -s {ssl_dhparams_url} > /etc/letsencrypt/ssl-dhparams.pem
+curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
+curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
 
-notify_webhook "provisioning" "ssl_setup" "Requesting SSL certificates"
-certbot --nginx -d "${{DOMAIN_NAME}}" --staging --agree-tos --email "${{ADMIN_EMAIL}}" --redirect --no-eff-email
+# Real certificate issuance (commented out)
+certbot --nginx -d "{DOMAIN_NAME}" --non-interactive --agree-tos --email "{ADMIN_EMAIL}" --redirect
 
+# Staging/testing certificate issuance (active command)
+#certbot --nginx -d "{DOMAIN_NAME}" --staging --agree-tos --email "{ADMIN_EMAIL}" --redirect --no-eff-email
+
+# ========== NGINX CONFIG ==========
+echo "[11/11] Configuring Nginx..."
+
+# Remove default Nginx config
 rm -f /etc/nginx/sites-enabled/default
 
-cat > /etc/nginx/sites-available/moonlightembed <<EOF
+# Create GPT config
+cat > /etc/nginx/sites-available/gpt <<EOF
+map \$http_upgrade \$connection_upgrade {{
+    default upgrade;
+    '' close;
+}}
+
 server {{
     listen 80;
     server_name {DOMAIN_NAME};
-    return 301 https://$host$request_uri;
+    return 301 https://\$host\$request_uri;
 }}
 
 server {{
@@ -279,60 +288,103 @@ server {{
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    location / {{
-        proxy_pass http://localhost:8088;
+    location /ws {{
+        proxy_pass http://localhost:{BACKEND_PORT}/ws;
         proxy_set_header Host \$host;
-    }}
-
-    location /janus-ws {{
-        proxy_pass http://localhost:7088;
-        proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
     }}
 
-    client_max_body_size 1024M;
+    location /chat {{
+        proxy_pass http://localhost:{BACKEND_PORT}/chat;
+        proxy_set_header Host \$host;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
+    }}
+    
+    location /api {{
+        proxy_pass http://localhost:{BACKEND_PORT}/api;
+        proxy_set_header Host \$host;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
+    }}
+
+    client_max_body_size {MAX_UPLOAD_FILE_SIZE_IN_MB}M;
+
+    location / {{
+        proxy_pass http://localhost:{FRONTEND_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }}
 }}
 EOF
 
-ln -sf /etc/nginx/sites-available/moonlightembed /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/gpt /etc/nginx/sites-enabled/
 nginx -t && systemctl restart nginx
 
-notify_webhook "completed" "finished" "Setup completed successfully"
+# ========== VERIFICATION ==========
+echo "Verifying setup..."
 
-echo "============================================================"
-echo "✅ Moonlight to Browser Streaming Setup Complete!"
-echo "============================================================"
+# Verify Docker container is running
+if ! docker ps --filter "name=gpt-container" --filter "status=running" | grep -q gpt-container; then
+    echo "ERROR: Docker container gpt-container is not running!"
+    docker logs gpt-container || true
+    exit 1
+fi
+
+# Verify Nginx config
+if ! nginx -t; then
+    echo "ERROR: Nginx configuration test failed"
+    exit 1
+fi
+
+# Verify SSL certificate
+if [ ! -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
+    echo "ERROR: SSL certificate not found!"
+    exit 1
+fi
+
+echo "============================================"
+echo "✅ GPT Setup Complete!"
 echo ""
-echo "🌐 Connection Information:"
-echo "------------------------------------------------------------"
-echo "🔗 Moonlight PIN Service: https://pin.{DOMAIN_NAME}"
-echo "🔑 PIN: {ADMIN_PASSWORD}"
-echo "------------------------------------------------------------"
+echo "🔗 Access: https://{DOMAIN_NAME}"
 echo ""
-echo "🎥 Streaming Access:"
-echo "------------------------------------------------------------"
-echo "1. Open https://{DOMAIN_NAME}/janus/streaming/test.html"
-echo "2. Use these settings:"
-echo "   - Video: H.264"
-echo "   - Audio: Opus"
-echo "   - Port: 5004"
-echo "   - Secret: moonlightstream"
-echo "------------------------------------------------------------"
+echo "⚙️ Service Status:"
+echo "   - Docker container: docker ps --filter name=gpt-container"
+echo "   - Nginx: systemctl status nginx"
 echo ""
-echo "⚙️ Service Status Commands:"
-echo "------------------------------------------------------------"
-echo "Janus Gateway: systemctl status janus.service"
-echo "Moonlight Stream: systemctl status moonlight-stream.service"
-echo "Nginx: systemctl status nginx"
-echo "------------------------------------------------------------"
+echo "📜 Logs:"
+echo "   - Docker container logs: docker logs -f gpt-container"
+echo "   - Nginx: journalctl -u nginx -f"
 echo ""
-echo "🔧 IMPORTANT Setup Notes:"
-echo "------------------------------------------------------------"
-echo "1. On your Windows 10 machine:"
-echo "   - Install Sunshine from https://github.com/LizardByte/Sunshine"
-echo "   - Use PIN: {ADMIN_PASSWORD} when pairing"
-echo "2. The stream will be available at the Janus test page"
-echo "============================================================"
-'''
+echo "⚠️ Important:"
+echo "1. First-time setup may require visiting https://{DOMAIN_NAME} to complete installation"
+echo "2. To update: cd {INSTALL_DIR} && git pull && docker restart gpt-container"
+echo "============================================"
+"""
     return script_template
