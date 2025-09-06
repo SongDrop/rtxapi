@@ -62,22 +62,54 @@ function Set-RegistryValue {
 }
 
 # --- SYSTEM CLEANUP & DEBLOAT (HKLM + SYSTEM) ---
-$systemKeys = @{ 
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State" = @{ "ImageState" = 7; "OOBEInProgress" = 0; "SetupPhase" = 0; "SystemSetupInProgress" = 0 }
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" = @{ "PrivacyConsentStatus" = 1; "DisablePrivacyExperience" = 1; "SkipMachineOOBE" = 1; "SkipUserOOBE" = 1 }
-    "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE" = @{ "DisablePrivacyExperience" = 1 }
-    "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" = @{ "AllowCortana" = 0 }
-    "HKLM:\SOFTWARE\Policies\Microsoft\Edge" = @{ "HideFirstRunExperience" = 1 }
-    "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" = @{ "NoAutoUpdate" = 1 }
-    "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" = @{ "NoConnectedUser" = 3 }
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection" = @{ "AllowTelemetry" = 0 }
-    "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance" = @{ "fAllowToGetHelp" = 0 }
-    "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" = @{ "NC_ShowSharedAccessUI" = 0 }
-    "HKLM:\SYSTEM\CurrentControlSet\Control\Network" = @{ "NewNetworkWindowOff" = 1; "Category" = 1 }
-    "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" = @{ "NC_StdDomainUserSetLocation" = 1; "NC_EnableNetSetupWizard" = 0 }
-    "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" = @{ "DisableAntiSpywareNotification" = 1 }
-    "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" = @{ "DisableNotifications" = 1 }
-    "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" = @{ "DisableEnhancedNotifications" = 1 }
+# Create system keys hashtable with proper syntax
+$systemKeys = @{}
+
+# Add registry keys one by one to avoid syntax issues
+$systemKeys["HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State"] = @{ 
+    "ImageState" = 7; "OOBEInProgress" = 0; "SetupPhase" = 0; "SystemSetupInProgress" = 0 
+}
+$systemKeys["HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE"] = @{ 
+    "PrivacyConsentStatus" = 1; "DisablePrivacyExperience" = 1; "SkipMachineOOBE" = 1; "SkipUserOOBE" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE"] = @{ 
+    "DisablePrivacyExperience" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"] = @{ 
+    "AllowCortana" = 0 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Edge"] = @{ 
+    "HideFirstRunExperience" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"] = @{ 
+    "NoAutoUpdate" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"] = @{ 
+    "NoConnectedUser" = 3 
+}
+$systemKeys["HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection"] = @{ 
+    "AllowTelemetry" = 0 
+}
+$systemKeys["HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance"] = @{ 
+    "fAllowToGetHelp" = 0 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections"] = @{ 
+    "NC_ShowSharedAccessUI" = 0 
+}
+$systemKeys["HKLM:\SYSTEM\CurrentControlSet\Control\Network"] = @{ 
+    "NewNetworkWindowOff" = 1; "Category" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections"] = @{ 
+    "NC_StdDomainUserSetLocation" = 1; "NC_EnableNetSetupWizard" = 0 
+}
+$systemKeys["HKLM:\SOFTWARE\Microsoft\Windows Defender\Features"] = @{ 
+    "DisableAntiSpywareNotification" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications"] = @{ 
+    "DisableNotifications" = 1 
+}
+$systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications"] = @{ 
+    "DisableEnhancedNotifications" = 1 
 }
 
 try {
@@ -217,7 +249,7 @@ foreach ($profile in $hkcuProfiles) {
 # ---- Post-reboot helper script ----
 $helperPath = "C:\ProgramData\PostHyperVSetup.ps1"
 
-# Create helper script content directly without nested here-strings
+# Create helper script content
 $helperContent = @'
 # Post-reboot setup script
 try {
