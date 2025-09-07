@@ -263,80 +263,145 @@ $helperPath = "C:\ProgramData\PostHyperVSetup.ps1"
 
 # Create helper script content
 $helperContent = @'
-# Post-reboot setup script
+# Post-reboot Hyper-V setup script
 try {
-    # Force all current network profiles to Private
-    # Snapshot the profiles first into an array to avoid "collection modified" errors
-    $profiles = Get-NetConnectionProfile | ForEach-Object { $_ }
+    Write-Output "Starting PostHyperVSetup..."
 
-    foreach ($profile in $profiles) {
+    # --- 0. Ensure script is running as Administrator ---
+    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        Write-Warning "Script must be run as Administrator to modify protected registry keys."
+        return
+    }
+
+    # --- 1. Delay to allow system services to stabilize ---
+    Start-Sleep -Seconds 5
+
+    # --- 2. Set all current network profiles to Private ---
+    try {
+        $profiles = @(Get-NetConnectionProfile | Select-Object InterfaceIndex, Name)
+        for ($i = 0; $i -lt $profiles.Count; $i++) {
+            $p = $profiles[$i]
+            Set-NetConnectionProfile -InterfaceIndex $p.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+            if ($p.Name) {
+                Write-Output "Set profile '${p.Name}' to Private"
+            } else {
+                Write-Output "Set unnamed profile (InterfaceIndex: $($p.InterfaceIndex)) to Private"
+            }
+        }
+    } catch {
+        Write-Warning "Failed to set network profiles: $_"
+    }
+
+    # --- 3. Restart netprofm service only (defer NlaSvc) ---
+    try {
+        Restart-Service "netprofm" -Force -ErrorAction SilentlyContinue
+        Write-Output "Restarted service: netprofm"
+    } catch {
+        Write-Warning "Failed to restart service netprofm: $_"
+    }
+
+    # --- 4. Disable Network Discovery firewall rules ---
+    try {
+        Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
+        Set-NetFirewallRule -Group "@FirewallAPI.dll,-32752" -Enabled False -ErrorAction SilentlyContinue
+        Write-Output "Disabled Network Discovery firewall rules"
+    } catch {
+        Write-Warning "Failed to disable firewall rules: $_"
+    }
+
+    # --- 5. Stop and disable discovery-related services ---
+    $servicesToDisable = @("FDResPub", "FDHost", "UPnPHost", "SSDPSRV")
+    for ($i = 0; $i -lt $servicesToDisable.Count; $i++) {
+        $svc = $servicesToDisable[$i]
         try {
-            Set-NetConnectionProfile -InterfaceIndex $profile.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+            Stop-Service $svc -Force -ErrorAction SilentlyContinue
+            Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
+            Write-Output "Disabled service: ${svc}"
         } catch {
-            Write-Warning "Failed to update profile $($profile.Name): $_"
+            Write-Warning "Failed to disable service ${svc}: $_"
         }
     }
 
-    Restart-Service netprofm -Force -ErrorAction SilentlyContinue
-    Restart-Service NlaSvc -Force -ErrorAction SilentlyContinue
-
-    # Disable Network Discovery firewall rules
-    Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
-
-    # Stop discovery-related services
-    $servicesToDisable = @("FDResPub","FDHost","UPnPHost","SSDPSRV")
-    foreach ($svc in $servicesToDisable) {
-        Stop-Service $svc -Force -ErrorAction SilentlyContinue
-        Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
+    # --- 6. Disable network location wizard via registry ---
+    try {
+        New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard" -Value 0 -PropertyType DWord -Force | Out-Null
+        Write-Output "Disabled network location wizard"
+    } catch {
+        Write-Warning "Failed to update registry for network wizard: $_"
     }
 
-    # Disable network location wizard
-    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard" -Value 0 -PropertyType DWord -Force | Out-Null
-
-    # Set existing network profiles to Private
-    $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
-    if (Test-Path $profilesPath) {
-        Get-ChildItem $profilesPath | ForEach-Object {
-            Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
+    # --- 7. Set existing network profiles to Private via registry ---
+    try {
+        $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
+        if (Test-Path $profilesPath) {
+            $profileKeys = @(Get-ChildItem $profilesPath)
+            for ($i = 0; $i -lt $profileKeys.Count; $i++) {
+                $keyPath = $profileKeys[$i].PSPath
+                Set-ItemProperty -Path $keyPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
+                Write-Output "Set registry profile to Private: ${keyPath}"
+            }
         }
+    } catch {
+        Write-Warning "Failed to update registry network profiles: $_"
     }
 
-    # Disable Network Location Awareness service
-    Stop-Service "NlaSvc" -Force -ErrorAction SilentlyContinue
-    Set-Service "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
+    # --- 8. Disable firewall notifications ---
+    try {
+        New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" -Name "DisableAntiSpywareNotification" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableEnhancedNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+        Write-Output "Disabled firewall notifications"
+    } catch {
+        Write-Warning "Failed to update firewall notification settings: $_"
+    }
 
-    # Disable Network Discovery globally
-    Set-NetFirewallRule -Group "@FirewallAPI.dll,-32752" -Enabled False -ErrorAction SilentlyContinue
-    Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
-
-    # Disable firewall notifications
-    New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" -Name "DisableAntiSpywareNotification" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
-    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableEnhancedNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
-
-    # Create Hyper-V Manager shortcut for all users
-    $virt="$env:windir\System32\virtmgmt.msc"
-    if (Test-Path $virt) {
-        $users=Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" }
-        foreach ($u in $users) {
-            $desk=Join-Path $u.FullName "Desktop"
-            if (-not (Test-Path $desk)) { New-Item -Path $desk -ItemType Directory -Force | Out-Null }
-            $sc=Join-Path $desk "Hyper-V Manager.lnk"
-            $wsh=New-Object -ComObject WScript.Shell
-            $link=$wsh.CreateShortcut($sc)
-            $link.TargetPath=$virt
-            $link.IconLocation="$virt,0"
-            $link.Save()
+    # --- 9. Create Hyper-V Manager shortcut for all users ---
+    try {
+        $virt = "$env:windir\System32\virtmgmt.msc"
+        if (Test-Path $virt) {
+            $users = @(Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" })
+            for ($i = 0; $i -lt $users.Count; $i++) {
+                $u = $users[$i]
+                $desk = Join-Path $u.FullName "Desktop"
+                if (-not (Test-Path $desk)) { New-Item -Path $desk -ItemType Directory -Force | Out-Null }
+                $sc = Join-Path $desk "Hyper-V Manager.lnk"
+                $wsh = New-Object -ComObject WScript.Shell
+                $link = $wsh.CreateShortcut($sc)
+                $link.TargetPath = $virt
+                $link.IconLocation = "$virt,0"
+                $link.Save()
+                Write-Output "Created shortcut for user: ${u.BaseName}"
+            }
         }
+    } catch {
+        Write-Warning "Failed to create Hyper-V shortcut: $_"
     }
 
-    # Cleanup
-    Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
-    Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
-} catch { 
-    Write-Output "PostHyperVSetup encountered an error: $_" 
+    # --- 10. Disable NlaSvc service (safe version) ---
+    try {
+        Set-Service "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
+        Write-Output "Set NlaSvc startup type to Disabled"
+    } catch {
+        Write-Warning "Failed to set NlaSvc startup type: $_"
+    }
+
+    # --- 11. Cleanup ---
+    try {
+        Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
+        if ($helperPath) {
+            Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
+            Write-Output "Removed helper script: $helperPath"
+        }
+        Write-Output "Cleanup complete"
+    } catch {
+        Write-Warning "Cleanup failed: $_"
+    }
+
+    Write-Output "PostHyperVSetup completed successfully."
+} catch {
+    Write-Output "PostHyperVSetup encountered a fatal error: $_"
 }
 '@
 
