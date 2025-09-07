@@ -134,6 +134,30 @@ foreach ($path in $systemKeys.Keys) {
     }
 }
 
+foreach ($path in $systemKeys.Keys) {
+    foreach ($kv in $systemKeys[$path].GetEnumerator()) {
+        Set-RegistryValue -Path $path -Name $kv.Key -Value $kv.Value
+    }
+}
+
+# --- Extra registry to suppress "no internet" and location prompts ---
+try {
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_DoNotShowLocalOnlyConnectivityPrompt" -Value 1 -PropertyType DWord -Force | Out-Null
+} catch { }
+
+# --- Force all existing network profiles to Private ---
+try {
+    $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
+    if (Test-Path $profilesPath) {
+        Get-ChildItem $profilesPath | ForEach-Object {
+            try {
+                Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force
+            } catch { }
+        }
+    }
+} catch { }
+
+
 $services = @("WSearch","DiagTrack","WerSvc")
 foreach ($svc in $services) {
     try { Stop-Service $svc -Force -ErrorAction SilentlyContinue } catch { }
@@ -380,12 +404,36 @@ try {
     }
 
     # --- 10. Disable NlaSvc service (safe version) ---
+    # --- 10. Finalize network profile enforcement and disable NlaSvc safely ---
     try {
+        # Ensure all profiles are still forced to Private (API)
+        $profiles = @(Get-NetConnectionProfile | Select-Object InterfaceIndex, Name)
+        foreach ($p in $profiles) {
+            try {
+                Set-NetConnectionProfile -InterfaceIndex $p.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+                Write-Output "Reconfirmed profile '${p.Name}' as Private"
+            } catch { }
+        }
+
+        # Registry fallback just in case
+        $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
+        if (Test-Path $profilesPath) {
+            Get-ChildItem $profilesPath | ForEach-Object {
+                try {
+                    Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
+                    Write-Output "Re-forced registry profile to Private: $($_.PSChildName)"
+                } catch { }
+            }
+        }
+
+        # Now disable NlaSvc (only after profiles are locked down)
+        Stop-Service "NlaSvc" -Force -ErrorAction SilentlyContinue
         Set-Service "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
-        Write-Output "Set NlaSvc startup type to Disabled"
+        Write-Output "Disabled NlaSvc service safely after network profiles enforcement"
     } catch {
-        Write-Warning "Failed to set NlaSvc startup type: $_"
+        Write-Warning "Failed to finalize network profiles or disable NlaSvc: $_"
     }
+
 
     # --- 11. Cleanup ---
     try {
