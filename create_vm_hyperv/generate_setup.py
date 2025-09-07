@@ -300,20 +300,21 @@ try {
     # --- 1. Delay to allow system services to stabilize ---
     Start-Sleep -Seconds 5
 
-    # --- 2. Set all current network profiles to Private ---
+    # --- 2. Set all current network profiles to Private (API first) ---
     try {
         $profiles = @(Get-NetConnectionProfile | Select-Object InterfaceIndex, Name)
-        for ($i = 0; $i -lt $profiles.Count; $i++) {
-            $p = $profiles[$i]
-            Set-NetConnectionProfile -InterfaceIndex $p.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
-            if ($p.Name) {
-                Write-Output "Set profile '${p.Name}' to Private"
-            } else {
-                Write-Output "Set unnamed profile (InterfaceIndex: $($p.InterfaceIndex)) to Private"
-            }
+        foreach ($p in $profiles) {
+            try {
+                Set-NetConnectionProfile -InterfaceIndex $p.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+                if ($p.Name) {
+                    Write-Output "Set profile '${p.Name}' to Private"
+                } else {
+                    Write-Output "Set unnamed profile (InterfaceIndex: $($p.InterfaceIndex)) to Private"
+                }
+            } catch { }
         }
     } catch {
-        Write-Warning "Failed to set network profiles: $_"
+        Write-Warning "Failed to set network profiles via Get-NetConnectionProfile: $_"
     }
 
     # --- 3. Restart netprofm service only (defer NlaSvc) ---
@@ -335,8 +336,7 @@ try {
 
     # --- 5. Stop and disable discovery-related services ---
     $servicesToDisable = @("FDResPub", "FDHost", "UPnPHost", "SSDPSRV")
-    for ($i = 0; $i -lt $servicesToDisable.Count; $i++) {
-        $svc = $servicesToDisable[$i]
+    foreach ($svc in $servicesToDisable) {
         try {
             Stop-Service $svc -Force -ErrorAction SilentlyContinue
             Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
@@ -346,25 +346,31 @@ try {
         }
     }
 
-    # --- 6. Disable network location wizard via registry ---
+    # --- 6. Disable network location wizard & suppress prompts ---
     try {
+        # Kill the "new network" wizard
         New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network\NetworkLocationWizard" -Name "HideWizard" -Value 1 -PropertyType DWord -Force | Out-Null
+
+        # Suppress domain/location/user prompts
         New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
         New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard" -Value 0 -PropertyType DWord -Force | Out-Null
-        Write-Output "Disabled network location wizard"
+        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_DoNotShowLocalOnlyConnectivityPrompt" -Value 1 -PropertyType DWord -Force | Out-Null
+
+        Write-Output "Disabled network location wizard and suppressed prompts"
     } catch {
         Write-Warning "Failed to update registry for network wizard: $_"
     }
 
-    # --- 7. Set existing network profiles to Private via registry ---
+    # --- 7. Set existing network profiles to Private via registry (fallback) ---
     try {
         $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
         if (Test-Path $profilesPath) {
-            $profileKeys = @(Get-ChildItem $profilesPath)
-            for ($i = 0; $i -lt $profileKeys.Count; $i++) {
-                $keyPath = $profileKeys[$i].PSPath
-                Set-ItemProperty -Path $keyPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-                Write-Output "Set registry profile to Private: ${keyPath}"
+            Get-ChildItem $profilesPath | ForEach-Object {
+                try {
+                    Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
+                    Write-Output "Forced registry profile to Private: $($_.PSChildName)"
+                } catch { }
             }
         }
     } catch {
@@ -373,9 +379,9 @@ try {
 
     # --- 8. Disable firewall notifications ---
     try {
-        New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" -Name "DisableAntiSpywareNotification" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
-        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
-        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableEnhancedNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+        New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" -Name "DisableAntiSpywareNotification" -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableEnhancedNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
         Write-Output "Disabled firewall notifications"
     } catch {
         Write-Warning "Failed to update firewall notification settings: $_"
@@ -386,8 +392,7 @@ try {
         $virt = "$env:windir\System32\virtmgmt.msc"
         if (Test-Path $virt) {
             $users = @(Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" })
-            for ($i = 0; $i -lt $users.Count; $i++) {
-                $u = $users[$i]
+            foreach ($u in $users) {
                 $desk = Join-Path $u.FullName "Desktop"
                 if (-not (Test-Path $desk)) { New-Item -Path $desk -ItemType Directory -Force | Out-Null }
                 $sc = Join-Path $desk "Hyper-V Manager.lnk"
@@ -403,10 +408,9 @@ try {
         Write-Warning "Failed to create Hyper-V shortcut: $_"
     }
 
-    # --- 10. Disable NlaSvc service (safe version) ---
-    # --- 10. Finalize network profile enforcement and disable NlaSvc safely ---
+    # --- 10. Finalize profiles & disable NlaSvc safely ---
     try {
-        # Ensure all profiles are still forced to Private (API)
+        # Reconfirm profiles are Private
         $profiles = @(Get-NetConnectionProfile | Select-Object InterfaceIndex, Name)
         foreach ($p in $profiles) {
             try {
@@ -415,7 +419,7 @@ try {
             } catch { }
         }
 
-        # Registry fallback just in case
+        # Registry fallback
         $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
         if (Test-Path $profilesPath) {
             Get-ChildItem $profilesPath | ForEach-Object {
@@ -426,14 +430,13 @@ try {
             }
         }
 
-        # Now disable NlaSvc (only after profiles are locked down)
+        # Now disable NlaSvc
         Stop-Service "NlaSvc" -Force -ErrorAction SilentlyContinue
         Set-Service "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
-        Write-Output "Disabled NlaSvc service safely after network profiles enforcement"
+        Write-Output "Disabled NlaSvc service safely"
     } catch {
         Write-Warning "Failed to finalize network profiles or disable NlaSvc: $_"
     }
-
 
     # --- 11. Cleanup ---
     try {
