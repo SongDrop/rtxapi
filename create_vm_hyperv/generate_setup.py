@@ -287,7 +287,7 @@ $helperPath = "C:\ProgramData\PostHyperVSetup.ps1"
 
 # Create helper script content
 $helperContent = @'
-# Post-reboot Hyper-V setup script
+# Post-reboot Hyper-V setup script with watchdog for network profiles
 try {
     Write-Output "Starting PostHyperVSetup..."
 
@@ -300,29 +300,25 @@ try {
     # --- 1. Delay to allow system services to stabilize ---
     Start-Sleep -Seconds 5
 
-    # --- 2. Set all current network profiles to Private (API first) ---
+    # --- 2. Set all current network profiles to Private ---
     try {
-        $profiles = @(Get-NetConnectionProfile | Select-Object InterfaceIndex, Name)
+        $profiles = Get-NetConnectionProfile | Select-Object -Property Name, InterfaceIndex
         foreach ($p in $profiles) {
             try {
                 Set-NetConnectionProfile -InterfaceIndex $p.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
-                if ($p.Name) {
-                    Write-Output "Set profile '${p.Name}' to Private"
-                } else {
-                    Write-Output "Set unnamed profile (InterfaceIndex: $($p.InterfaceIndex)) to Private"
-                }
+                Write-Output "Set profile '$($p.Name)' to Private"
             } catch { }
         }
     } catch {
-        Write-Warning "Failed to set network profiles via Get-NetConnectionProfile: $_"
+        Write-Warning "Failed to set network profiles: $_"
     }
 
-    # --- 3. Restart netprofm service only (defer NlaSvc) ---
+    # --- 3. Restart netprofm service ---
     try {
         Restart-Service "netprofm" -Force -ErrorAction SilentlyContinue
         Write-Output "Restarted service: netprofm"
     } catch {
-        Write-Warning "Failed to restart service netprofm: $_"
+        Write-Warning "Failed to restart netprofm: $_"
     }
 
     # --- 4. Disable Network Discovery firewall rules ---
@@ -346,30 +342,26 @@ try {
         }
     }
 
-    # --- 6. Disable network location wizard & suppress prompts ---
+    # --- 6. Disable Network Location Wizard & suppress prompts ---
     try {
-        # Kill the "new network" wizard
         New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
         New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network\NetworkLocationWizard" -Name "HideWizard" -Value 1 -PropertyType DWord -Force | Out-Null
-
-        # Suppress domain/location/user prompts
         New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
         New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard" -Value 0 -PropertyType DWord -Force | Out-Null
         New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_DoNotShowLocalOnlyConnectivityPrompt" -Value 1 -PropertyType DWord -Force | Out-Null
-
         Write-Output "Disabled network location wizard and suppressed prompts"
     } catch {
         Write-Warning "Failed to update registry for network wizard: $_"
     }
 
-    # --- 7. Set existing network profiles to Private via registry (fallback) ---
+    # --- 7. Set existing network profiles to Private via registry fallback ---
     try {
         $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
         if (Test-Path $profilesPath) {
             Get-ChildItem $profilesPath | ForEach-Object {
                 try {
                     Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-                    Write-Output "Forced registry profile to Private: $($_.PSChildName)"
+                    Write-Output "Registry forced Private: $($_.PSChildName)"
                 } catch { }
             }
         }
@@ -377,17 +369,7 @@ try {
         Write-Warning "Failed to update registry network profiles: $_"
     }
 
-    # --- 8. Disable firewall notifications ---
-    try {
-        New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" -Name "DisableAntiSpywareNotification" -Value 1 -PropertyType DWord -Force | Out-Null
-        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
-        New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" -Name "DisableEnhancedNotifications" -Value 1 -PropertyType DWord -Force | Out-Null
-        Write-Output "Disabled firewall notifications"
-    } catch {
-        Write-Warning "Failed to update firewall notification settings: $_"
-    }
-
-    # --- 9. Create Hyper-V Manager shortcut for all users ---
+    # --- 8. Create Hyper-V Manager shortcut for all users ---
     try {
         $virt = "$env:windir\System32\virtmgmt.msc"
         if (Test-Path $virt) {
@@ -408,46 +390,42 @@ try {
         Write-Warning "Failed to create Hyper-V shortcut: $_"
     }
 
-    # --- 10. Finalize profiles & disable NlaSvc safely ---
+    # --- 9. Install watchdog script for network enforcement ---
     try {
-        # Reconfirm profiles are Private
-        $profiles = @(Get-NetConnectionProfile | Select-Object InterfaceIndex, Name)
-        foreach ($p in $profiles) {
-            try {
-                Set-NetConnectionProfile -InterfaceIndex $p.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
-                Write-Output "Reconfirmed profile '${p.Name}' as Private"
-            } catch { }
+        $watchdogPath = "C:\ProgramData\EnforcePrivateNetworks.ps1"
+        @"
+# Enforce all network profiles to Private and disable NlaSvc safely
+try {
+    \$profiles = Get-NetConnectionProfile | Select-Object -Property Name, InterfaceIndex
+    foreach (\$p in \$profiles) {
+        try {
+            Set-NetConnectionProfile -InterfaceIndex \$p.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+        } catch { }
+    }
+    \$profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
+    if (Test-Path \$profilesPath) {
+        Get-ChildItem \$profilesPath | ForEach-Object {
+            try { Set-ItemProperty -Path \$_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue } catch { }
         }
-
-        # Registry fallback
-        $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
-        if (Test-Path $profilesPath) {
-            Get-ChildItem $profilesPath | ForEach-Object {
-                try {
-                    Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-                    Write-Output "Re-forced registry profile to Private: $($_.PSChildName)"
-                } catch { }
-            }
-        }
-
-        # Now disable NlaSvc
+    }
+    if (Get-Service "NlaSvc" -ErrorAction SilentlyContinue) {
         Stop-Service "NlaSvc" -Force -ErrorAction SilentlyContinue
         Set-Service "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
-        Write-Output "Disabled NlaSvc service safely"
-    } catch {
-        Write-Warning "Failed to finalize network profiles or disable NlaSvc: $_"
     }
+} catch { }
+"@ | Set-Content -Path $watchdogPath -Force
 
-    # --- 11. Cleanup ---
-    try {
-        Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
-        if ($helperPath) {
-            Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
-            Write-Output "Removed helper script: $helperPath"
+        # Register Scheduled Task to run watchdog at every boot
+        $taskName = "EnforcePrivateNetworks"
+        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
         }
-        Write-Output "Cleanup complete"
+        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File `"$watchdogPath`""
+        $trigger = New-ScheduledTaskTrigger -AtStartup
+        Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Description "Watchdog to enforce Private network profiles and disable NlaSvc" -User "SYSTEM" -RunLevel Highest
+        Write-Output "Watchdog script installed and Scheduled Task created."
     } catch {
-        Write-Warning "Cleanup failed: $_"
+        Write-Warning "Failed to install watchdog: $_"
     }
 
     Write-Output "PostHyperVSetup completed successfully."
