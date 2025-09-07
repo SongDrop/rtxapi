@@ -267,10 +267,15 @@ $helperContent = @'
 try {
     # Force all current network profiles to Private
     # Correctly get the collection of network profiles
-    $profiles = Get-NetConnectionProfile
-    # Set each profile to Private
+    # Snapshot the profiles first into an array to avoid "collection modified" errors
+    $profiles = Get-NetConnectionProfile | ForEach-Object { $_ }
+
     foreach ($profile in $profiles) {
-        Set-NetConnectionProfile -InterfaceIndex $profile.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+        try {
+            Set-NetConnectionProfile -InterfaceIndex $profile.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+        } catch {
+            Write-Warning "Failed to update profile $($profile.Name): $_"
+        }
     }
     Restart-Service netprofm -Force -ErrorAction SilentlyContinue
     Restart-Service NlaSvc -Force -ErrorAction SilentlyContinue
