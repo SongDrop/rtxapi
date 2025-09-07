@@ -1383,7 +1383,7 @@ async def provision_vm_background(
                     "step": "completed",
                     "message": "VM provisioning successful",
                     "public_ip": public_ip,
-                    "url": f"https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={public_ip}&user={WINDOWS_IMAGE_USERNAME}",
+                    "url": f"https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={public_ip}&user={WINDOWS_IMAGE_USERNAME}&vm_name={vm_name}",
                     "timestamp": datetime.utcnow().isoformat()
                 }
             }

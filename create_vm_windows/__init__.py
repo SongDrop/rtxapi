@@ -1159,7 +1159,7 @@ async def provision_vm_background(
                 ip_address=public_ip,
                 created_at=datetime.utcnow().isoformat(),
                 link1=f"https://{fqdn}",
-                rdpgen=f"https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={public_ip}&user={WINDOWS_IMAGE_USERNAME}",
+                rdpgen=f"https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={public_ip}&user={WINDOWS_IMAGE_USERNAME}&vm_name={vm_name}",
                 new_vm_url=f"https://rtxdevstation.xyz/requestvm",
                 dash_url="https://rtxdevstation.xyz",
                 username=WINDOWS_IMAGE_USERNAME,
@@ -1223,7 +1223,7 @@ async def provision_vm_background(
                     "step": "completed",
                     "message": "VM provisioning successful",
                     "public_ip": public_ip,
-                    "url": f"https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={public_ip}&user={WINDOWS_IMAGE_USERNAME}",
+                    "url": f"https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={public_ip}&user={WINDOWS_IMAGE_USERNAME}&vm_name={vm_name}",
                     "timestamp": datetime.utcnow().isoformat()
                 }
             }
