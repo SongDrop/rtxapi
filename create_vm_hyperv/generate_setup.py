@@ -532,8 +532,8 @@ try {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
     # Define the action the scheduled task will perform: run PowerShell with the helper script
     $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$helperPath`""
-    # Set the trigger for the task: run at user logon
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    # Set the trigger for the task: run at user AtStartup
+    $trigger = New-ScheduledTaskTrigger -AtStartup
     # Define task settings with proper Windows version and description
     # Create a ScheduledTaskSettingsSet for Windows 10
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
@@ -551,6 +551,10 @@ try {
 }
 
 Notify-Webhook -Status "provisioning" -Step "enabling_hyperv" -Message "Enabling Windows Hyper-v"
+
+# --Disable NlaSvc before reboot---
+Stop-Service -Name "NlaSvc" -Force -ErrorAction SilentlyContinue
+Set-Service -Name "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
 
 # --- Enable Hyper-V ---
 try {
