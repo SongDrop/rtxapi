@@ -553,7 +553,7 @@ try {
 Notify-Webhook -Status "provisioning" -Step "enabling_hyperv" -Message "Enabling Windows Hyper-v"
 
 # --Disable NlaSvc before reboot---
-Stop-Service -Name "NlaSvc" -Force -ErrorAction SilentlyContinue
+# Do NOT stop it immediately (causes timeout in provisioning)
 Set-Service -Name "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
 
 # --- Enable Hyper-V ---
