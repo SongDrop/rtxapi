@@ -556,6 +556,9 @@ try {
             $sc.TargetPath = "$env:windir\System32\virtmgmt.msc"
             $sc.IconLocation = "$env:windir\System32\virtmgmt.msc,0"
             $sc.Save()
+            # Refresh desktop icons
+            $null = [void][System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+            [System.Windows.Forms.SendKeys]::SendWait("{F5}")
         } catch { Write-Warning "Failed to run helper immediately: $_" }
     }
 } catch {
