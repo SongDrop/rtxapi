@@ -287,7 +287,7 @@ $helperPath = "C:\ProgramData\PostHyperVSetup.ps1"
 
 # Create helper script content
 $helperContent = @'
- # Post-reboot Hyper-V setup script with watchdog for network profiles
+# Post-reboot Hyper-V setup script with watchdog for network profiles
 try {
     Write-Output "Starting PostHyperVSetup..."
 
@@ -423,40 +423,40 @@ try {
 
     # --- 10. Install watchdog script to enforce Private profiles ---
     try {
-        $watchdogPath = "C:\ProgramData\EnforcePrivateNetworks.ps1"
+        $watchdogPath = "C:\ProgramData\EnforcePrivateNetworks_.ps1"
         $watchdogContent = @"
-            # Enforce all network profiles to Private and disable NlaSvc safely
+# Enforce all network profiles to Private and disable NlaSvc safely
+try {
+    Write-Output 'Starting EnforcePrivateNetworks script...'
+
+    # Registry path to network profiles
+    \$profilesPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'
+
+    # Force all profiles to Private
+    if (Test-Path \$profilesPath) {
+        Get-ChildItem \$profilesPath | ForEach-Object {
             try {
-                Write-Output 'Starting EnforcePrivateNetworks script...'
-
-                # Registry path to network profiles
-                $profilesPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'
-
-                # Force all profiles to Private
-                if (Test-Path $profilesPath) {
-                    Get-ChildItem $profilesPath | ForEach-Object {
-                        try {
-                            Set-ItemProperty -Path $_.PSPath -Name 'Category' -Value 1 -Force
-                            Write-Output "Registry forced Private for profile $($_.PSChildName)"
-                        } catch {
-                            Write-Warning "Failed to update registry for profile $($_.PSChildName): $_"
-                        }
-                    }
-                }
-
-                # Stop and disable NlaSvc
-                $nla = Get-Service 'NlaSvc' -ErrorAction SilentlyContinue
-                if ($nla) {
-                    Stop-Service 'NlaSvc' -Force -ErrorAction SilentlyContinue
-                    Set-Service 'NlaSvc' -StartupType Disabled -ErrorAction SilentlyContinue
-                    Write-Output "Stopped and disabled NlaSvc service"
-                }
-
-                Write-Output 'EnforcePrivateNetworks script completed successfully.'
+                Set-ItemProperty -Path \$_.PSPath -Name 'Category' -Value 1 -Force
+                Write-Output "Registry forced Private for profile \$($_.PSChildName)"
             } catch {
-                Write-Warning "Script failed: $_"
-            }   
-        "@
+                Write-Warning "Failed to update registry for profile \$($_.PSChildName): \$_"
+            }
+        }
+    }
+
+    # Stop and disable NlaSvc
+    \$nla = Get-Service 'NlaSvc' -ErrorAction SilentlyContinue
+    if (\$nla) {
+        Stop-Service 'NlaSvc' -Force -ErrorAction SilentlyContinue
+        Set-Service 'NlaSvc' -StartupType Disabled -ErrorAction SilentlyContinue
+        Write-Output "Stopped and disabled NlaSvc service"
+    }
+
+    Write-Output 'EnforcePrivateNetworks script completed successfully.'
+} catch {
+    Write-Warning "Script failed: \$_"
+}
+"@
         $watchdogContent | Set-Content -Path $watchdogPath -Force -Encoding UTF8
 
         $taskName = "EnforcePrivateNetworks"
@@ -476,6 +476,7 @@ try {
 } catch {
     Write-Output "PostHyperVSetup encountered a fatal error: $_"
 }
+
 '@  # must be at column 0
 
 try {
