@@ -380,19 +380,16 @@ try {
     # --- 8. Create Hyper-V Manager shortcut for all users ---
     try {
         $virt = "$env:windir\System32\virtmgmt.msc"
+        $publicDesktop = "C:\Users\Public\Desktop"
         if (Test-Path $virt) {
-            $users = @(Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" })
-            foreach ($u in $users) {
-                $desk = Join-Path $u.FullName "Desktop"
-                if (-not (Test-Path $desk)) { New-Item -Path $desk -ItemType Directory -Force | Out-Null }
-                $sc = Join-Path $desk "Hyper-V Manager.lnk"
-                $wsh = New-Object -ComObject WScript.Shell
-                $link = $wsh.CreateShortcut($sc)
-                $link.TargetPath = $virt
-                $link.IconLocation = "$virt,0"
-                $link.Save()
-                Write-Output "Created shortcut for user: $($u.BaseName)"
-            }
+            if (-not (Test-Path $publicDesktop)) { New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }
+            $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
+            $wsh = New-Object -ComObject WScript.Shell
+            $sc = $wsh.CreateShortcut($shortcutPath)
+            $sc.TargetPath = $virt
+            $sc.IconLocation = "$virt,0"
+            $sc.Save()
+            Write-Output "Created Hyper-V Manager shortcut in Public Desktop"
         }
     } catch {
         Write-Warning "Failed to create Hyper-V shortcut: $_"
@@ -556,9 +553,6 @@ try {
             $sc.TargetPath = "$env:windir\System32\virtmgmt.msc"
             $sc.IconLocation = "$env:windir\System32\virtmgmt.msc,0"
             $sc.Save()
-            # Refresh desktop icons
-            $null = [void][System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
-            [System.Windows.Forms.SendKeys]::SendWait("{F5}")
         } catch { Write-Warning "Failed to run helper immediately: $_" }
     }
 } catch {
