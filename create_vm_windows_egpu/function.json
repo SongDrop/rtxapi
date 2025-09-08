@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "create_vm_windows",
+      "route": "create_vm_windows_egpu",
       "methods": ["get", "post"]
     },
     {

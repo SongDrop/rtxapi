@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>RDP Generator</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            background: #f7f9fc;
+            color: #333;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            /* horizontal centering */
+            min-height: 100vh;
+            text-align: center;
+            overflow-x: hidden;
+            /* prevent sideways scroll on small screens */
+        }
+
+        .container {
+            background: #fff;
+            padding: clamp(16px, 3vw, 32px);
+            max-width: 600px;
+            width: min(90%, 600px);
+            /* start near the top */
+        }
+
+        img {
+            display: block;
+            width: min(100%, 512px);
+            height: auto;
+            /* keep aspect ratio */
+            aspect-ratio: 512 / 250;
+            /* reserve space before load */
+            object-fit: contain;
+            margin: 0 auto 20px;
+        }
+
+        h1 {
+            font-size: clamp(1.4rem, 2.2vw + 1rem, 1.8rem);
+            margin: 0 0 10px;
+            color: #0055a5;
+        }
+
+        p {
+            margin: 0 0 20px;
+            font-size: clamp(0.95rem, 1.2vw + 0.8rem, 1rem);
+            color: #555;
+        }
+
+        .status {
+            margin-top: 20px;
+            font-size: clamp(1rem, 1.5vw + 0.8rem, 1.1rem);
+            font-weight: bold;
+            color: #0078d7;
+        }
+    </style>
+
+</head>
+
+<body>
+    <div class="container">
+        <img src="https://i.postimg.cc/63V4RhCK/microsoft-remote-desktop.png" alt="Microsoft Remote Desktop Logo">
+        <h1>RDP Connection Generator</h1>
+        <p>Your RDP file will be generated and downloaded automatically.</p>
+        <div id="status" class="status">Preparing your download...</div>
+    </div>
+
+    <script>
+        function downloadRDP() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const ip = urlParams.get("ip");
+            const user = urlParams.get("user") || "azureuser";
+
+            if (!ip) {
+                document.getElementById("status").textContent = "❌ Missing IP parameter!";
+                return;
+            }
+
+            const rdpContent = `
+full address:s:${ip}:3389
+username:s:${user}
+prompt for credentials:i:1
+administrative session:i:1
+screen mode id:i:2
+desktopwidth:i:1280
+desktopheight:i:800
+session bpp:i:32
+`;
+
+            const blob = new Blob([rdpContent], { type: "application/x-rdp" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = "vm-connection.rdp";
+            link.click();
+
+            document.getElementById("status").textContent = "✅ Your RDP file is downloading...";
+        }
+
+        // Run immediately
+        downloadRDP();
+    </script>
+</body>
+
+</html>
