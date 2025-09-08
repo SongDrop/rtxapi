@@ -287,38 +287,46 @@ $helperPath = "C:\ProgramData\PostHyperVSetup.ps1"
 
 # Create helper script content
 $helperContent = @'
-# Post-reboot Hyper-V setup script with watchdog for network profiles
-# Post-reboot Hyper-V setup script with watchdog for network profiles
+ # Post-reboot Hyper-V setup script with watchdog for network profiles
 try {
     Write-Output "Starting PostHyperVSetup..."
 
-# --- 0. Ensure script is running as Administrator ---
+    # --- 0. Ensure script is running as Administrator ---
     if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
         Write-Warning "Script must be run as Administrator to modify protected registry keys."
         return
     }
 
-# --- 1. Delay to allow system services to stabilize ---
+    # --- 1. Delay to allow system services to stabilize ---
     Start-Sleep -Seconds 5
 
-# --- 2. Set all current network profiles to Private (API first) ---
+    # --- 2. Set all current network profiles to Private via registry ---
     try {
-        $profiles = @(Get-NetConnectionProfile | Select-Object InterfaceIndex, Name)
-        foreach ($p in $profiles) {
-            try {
-                Set-NetConnectionProfile -InterfaceIndex $p.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
-                if ($p.Name) {
-                    Write-Output "Set profile '$($p.Name)' to Private"
-                } else {
-                    Write-Output "Set unnamed profile (InterfaceIndex: $($p.InterfaceIndex)) to Private"
+        $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
+        if (Test-Path $profilesPath) {
+            $profiles = Get-ItemProperty -Path "$profilesPath\*" | Select-Object `
+                @{Name='InterfaceIndex';Expression={$_.PSChildName}},
+                @{Name='Name';Expression={$_.ProfileName}},
+                @{Name='NetworkCategory';Expression={
+                    switch ($_.Category) {
+                        0 {"Public"}
+                        1 {"Private"}
+                        2 {"Domain"}
+                        default {"Unknown"}
+                    }
+                }}
+            foreach ($p in $profiles) {
+                if ($p.NetworkCategory -ne "Private") {
+                    Write-Output "Forcing profile $($p.Name) to Private"
+                    Set-ItemProperty -Path "$profilesPath\$($p.InterfaceIndex)" -Name "Category" -Value 1 -Force
                 }
-            } catch { }
+            }
         }
     } catch {
-        Write-Warning "Failed to set network profiles via Get-NetConnectionProfile: $_"
+        Write-Warning "Failed to update registry network profiles: $_"
     }
 
-# --- 3. Restart netprofm service only (defer NlaSvc) ---
+    # --- 3. Restart netprofm service only (defer NlaSvc) ---
     try {
         Restart-Service "netprofm" -Force -ErrorAction SilentlyContinue
         Write-Output "Restarted service: netprofm"
@@ -326,7 +334,7 @@ try {
         Write-Warning "Failed to restart service netprofm: $_"
     }
 
-# --- 4. Disable Network Discovery firewall rules ---
+    # --- 4. Disable Network Discovery firewall rules ---
     try {
         Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
         Set-NetFirewallRule -Group "@FirewallAPI.dll,-32752" -Enabled False -ErrorAction SilentlyContinue
@@ -335,7 +343,7 @@ try {
         Write-Warning "Failed to disable firewall rules: $_"
     }
 
-# --- 5. Stop and disable discovery-related services ---
+    # --- 5. Stop and disable discovery-related services ---
     $servicesToDisable = @("FDResPub", "FDHost", "UPnPHost", "SSDPSRV")
     foreach ($svc in $servicesToDisable) {
         try {
@@ -347,7 +355,7 @@ try {
         }
     }
 
-# --- 6. Disable network location wizard & suppress prompts ---
+    # --- 6. Disable network location wizard & suppress prompts ---
     try {
         New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
         New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network\NetworkLocationWizard" -Name "HideWizard" -Value 1 -PropertyType DWord -Force | Out-Null
@@ -359,22 +367,7 @@ try {
         Write-Warning "Failed to update registry for network wizard: $_"
     }
 
-# --- 7. Set existing network profiles to Private via registry (fallback) ---
-    try {
-        $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
-        if (Test-Path $profilesPath) {
-            Get-ChildItem $profilesPath | ForEach-Object {
-                try {
-                    Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue
-                    Write-Output "Forced registry profile to Private: $($_.PSChildName)"
-                } catch { }
-            }
-        }
-    } catch {
-        Write-Warning "Failed to update registry network profiles: $_"
-    }
-
-# --- 8. Disable firewall notifications ---
+    # --- 7. Disable firewall notifications ---
     try {
         New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" -Name "DisableAntiSpywareNotification" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
         New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" -Name "DisableNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
@@ -384,7 +377,7 @@ try {
         Write-Warning "Failed to update firewall notification settings: $_"
     }
 
-# --- 9. Create Hyper-V Manager shortcut for all users ---
+    # --- 8. Create Hyper-V Manager shortcut for all users ---
     try {
         $virt = "$env:windir\System32\virtmgmt.msc"
         if (Test-Path $virt) {
@@ -405,22 +398,15 @@ try {
         Write-Warning "Failed to create Hyper-V shortcut: $_"
     }
 
-# --- 10. Safely enforce Private and restart NlaSvc if needed ---
+    # --- 9. Safely restart NlaSvc to enforce Private profiles ---
     try {
-        $profiles = @(Get-NetConnectionProfile | Select-Object InterfaceIndex, Name, NetworkCategory)
         $needRestartNla = $false
-        foreach ($p in $profiles) {
-            if ($p.NetworkCategory -ne "Private") { $needRestartNla = $true }
-            try { Set-NetConnectionProfile -InterfaceIndex $p.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue } catch { }
-        }
-
-        $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
         if (Test-Path $profilesPath) {
-            Get-ChildItem $profilesPath | ForEach-Object {
-                try { Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force -ErrorAction SilentlyContinue } catch { }
+            $profiles = Get-ItemProperty -Path "$profilesPath\*" | Select-Object PSChildName, Category
+            foreach ($p in $profiles) {
+                if ($p.Category -ne 1) { $needRestartNla = $true }
             }
         }
-
         if ($needRestartNla) {
             try {
                 Stop-Service "NlaSvc" -Force -ErrorAction SilentlyContinue
@@ -432,83 +418,58 @@ try {
             }
         }
     } catch {
-        Write-Warning "Failed to finalize network profiles or restart NlaSvc: $_"
+        Write-Warning "Failed to check or restart NlaSvc: $_"
     }
 
-# --- 11. Install watchdog script for network enforcement ---
+    # --- 10. Install watchdog script to enforce Private profiles ---
     try {
         $watchdogPath = "C:\ProgramData\EnforcePrivateNetworks.ps1"
-
         $watchdogContent = @"
-# Enforce all network profiles to Private and disable NlaSvc safely
-try {
-    Write-Output 'Starting EnforcePrivateNetworks script...'
-
-    # 1. Get all network profiles
-    $profiles = Get-NetConnectionProfile | Select-Object -Property Name, InterfaceIndex
-    foreach ($p in $profiles) {
-        try {
-            Set-NetConnectionProfile -InterfaceIndex $p.InterfaceIndex -NetworkCategory Private -ErrorAction Stop
-            Write-Output "Set profile '$($p.Name)' to Private"
-        } catch {
-            Write-Warning "Failed to set profile '$($p.Name)': $_"
-        }
-    }
-
-    # 2. Force all registry profiles to Private
-    $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
-    if (Test-Path $profilesPath) {
-        Get-ChildItem $profilesPath | ForEach-Object {
+            # Enforce all network profiles to Private and disable NlaSvc safely
             try {
-                Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force
-                Write-Output "Registry forced Private for profile $($_.PSChildName)"
+                Write-Output 'Starting EnforcePrivateNetworks script...'
+
+                # Registry path to network profiles
+                $profilesPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'
+
+                # Force all profiles to Private
+                if (Test-Path $profilesPath) {
+                    Get-ChildItem $profilesPath | ForEach-Object {
+                        try {
+                            Set-ItemProperty -Path $_.PSPath -Name 'Category' -Value 1 -Force
+                            Write-Output "Registry forced Private for profile $($_.PSChildName)"
+                        } catch {
+                            Write-Warning "Failed to update registry for profile $($_.PSChildName): $_"
+                        }
+                    }
+                }
+
+                # Stop and disable NlaSvc
+                $nla = Get-Service 'NlaSvc' -ErrorAction SilentlyContinue
+                if ($nla) {
+                    Stop-Service 'NlaSvc' -Force -ErrorAction SilentlyContinue
+                    Set-Service 'NlaSvc' -StartupType Disabled -ErrorAction SilentlyContinue
+                    Write-Output "Stopped and disabled NlaSvc service"
+                }
+
+                Write-Output 'EnforcePrivateNetworks script completed successfully.'
             } catch {
-                Write-Warning "Failed to update registry for $($_.PSChildName): $_"
-            }
-        }
-    }
-
-    # 3. Stop and disable NlaSvc
-    $nla = Get-Service "NlaSvc" -ErrorAction SilentlyContinue
-    if ($nla) {
-        try {
-            Stop-Service "NlaSvc" -Force -ErrorAction Stop
-            Set-Service "NlaSvc" -StartupType Disabled
-            Write-Output "Stopped and disabled NlaSvc service"
-        } catch {
-            Write-Warning "Failed to stop or disable NlaSvc: $_"
-        }
-    } else {
-        Write-Output "NlaSvc service not found"
-    }
-
-    Write-Output "EnforcePrivateNetworks script completed successfully."
-} catch {
-    Write-Warning "Script failed: $_"
-}
-"@
-
+                Write-Warning "Script failed: $_"
+            }   
+        "@
         $watchdogContent | Set-Content -Path $watchdogPath -Force -Encoding UTF8
 
         $taskName = "EnforcePrivateNetworks"
         if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
             Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
         }
+
         $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File `"$watchdogPath`""
         $trigger = New-ScheduledTaskTrigger -AtStartup
         Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Description "Watchdog to enforce Private network profiles and disable NlaSvc" -User "SYSTEM" -RunLevel Highest
         Write-Output "Watchdog script installed and Scheduled Task created."
     } catch {
         Write-Warning "Failed to install watchdog: $_"
-    }
-
-# --- 12. Cleanup ---
-    try {
-        Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
-        if ($helperPath) { Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue; Write-Output "Removed helper script: $helperPath" }
-        Write-Output "Cleanup complete"
-    } catch {
-        Write-Warning "Cleanup failed: $_"
     }
 
     Write-Output "PostHyperVSetup completed successfully."
