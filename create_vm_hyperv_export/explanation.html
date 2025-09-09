@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure Windows VM Hyper-V Export Script Documentation</title>
+    <style>
+        body {
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            background: #f8f9fa;
+            color: #212529;
+            padding: 20px;
+        }
+
+        h1,
+        h2,
+        h3 {
+            color: #1a73e8;
+            margin-top: 2rem;
+        }
+
+        h1 {
+            font-size: 2rem;
+            border-bottom: 2px solid #1a73e8;
+            padding-bottom: 5px;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        h3 {
+            font-size: 1.2rem;
+            margin-top: 1rem;
+        }
+
+        p,
+        li {
+            margin: 0.5rem 0;
+        }
+
+        code,
+        pre {
+            background: #e9ecef;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-family: Consolas, monospace;
+        }
+
+        pre {
+            overflow-x: auto;
+            padding: 10px;
+            margin: 10px 0;
+        }
+
+        ul {
+            margin-left: 20px;
+        }
+
+        .highlight {
+            font-weight: bold;
+            color: #d63384;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Azure Windows VM Create VM Hyper-V Export Script Documentation</h1>
+
+    <p>This document explains the <code>create_vm_hyperv_export.py</code> Python async script step by step.</p>
+
+    <h2>1. Initialization and Setup</h2>
+    <ul>
+        <li>Imports environment variables for Azure credentials, SMTP configuration, and runtime settings.</li>
+        <li>Sets global variables for storage account keys, snapshot URLs, and SAS tokens.</li>
+        <li>Prepares helper functions for logging (<code>print_info</code>, <code>print_warn</code>,
+            <code>print_error</code>, <code>print_success</code>) and posting status updates to a webhook.
+        </li>
+    </ul>
+
+    <h2>2. VM Snapshot and Storage Preparation</h2>
+    <ol>
+        <li><span class="highlight">Stop VM for snapshot:</span>
+            <ul>
+                <li>Calls <code>stop_vm_to_snapshot</code> to deallocate the VM safely.</li>
+            </ul>
+        </li>
+        <li><span class="highlight">Create VM snapshot:</span>
+            <ul>
+                <li>Uses <code>compute_client.snapshots.begin_create_or_update</code> to copy the OS disk.</li>
+            </ul>
+        </li>
+        <li><span class="highlight">Generate SAS URL for snapshot export:</span>
+            <ul>
+                <li>Uses <code>compute_client.disks.begin_export</code> to export the snapshot to a storage account.
+                </li>
+                <li>SAS URL allows secure VHD download.</li>
+            </ul>
+        </li>
+        <li><span class="highlight">Restart VM:</span>
+            <ul>
+                <li>Restarts the VM using <code>restart_vm</code> after snapshot creation.</li>
+            </ul>
+        </li>
+    </ol>
+
+    <h2>3. Storage Account and VHD Export Container</h2>
+    <ul>
+        <li><span class="highlight">Create storage account:</span> Generates a unique name and stores keys/URLs.</li>
+        <li><span class="highlight">Create VHD export container:</span> Calls
+            <code>create_vhd_export_container_and_sas</code> to create a container and SAS token for uploading VHDs.
+        </li>
+    </ul>
+
+    <h2>4. PowerShell Setup Script Generation</h2>
+    <ul>
+        <li>Generates a setup script <code>{vm_name}-setup.ps1</code> with:
+            <ul>
+                <li><code>SNAPSHOT_URL</code> for Hyper-V download</li>
+                <li><code>AZURE_SAS_TOKEN</code> for uploading VHDs</li>
+                <li><code>WEBHOOK_URL</code> for status updates</li>
+            </ul>
+        </li>
+        <li>Uploads the script to blob storage and generates a SAS URL for VM execution.</li>
+    </ul>
+
+    <h2>5. Network Infrastructure Setup</h2>
+    <ul>
+        <li>Create virtual network (VNet) and subnet.</li>
+        <li>Create public IP and associate it with the VM.</li>
+        <li>Create or get Network Security Group (NSG) and add inbound rules (<code>PORTS_TO_OPEN</code>).</li>
+        <li>Create Network Interface (NIC) and attach subnet, public IP, and NSG.</li>
+    </ul>
+
+    <h2>6. VM Creation</h2>
+    <ul>
+        <li>Define VM OS Disk (Standard_LRS, boot from image, SSD size).</li>
+        <li>Define OS Profile (admin credentials, Windows configuration).</li>
+        <li>Define VM Image Reference (fresh Windows marketplace image).</li>
+        <li>Define Security Profile (Trusted Launch enabled).</li>
+        <li>Create VM using <code>compute_client.virtual_machines.begin_create_or_update</code>.</li>
+    </ul>
+
+    <h2>7. Public IP Verification</h2>
+    <ul>
+        <li>Verifies NIC has a public IP.</li>
+        <li>Fetches public IP for DNS and notification purposes.</li>
+        <li>Cleans up resources if public IP is missing.</li>
+    </ul>
+
+    <h2>8. DNS Configuration</h2>
+    <ul>
+        <li>Create DNS zone if missing.</li>
+        <li>Verify NS delegation using retries with Google DNS.</li>
+        <li>Create DNS A records: <code>pin.{subdomain}</code>, <code>drop.{subdomain}</code>,
+            <code>web.{subdomain}</code>.
+        </li>
+    </ul>
+
+    <h2>9. Custom Script Extension Installation</h2>
+    <ul>
+        <li>Installs <code>CustomScriptExtension</code> on VM.</li>
+        <li>Executes uploaded PowerShell setup script from blob storage.</li>
+        <li>Updates webhook status on success or failure.</li>
+    </ul>
+
+    <h2>10. Temporary Storage Cleanup</h2>
+    <ul>
+        <li>Deletes blob and container used for setup script.</li>
+        <li>Deletes temporary storage account.</li>
+        <li>Logs warning if cleanup fails (non-critical).</li>
+    </ul>
+
+    <h2>11. Completion Email</h2>
+    <ul>
+        <li>Sends HTML email notification with:
+            <ul>
+                <li>VM name</li>
+                <li>VHD download link</li>
+                <li>AzCopy GitHub release link</li>
+            </ul>
+        </li>
+        <li>Updates webhook status for email success/failure.</li>
+    </ul>
+
+    <h2>12. Final Status Update</h2>
+    <ul>
+        <li>Waits for cleanup to finish.</li>
+        <li>Sends final <code>completed</code> status to webhook.</li>
+        <li>Logs URLs for Moonlight service, drop files service, and pin code.</li>
+    </ul>
+
+    <h2>13. Error Handling</h2>
+    <ul>
+        <li>Each step uses <code>try/except</code> blocks.</li>
+        <li>On failure:
+            <ul>
+                <li>Sends <code>failed</code> status to webhook.</li>
+                <li>Cleans up Azure resources using <code>cleanup_resources_on_failure</code>.</li>
+            </ul>
+        </li>
+    </ul>
+
+    <h2>14. Helper Functions Overview</h2>
+    <ul>
+        <li><strong>Storage helpers:</strong> <code>create_storage_account</code>, <code>ensure_container_exists</code>,
+            <code>upload_blob_and_generate_sas</code>
+        </li>
+        <li><strong>VM size:</strong> <code>get_compatible_vm_sizes</code>, <code>check_vm_size_compatibility</code>
+        </li>
+        <li><strong>DNS:</strong> <code>check_ns_delegation_with_retries</code>, <code>check_ns_delegation</code></li>
+        <li><strong>Cleanup:</strong> <code>cleanup_temp_storage</code>, <code>cleanup_resources_on_failure</code></li>
+        <li><strong>Snapshot:</strong> <code>stop_vm_to_snapshot</code>,
+            <code>create_vm_snapshot_and_generate_sas</code>, <code>restart_vm</code>
+        </li>
+        <li><strong>VHD export:</strong> <code>create_vhd_export_container_and_sas</code></li>
+        <li><strong>Status update:</strong> <code>post_status_update</code> with retry logic</li>
+    </ul>
+
+    <h2>Summary</h2>
+    <p>This script fully automates Windows VM snapshot creation in Azure with:</p>
+    <ul>
+        <li>VM snapshot and export</li>
+        <li>Temporary storage handling</li>
+        <li>Network and DNS setup</li>
+        <li>Script extension execution</li>
+        <li>Email notifications</li>
+        <li>Webhook status updates</li>
+        <li>Robust error handling and cleanup</li>
+    </ul>
+    <p>Designed for automation pipelines where reliability, monitoring, and resource cleanup are critical.</p>
+
+</body>
+
+</html>

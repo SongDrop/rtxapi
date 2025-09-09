@@ -167,7 +167,28 @@ from . import html_email_send       #sends the generated html via smtp email ser
             <li>Authenticates to Azure using service principal credentials.</li>
             <li>Launches background provisioning task using <code>asyncio.create_task()</code>.</li>
         </ul>
-        <p>Returns 202 Accepted if provisioning starts successfully.</p>
+        <p>
+            When the VM provisioning request is successfully received, the server responds with a <strong>202
+                Accepted</strong>
+            status.
+            At the same time, it generates a <strong>JSON file</strong> in temporary Azure storage that reflects the
+            current
+            status of the provisioning process (e.g., <em>provisioning</em>, <em>success</em>, <em>failed</em>).
+        </p>
+
+        <p>
+            The server provides a <strong>SAS URL</strong> pointing to this JSON file. Your front-end can use this URL
+            to
+            securely
+            download the JSON repeatedly in a loop, allowing real-time monitoring of the installation progress.
+            Once the provisioning finishes — whether successfully or with failure — the temporary JSON file (and its
+            storage
+            container)
+            is automatically deleted by the background task cleanup functions (<code>cleanup_on_success</code> or
+            <code>cleanup_on_failure</code>),
+            ensuring no leftover sensitive data remains.
+        </p>
+
 
         <h2>4. Background Provisioning: <code>provision_vm_background</code></h2>
         <p>This asynchronous function performs the actual VM provisioning:</p>

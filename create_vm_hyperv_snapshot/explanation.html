@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure Windows VM Snapshot Script Documentation</title>
+    <style>
+        body {
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            background: #f8f9fa;
+            color: #212529;
+            padding: 20px;
+        }
+
+        h1,
+        h2,
+        h3 {
+            color: #1a73e8;
+            margin-top: 2rem;
+        }
+
+        h1 {
+            font-size: 2rem;
+            border-bottom: 2px solid #1a73e8;
+            padding-bottom: 5px;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        h3 {
+            font-size: 1.2rem;
+            margin-top: 1rem;
+        }
+
+        p,
+        li {
+            margin: 0.5rem 0;
+        }
+
+        code,
+        pre {
+            background: #e9ecef;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-family: Consolas, monospace;
+        }
+
+        pre {
+            overflow-x: auto;
+            padding: 10px;
+            margin: 10px 0;
+        }
+
+        ul {
+            margin-left: 20px;
+        }
+
+        .highlight {
+            font-weight: bold;
+            color: #d63384;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Azure Windows VM Snapshot Script Documentation</h1>
+
+    <p>This document explains the <code>create_vm_snapshot.py</code> Python async script step by step.</p>
+
+    <h2>1. Initialization and Setup</h2>
+    <ul>
+        <li>Imports environment variables for Azure credentials, SMTP, and runtime configuration.</li>
+        <li>Initializes logging and console colors for structured logging output.</li>
+        <li>Defines async helpers like <code>run_azure_operation</code> and logging helpers (<code>print_info</code>,
+            <code>print_success</code>, etc.).
+        </li>
+    </ul>
+
+    <h2>2. HTTP Trigger and Input Validation</h2>
+    <ul>
+        <li>Receives HTTP requests via Azure Functions with parameters:
+            <ul>
+                <li><code>vm_name</code></li>
+                <li><code>resource_group</code></li>
+                <li><code>location</code></li>
+                <li><code>hook_url</code></li>
+                <li><code>recipient_emails</code></li>
+            </ul>
+        </li>
+        <li>Validates required parameters and returns <code>400</code> errors if missing.</li>
+        <li>Posts an initial status update to the webhook indicating the snapshot process has started.</li>
+    </ul>
+
+    <h2>3. Azure Authentication</h2>
+    <ul>
+        <li>Checks environment variables for Azure credentials and subscription.</li>
+        <li>Uses <code>ClientSecretCredential</code> for authentication.</li>
+    </ul>
+
+    <h2>4. Background Snapshot Task</h2>
+    <ul>
+        <li>Starts the snapshot process as a background async task (<code>snapshot_vm_background</code>).</li>
+        <li>This ensures the HTTP trigger returns immediately while the snapshot continues in the background.</li>
+    </ul>
+
+    <h2>5. Snapshot Process</h2>
+    <ol>
+        <li><span class="highlight">Stop VM:</span>
+            <ul>
+                <li>Deallocates the VM using <code>compute_client.virtual_machines.begin_deallocate</code> to safely
+                    create a snapshot.</li>
+            </ul>
+        </li>
+        <li><span class="highlight">Create VM Snapshot:</span>
+            <ul>
+                <li>Retrieves the VM details and OS disk ID.</li>
+                <li>Creates a snapshot with <code>create_option: "Copy"</code>.</li>
+                <li>Polls the snapshot operation to completion.</li>
+            </ul>
+        </li>
+        <li><span class="highlight">Generate SAS URL:</span>
+            <ul>
+                <li>Grants temporary read access (10 hours) using <code>GrantAccessData</code>.</li>
+                <li>Receives a SAS URL for downloading the snapshot.</li>
+            </ul>
+        </li>
+        <li><span class="highlight">Restart VM:</span>
+            <ul>
+                <li>Restarts the VM using <code>compute_client.virtual_machines.begin_start</code>.</li>
+                <li>Logs a warning if VM restart fails but continues processing.</li>
+            </ul>
+        </li>
+    </ol>
+
+    <h2>6. Status Updates</h2>
+    <ul>
+        <li>Posts progress updates at every major step to the webhook.</li>
+        <li>Retries failed webhook posts up to 3 times with incremental delay.</li>
+        <li>Includes details like step name, timestamps, and messages.</li>
+    </ul>
+
+    <h2>7. Email Notification</h2>
+    <ul>
+        <li>Sends an HTML email to the configured recipients after snapshot creation.</li>
+        <li>Email includes:
+            <ul>
+                <li>Snapshot name</li>
+                <li>Creation timestamp</li>
+                <li>SAS URL for manual VHD download</li>
+            </ul>
+        </li>
+        <li>SMTP configuration is read from environment variables.</li>
+        <li>Logs a warning if email sending fails, without stopping snapshot completion.</li>
+    </ul>
+
+    <h2>8. Error Handling</h2>
+    <ul>
+        <li>Each step is wrapped in <code>try/except</code> blocks.</li>
+        <li>Errors are logged and reported to the webhook.</li>
+        <li>Background task stops safely if critical errors occur (e.g., VM cannot be stopped).</li>
+    </ul>
+
+    <h2>9. Helper Functions Overview</h2>
+    <ul>
+        <li><strong>VM control:</strong> <code>stop_vm_to_snapshot</code>, <code>restart_vm</code></li>
+        <li><strong>Status update:</strong> <code>post_status_update</code></li>
+        <li><strong>Azure operations:</strong> <code>run_azure_operation</code> to run synchronous SDK calls
+            asynchronously</li>
+    </ul>
+
+    <h2>10. Summary</h2>
+    <p>This script automates the snapshot creation of an Azure Windows VM with the following features:</p>
+    <ul>
+        <li>Safe deallocation of the VM before snapshot</li>
+        <li>Managed snapshot creation with polling</li>
+        <li>SAS URL generation for manual VHD download</li>
+        <li>Restarting VM after snapshot</li>
+        <li>Webhook notifications at every step</li>
+        <li>Email notification with snapshot SAS URL for optional manual conversion</li>
+        <li>Robust error handling and logging</li>
+    </ul>
+
+</body>
+
+</html>

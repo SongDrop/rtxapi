@@ -1,4 +1,4 @@
-def generate_setup(WEBHOOK_URL: str = None) -> str:
+def generate_setup(WEBHOOK_URL: str = None, RDS_DOMAIN: str = None) -> str:
     script = r'''# Check for admin privileges
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -10,6 +10,7 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 
 $ErrorActionPreference = "Stop"
 $env:WEBHOOK_URL = "__WEBHOOK_URL__"
+$env:RDS_DOMAIN = "__RDS_DOMAIN__"
 
 # --- Webhook helper ---
 function Notify-Webhook {
@@ -517,10 +518,18 @@ try {
 
     # --- Optional: Configure self-signed SSL for Web Access ---
     try {
-        $cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation "Cert:\LocalMachine\My"
+        if ([string]::IsNullOrEmpty($env:RDS_DOMAIN)) {
+            # No domain specified, use only computer name
+            $cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation "Cert:\LocalMachine\My"
+        } else {
+            # Domain provided, include it in the certificate
+            $cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME, $env:RDS_DOMAIN -CertStoreLocation "Cert:\LocalMachine\My"
+        }
+
         $thumbprint = $cert.Thumbprint
         # Bind certificate to IIS default site (RDS Web Access)
         New-Item -Path "IIS:\SslBindings\0.0.0.0!443" -Value $thumbprint
+
         Notify-Webhook -Status "provisioning" -Step "rds_ssl" -Message "RDS Web Access SSL configured"
     } catch {
         Notify-Webhook -Status "warning" -Step "rds_ssl" -Message "Failed to configure SSL: $_"
@@ -580,6 +589,7 @@ Add-Content -Path $installLog -Value "Setup script completed at $(Get-Date)"
     # You can add more entries here later if needed (e.g., __ADMIN_EMAIL__, __SERVER_NAME__).
     replacements = {
         "__WEBHOOK_URL__": WEBHOOK_URL or "",  # Replace with passed value or empty string
+        "__RDS_DOMAIN__": RDS_DOMAIN or "",  # Replace with passed value or empty string
     }
 
     # Loop through all placeholders and replace them in the script text
