@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure Windows VM Provisioning & Hyper-V Setup Documentation</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+
+        header {
+            background-color: #0078d4;
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 2rem;
+        }
+
+        main {
+            max-width: 1000px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        h2,
+        h3,
+        h4 {
+            color: #0078d4;
+            margin-top: 2rem;
+        }
+
+        pre {
+            background: #1e1e1e;
+            color: #dcdcdc;
+            padding: 1rem;
+            overflow-x: auto;
+            border-radius: 5px;
+            font-size: 0.9rem;
+        }
+
+        code {
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+        }
+
+        ul,
+        ol {
+            margin-left: 2rem;
+        }
+
+        blockquote {
+            border-left: 4px solid #0078d4;
+            padding-left: 1rem;
+            color: #555;
+            margin: 1rem 0;
+            font-style: italic;
+        }
+
+        .summary {
+            background: #e6f0fa;
+            border-left: 4px solid #0078d4;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        a {
+            color: #0078d4;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>Azure Windows VM Provisioning & Hyper-V Setup Documentation</h1>
+    </header>
+
+    <main>
+
+        <h2>1. Imports and Initialization</h2>
+        <p>The script imports standard Python libraries (<code>asyncio</code>, <code>json</code>, <code>os</code>,
+            <code>sys</code>, <code>time</code>, <code>re</code>, etc.) for general operations and networking, as well
+            as Azure SDK modules for managing resources:
+        </p>
+
+        <ul>
+            <li><code>azure.identity.ClientSecretCredential</code>: Authenticate with Azure using service principal.
+            </li>
+            <li><code>azure.mgmt.compute</code>, <code>network</code>, <code>storage</code>, <code>dns</code>: Manage
+                Azure VMs, network resources, storage accounts, and DNS.</li>
+            <li><code>azure.storage.blob</code>: Upload setup scripts and generate SAS URLs.</li>
+            <li><code>azure.functions</code>: Create an HTTP-triggered Azure Function.</li>
+        </ul>
+
+        <pre>
+<code>import asyncio
+import json
+import os
+import sys
+import time
+import re
+import aiohttp
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+load_dotenv()
+import random
+import string
+import shutil
+import platform
+import dns.resolver
+from azure.core.exceptions import ClientAuthenticationError
+from azure.identity import ClientSecretCredential
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+import logging
+from azure.mgmt.resource import ResourceManagementClient
+from azure.mgmt.network import NetworkManagementClient
+from azure.mgmt.network.models import NetworkSecurityGroup, SecurityRule, NetworkInterface
+from azure.mgmt.compute import ComputeManagementClient
+from azure.mgmt.compute.models import (
+VirtualMachine, HardwareProfile, StorageProfile,
+OSProfile, NetworkProfile, NetworkInterfaceReference,
+VirtualMachineExtension, WindowsConfiguration, SecurityProfile
+)
+from azure.mgmt.dns import DnsManagementClient
+from azure.mgmt.dns.models import RecordSet
+from azure.mgmt.storage import StorageManagementClient
+import azure.functions as func
+
+from . import generate_setup        #generates the custom Windows installation(that's where you can be creative)
+from . import html_email            #generates an html template for email(that's where you can be creative)
+from . import html_email_send       #sends the generated html via smtp email server
+</code></pre>
+
+        <h2>2. Configuration Variables</h2>
+        <ul>
+            <li>Windows VM Image: Windows 10 22H2 Pro</li>
+            <li>Ports to Open: 22, 80, 443, 3389, etc.</li>
+            <li>Console Colors: <code>bcolors</code> class</li>
+            <li>Disk, username/password, email, pin: Extracted from HTTP request parameters</li>
+        </ul>
+
+        <h2>3. HTTP Trigger Function: <code>main</code></h2>
+        <p>The main function handles HTTP requests to create a VM:</p>
+        <ul>
+            <li>Extracts parameters from JSON body or URL query.</li>
+            <li>Validates required parameters like <code>vm_name</code>, <code>resource_group</code>,
+                <code>domain</code>, <code>location</code>, <code>vm_size</code>.
+            </li>
+            <li>Checks VM size compatibility with a predefined list of Hyper-V compatible VM sizes.</li>
+            <li>Posts initial status update to webhook if provided.</li>
+            <li>Authenticates to Azure using service principal credentials.</li>
+            <li>Launches background provisioning task using <code>asyncio.create_task()</code>.</li>
+        </ul>
+        <p>Returns 202 Accepted if provisioning starts successfully.</p>
+
+        <h2>4. Background Provisioning: <code>provision_vm_background</code></h2>
+        <p>This asynchronous function performs the actual VM provisioning:</p>
+
+        <h3>a. Initialize Azure Clients</h3>
+        <p>Compute, Storage, Network, DNS clients.</p>
+
+        <h3>b. Storage Account Creation</h3>
+        <ul>
+            <li>Generates a unique storage account name.</li>
+            <li>Creates the account and stores keys/URLs for blob operations.</li>
+            <li>Uploads PowerShell setup script and generates SAS URL.</li>
+        </ul>
+
+        <h3>c. Network Setup</h3>
+        <ul>
+            <li>Virtual Network and Subnet: Creates a VNet and subnet.</li>
+            <li>Public IP: Allocates a dynamic public IP.</li>
+            <li>Network Security Group (NSG): Creates or retrieves NSG, adds inbound rules for required ports.</li>
+            <li>Network Interface (NIC): Associates subnet, public IP, and NSG.</li>
+        </ul>
+
+        <h3>d. Virtual Machine Creation</h3>
+        <ul>
+            <li>Specifies VM size, OS disk, Windows credentials.</li>
+            <li>Uses a fresh Windows image reference.</li>
+            <li>Applies Trusted Launch security profile.</li>
+            <li>Associates NIC and waits for initialization.</li>
+        </ul>
+
+        <h3>e. Public IP Verification</h3>
+        <p>Checks that NIC has a public IP and posts status update with IP info.</p>
+
+        <h3>f. DNS Configuration</h3>
+        <ul>
+            <li>Creates DNS zone if missing.</li>
+            <li>Checks NS delegation.</li>
+            <li>Creates A records for services: pin, drop, web.</li>
+        </ul>
+
+        <h3>g. Custom Script Extension</h3>
+        <p>Installs the uploaded PowerShell script on the VM for automated setup.</p>
+
+        <h3>h. Cleanup Temporary Storage</h3>
+        <p>Deletes temporary setup blobs, container, and storage account used for setup script.</p>
+
+        <h3>i. Completion Email</h3>
+        <p>Sends an HTML email to recipients with VM info, RDP link, and service URLs.</p>
+
+        <h3>j. Final Status Update</h3>
+        <p>Marks VM provisioning as completed and provides public IP and service URLs in webhook update.</p>
+
+        <h2>5. Error Handling & Cleanup</h2>
+        <ul>
+            <li><code>cleanup_resources_on_failure</code>: Deletes VM, NIC, NSG, VNet, storage, and DNS records if
+                provisioning fails.</li>
+            <li><code>cleanup_temp_storage</code>: Removes temporary storage on success.</li>
+            <li>Each step posts status updates to the webhook with errors or warnings.</li>
+        </ul>
+
+        <h2>6. Helper Functions</h2>
+
+        <h3>Storage Operations</h3>
+        <ul>
+            <li><code>create_storage_account</code>: Creates storage account if missing.</li>
+            <li><code>ensure_container_exists</code>: Ensures a blob container exists.</li>
+            <li><code>upload_blob_and_generate_sas</code>: Uploads data and returns a SAS URL.</li>
+        </ul>
+
+        <h3>VM Size Validation</h3>
+        <ul>
+            <li><code>get_compatible_vm_sizes</code>: Returns Hyper-V compatible VM sizes.</li>
+            <li><code>check_vm_size_compatibility</code>: Validates user-selected VM size.</li>
+        </ul>
+
+        <h3>DNS Utilities</h3>
+        <ul>
+            <li><code>check_ns_delegation</code>: Verifies correct NS delegation.</li>
+            <li><code>check_ns_delegation_with_retries</code>: Retries delegation check with exponential backoff.</li>
+        </ul>
+
+        <h3>Status Updates</h3>
+        <ul>
+            <li><code>post_status_update</code>: Sends status updates to webhook with retries.</li>
+        </ul>
+
+        <div class="summary">
+            <strong>Summary:</strong> Automates Azure Windows 10 VM provisioning, network setup, storage operations, DNS
+            management, custom script execution, email notification, and resource cleanup with robust logging and
+            webhook status reporting.
+        </div>
+
+        <h2>SMTP Email Sending (html_email_send.py)</h2>
+        <ul>
+            <li>Reads SMTP settings from environment variables:
+                <code>SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SENDER_EMAIL</code>
+            </li>
+            <li>Parses recipients from <code>RECIPIENT_EMAILS</code>.</li>
+            <li>Generates HTML email content via <code>html_email.HTMLEmail</code>.</li>
+            <li>Sends asynchronously using <code>await html_email_send.send_html_email_smtp(...)</code>.</li>
+            <li>Posts webhook status: "sending_email", "email_sent", or "email_failed".</li>
+        </ul>
+
+        <h2>Hyper-V Setup Script Explanation</h2>
+        <p>This PowerShell script prepares a Windows machine for Hyper-V installation, system/user debloating, and
+            automation.</p>
+
+        <h3>1. Admin Privileges Check</h3>
+        <p>Relaunches itself with elevated privileges if not run as Administrator.</p>
+
+        <h3>2. Webhook Notifications</h3>
+        <p><code>Notify-Webhook</code> sends JSON-formatted status updates throughout script execution.</p>
+
+        <h3>3. Logging</h3>
+        <p>Logs events in <code>C:\Program Files\Logs</code> including script start, helper creation, task registration,
+            and completion.</p>
+
+        <h3>4. Registry Helper Function</h3>
+        <p><code>Set-RegistryValue</code> safely sets registry keys, creating paths if missing, logging failures without
+            stopping execution.</p>
+
+        <h3>5. System Cleanup & Debloat (HKLM + SYSTEM)</h3>
+        <ul>
+            <li>Disables OOBE prompts, Cortana, telemetry, Windows Update auto-updates.</li>
+            <li>Configures network profiles to Private.</li>
+            <li>Disables unnecessary services: WSearch, DiagTrack, WerSvc.</li>
+        </ul>
+
+        <h3>6. User Cleanup & Debloat (HKCU)</h3>
+        <p>Iterates over user profiles to disable lock screen, first-run experiences, Windows Store auto-downloads,
+            notifications, minimizing bloat and privacy-invasive defaults.</p>
+
+        <h3>7. Post-Reboot Helper Script</h3>
+        <ul>
+            <li>Runs at startup as SYSTEM.</li>
+            <li>Sets network profiles, disables discovery services, updates registry, creates Hyper-V Manager shortcut,
+                self-cleans after execution.</li>
+        </ul>
+
+        <h3>8. Scheduled Task</h3>
+        <p>Registers helper script to run once at startup for post-reboot configuration.</p>
+
+        <h3>9. Hyper-V Installation</h3>
+        <ul>
+            <li>Enables <code>Microsoft-Hyper-V-All</code> feature if not already enabled.</li>
+            <li>Schedules reboot if Hyper-V is installed.</li>
+            <li>Creates Hyper-V Manager shortcut if already enabled.</li>
+        </ul>
+
+        <h3>10. Completion</h3>
+        <ul>
+            <li>Automatically allocates unused space on <code>C:\</code>.</li>
+            <li>Logs final completion timestamp.</li>
+            <li>Fully automated, combines system hardening, debloating, network configuration, and Hyper-V setup.</li>
+        </ul>
+
+        <div class="summary">
+            <strong>Overall Summary:</strong> The combination of Python provisioning and PowerShell Hyper-V scripts
+            automates Azure Windows VM deployment, system configuration, network setup, Hyper-V installation, and
+            user/system optimization, with detailed logging, webhook monitoring, and asynchronous notifications.
+        </div>
+        <div>This code will enable you to setup a Windows10 computer with no popups or annoying first install settings.
+        </div>
+        <pre><code>
+            def generate_setup(WEBHOOK_URL: str = None) -> str:
+            script = r'''# Check for admin privileges
+            $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+            if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            Write-Host "Not running as Administrator. Relaunching as admin..."
+            $scriptPath = if ($MyInvocation.MyCommand.Definition) { $MyInvocation.MyCommand.Definition } else { $PSCommandPath }
+            Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb
+            RunAs -Wait
+            exit
+            }
+            
+            $ErrorActionPreference = "Stop"
+            $env:WEBHOOK_URL = "__WEBHOOK_URL__"
+            
+            # --- Webhook helper ---
+            function Notify-Webhook {
+            param([string]$Status, [string]$Step, [string]$Message)
+            # Local log first (always visible)
+            Add-Content -Path $installLog -Value "[$(Get-Date -Format 'HH:mm:ss')] $Step -> $Message"
+            # Only call webhook if URL is set
+            if (-not $env:WEBHOOK_URL) { return }
+            # payload
+            $payload = @{
+            vm_name = $env:COMPUTERNAME
+            status = $Status
+            timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            resource_group = "windows_internal"
+            location = "windows_internal_script"
+            details = @{ step = $Step; message = $Message }
+            } | ConvertTo-Json -Depth 4
+            
+            try {
+            Invoke-RestMethod -Uri $env:WEBHOOK_URL -Method Post -ContentType 'application/json' -Body $payload -TimeoutSec 30
+            } catch {
+            # Log locally if webhook fails
+            Add-Content -Path $installLog -Value "[$(Get-Date -Format 'HH:mm:ss')] Webhook failed: $_"
+            }
+            }
+            
+            # --- Log setup ---
+            $logDir = "C:\Program Files\Logs"
+            $installLog = "$logDir\setup_hyperv_log.txt"
+            try {
+            New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+            } catch {
+            Write-Warning "Failed to create log directory: $_"
+            }
+            Add-Content -Path $installLog -Value "=== Hyper-V Setup Script Started $(Get-Date) ==="
+            
+            # --- Registry helper ---
+            function Set-RegistryValue {
+            param(
+            [string]$Path,
+            [string]$Name,
+            [Object]$Value,
+            [Microsoft.Win32.RegistryValueKind]$Type = [Microsoft.Win32.RegistryValueKind]::DWord
+            )
+            
+            if (-not (Test-Path $Path)) {
+            try {
+            New-Item -Path $Path -Force | Out-Null
+            } catch {
+            return
+            }
+            }
+            
+            try {
+            New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
+            } catch {
+            }
+            }
+            
+            # --- SYSTEM CLEANUP & DEBLOAT (HKLM + SYSTEM) ---
+            Notify-Webhook -Status "provisioning" -Step "debloat_windows" -Message "Debloating Windows"
+            
+            # Create system keys hashtable with proper syntax
+            $systemKeys = @{}
+            
+            # Add registry keys one by one to avoid syntax issues
+            $systemKeys["HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State"] = @{
+            "ImageState" = 7; "OOBEInProgress" = 0; "SetupPhase" = 0; "SystemSetupInProgress" = 0
+            }
+            $systemKeys["HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE"] = @{
+            "PrivacyConsentStatus" = 1; "DisablePrivacyExperience" = 1; "SkipMachineOOBE" = 1; "SkipUserOOBE" = 1
+            }
+            $systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE"] = @{
+            "DisablePrivacyExperience" = 1
+            }
+            $systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"] = @{
+            "AllowCortana" = 0
+            }
+            $systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Edge"] = @{
+            "HideFirstRunExperience" = 1
+            }
+            $systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"] = @{
+            "NoAutoUpdate" = 1
+            }
+            $systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"] = @{
+            "NoConnectedUser" = 3
+            }
+            $systemKeys["HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection"] = @{
+            "AllowTelemetry" = 0
+            }
+            $systemKeys["HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance"] = @{
+            "fAllowToGetHelp" = 0
+            }
+            $systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections"] = @{
+            "NC_ShowSharedAccessUI" = 0
+            }
+            $systemKeys["HKLM:\SYSTEM\CurrentControlSet\Control\Network"] = @{
+            "NewNetworkWindowOff" = 1; "Category" = 1
+            }
+            $systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections"] = @{
+            "NC_StdDomainUserSetLocation" = 1; "NC_EnableNetSetupWizard" = 0
+            }
+            $systemKeys["HKLM:\SOFTWARE\Microsoft\Windows Defender\Features"] = @{
+            "DisableAntiSpywareNotification" = 1
+            }
+            $systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications"] = @{
+            "DisableNotifications" = 1
+            }
+            $systemKeys["HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications"] = @{
+            "DisableEnhancedNotifications" = 1
+            }
+            
+            try {
+            Get-NetConnectionProfile | ForEach-Object {
+            try { Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+            } catch { }
+            }
+            } catch { }
+            
+            foreach ($path in $systemKeys.Keys) {
+            foreach ($kv in $systemKeys[$path].GetEnumerator()) {
+            Set-RegistryValue -Path $path -Name $kv.Key -Value $kv.Value
+            }
+            }
+            
+            foreach ($path in $systemKeys.Keys) {
+            foreach ($kv in $systemKeys[$path].GetEnumerator()) {
+            Set-RegistryValue -Path $path -Name $kv.Key -Value $kv.Value
+            }
+            }
+            
+            # --- Extra registry to suppress "no internet" and location prompts ---
+            try {
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name
+            "NC_DoNotShowLocalOnlyConnectivityPrompt" -Value 1 -PropertyType DWord -Force | Out-Null
+            } catch { }
+            
+            # --- Force all existing network profiles to Private ---
+            try {
+            $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
+            if (Test-Path $profilesPath) {
+            Get-ChildItem $profilesPath | ForEach-Object {
+            try {
+            Set-ItemProperty -Path $_.PSPath -Name "Category" -Value 1 -Force
+            } catch { }
+            }
+            }
+            } catch { }
+            
+            
+            $services = @("WSearch","DiagTrack","WerSvc")
+            foreach ($svc in $services) {
+            try { Stop-Service $svc -Force -ErrorAction SilentlyContinue } catch { }
+            try { Set-Service $svc -StartupType Disabled } catch { }
+            }
+            
+            # --- USER CLEANUP & DEBLOAT (HKCU) ---
+            $hkcuProfiles = Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" }
+            
+            $userKeys = @(
+            @{
+            Path="Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+            Values=@{
+            "RotatingLockScreenEnabled" = 0
+            "RotatingLockScreenOverlayEnabled" = 0
+            "SubscribedContent-338388Enabled" = 0
+            "SubscribedContent-310093Enabled" = 0
+            "SystemPaneSuggestionsEnabled" = 0
+            "SubscribedContent-SettingsEnabled" = 0
+            "SubscribedContent-AppsEnabled" = 0
+            "SubscribedContent-338387Enabled" = 0
+            }
+            }
+            @{
+            Path="Software\Microsoft\OneDrive"
+            Values=@{
+            "DisableFirstRun" = 1
+            }
+            }
+            @{
+            Path="Software\Microsoft\Xbox"
+            Values=@{
+            "ShowFirstRunUI" = 0
+            }
+            }
+            @{
+            Path="Software\Microsoft\GameBar"
+            Values=@{
+            "ShowStartupPanel" = 0
+            }
+            }
+            @{
+            Path="Software\Microsoft\Office\16.0\Common\General"
+            Values=@{
+            "ShownFirstRunOptIn" = 1
+            }
+            }
+            @{
+            Path="Software\Microsoft\Office\16.0\Common\Internet"
+            Values=@{
+            "SignInOptions" = 3
+            }
+            }
+            @{
+            Path="Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\feedbackhub"
+            Values=@{
+            "Value" = 2
+            }
+            }
+            @{
+            Path="Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+            Values=@{
+            "PeopleBand" = 0
+            }
+            }
+            @{
+            Path="Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+            Values=@{
+            "TaskbarDa" = 0
+            "EnableBalloonTips" = 0
+            }
+            }
+            @{
+            Path="Software\Microsoft\Windows\CurrentVersion\Pen"
+            Values=@{
+            "PenWorkspaceButton" = 0
+            }
+            }
+            @{
+            Path="Software\Microsoft\Windows\CurrentVersion\Appx"
+            Values=@{
+            "DisabledByPolicy" = 1
+            }
+            }
+            @{
+            Path="Software\Policies\Microsoft\WindowsStore"
+            Values=@{
+            "AutoDownload" = 2
+            }
+            }
+            @{
+            Path="Software\Microsoft\Windows\CurrentVersion\PushNotifications"
+            Values=@{
+            "NoToastApplicationNotification" = 1
+            }
+            }
+            @{
+            Path="Software\Microsoft\Windows\CurrentVersion\Notifications\Settings"
+            Values=@{
+            "NOC_GLOBAL_SETTING_TOASTS_ENABLED" = 0
+            }
+            }
+            @{
+            Path="Software\Microsoft\Windows Defender Security Center\Notifications"
+            Values=@{
+            "DisableNotifications" = 1
+            }
+            }
+            )
+            
+            foreach ($profile in $hkcuProfiles) {
+            foreach ($key in $userKeys) {
+            foreach ($kv in $key.Values.GetEnumerator()) {
+            try {
+            $fullPath = "HKU:\$($profile.SID)\$($key.Path)"
+            if (-not (Test-Path $fullPath)) { New-Item -Path $fullPath -Force | Out-Null }
+            Set-RegistryValue -Path $fullPath -Name $kv.Key -Value $kv.Value
+            } catch { }
+            }
+            }
+            }
+            
+            Notify-Webhook -Status "provisioning" -Step "post_reboot_script" -Message "Creating Windows Post-Reboot script"
+            
+            # ---- Post-reboot helper script ----
+            $helperPath = "C:\ProgramData\PostHyperVSetup.ps1"
+            
+            # Create helper script content
+            $helperContent = @'
+            # Post-reboot Hyper-V setup script with watchdog for network profiles
+            try {
+            Write-Output "Starting PostHyperVSetup..."
+            
+            # --- 0. Ensure script is running as Administrator ---
+            if (-not ([Security.Principal.WindowsPrincipal]
+            [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+            Write-Warning "Script must be run as Administrator to modify protected registry keys."
+            return
+            }
+            
+            # --- 1. Delay to allow system services to stabilize ---
+            Start-Sleep -Seconds 5
+            
+            # --- 2. Set all current network profiles to Private via registry ---
+            try {
+            $profilesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles"
+            if (Test-Path $profilesPath) {
+            $profiles = Get-ItemProperty -Path "$profilesPath\*" | Select-Object `
+            @{Name='InterfaceIndex';Expression={$_.PSChildName}},
+            @{Name='Name';Expression={$_.ProfileName}},
+            @{Name='NetworkCategory';Expression={
+            switch ($_.Category) {
+            0 {"Public"}
+            1 {"Private"}
+            2 {"Domain"}
+            default {"Unknown"}
+            }
+            }}
+            foreach ($p in $profiles) {
+            if ($p.NetworkCategory -ne "Private") {
+            Write-Output "Forcing profile $($p.Name) to Private"
+            Set-ItemProperty -Path "$profilesPath\$($p.InterfaceIndex)" -Name "Category" -Value 1 -Force
+            }
+            }
+            }
+            } catch {
+            Write-Warning "Failed to update registry network profiles: $_"
+            }
+            
+            # --- 3. Restart netprofm service only (defer NlaSvc) ---
+            try {
+            Restart-Service "netprofm" -Force -ErrorAction SilentlyContinue
+            Write-Output "Restarted service: netprofm"
+            } catch {
+            Write-Warning "Failed to restart service netprofm: $_"
+            }
+            
+            # --- 4. Disable Network Discovery firewall rules ---
+            try {
+            Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
+            Set-NetFirewallRule -Group "@FirewallAPI.dll,-32752" -Enabled False -ErrorAction SilentlyContinue
+            Write-Output "Disabled Network Discovery firewall rules"
+            } catch {
+            Write-Warning "Failed to disable firewall rules: $_"
+            }
+            
+            # --- 5. Stop and disable discovery-related services ---
+            $servicesToDisable = @("FDResPub", "FDHost", "UPnPHost", "SSDPSRV")
+            foreach ($svc in $servicesToDisable) {
+            try {
+            Stop-Service $svc -Force -ErrorAction SilentlyContinue
+            Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
+            Write-Output "Disabled service: ${svc}"
+            } catch {
+            Write-Warning "Failed to disable service ${svc}: $_"
+            }
+            }
+            
+            # --- 6. Disable network location wizard & suppress prompts ---
+            try {
+            New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1
+            -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network\NetworkLocationWizard" -Name "HideWizard" -Value
+            1 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name
+            "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard"
+            -Value 0 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name
+            "NC_DoNotShowLocalOnlyConnectivityPrompt" -Value 1 -PropertyType DWord -Force | Out-Null
+            Write-Output "Disabled network location wizard and suppressed prompts as SYSTEM"
+            } catch {
+            Write-Warning "Failed to update registry for network wizard: $_"
+            }
+            
+            # --- 7. Disable firewall notifications ---
+            try {
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features" -Name "DisableAntiSpywareNotification"
+            -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Security Center\Notifications" -Name
+            "DisableNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications" -Name
+            "DisableEnhancedNotifications" -Value 1 -PropertyType DWord -Force -ErrorAction SilentlyContinue | Out-Null
+            Write-Output "Disabled firewall notifications (if permitted)"
+            } catch {
+            Write-Warning "Failed to update firewall notification settings: $_"
+            }
+            
+            # --- 8. Create Hyper-V Manager shortcut for all users ---
+            try {
+            $virt = "$env:windir\System32\virtmgmt.msc"
+            $publicDesktop = "C:\Users\Public\Desktop"
+            if (Test-Path $virt) {
+            if (-not (Test-Path $publicDesktop)) { New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }
+            $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
+            $wsh = New-Object -ComObject WScript.Shell
+            $sc = $wsh.CreateShortcut($shortcutPath)
+            $sc.TargetPath = $virt
+            $sc.IconLocation = "$virt,0"
+            $sc.Save()
+            Write-Output "Created Hyper-V Manager shortcut in Public Desktop"
+            }
+            } catch {
+            Write-Warning "Failed to create Hyper-V shortcut: $_"
+            }
+            
+            # --- 9. Safely restart NlaSvc to enforce Private profiles ---
+            try {
+            $needRestartNla = $false
+            if (Test-Path $profilesPath) {
+            $profiles = Get-ItemProperty -Path "$profilesPath\*" | Select-Object PSChildName, Category
+            foreach ($p in $profiles) {
+            if ($p.Category -ne 1) { $needRestartNla = $true }
+            }
+            }
+            if ($needRestartNla) {
+            try {
+            Stop-Service "NlaSvc" -Force -ErrorAction SilentlyContinue
+            Start-Service "NlaSvc" -ErrorAction SilentlyContinue
+            Set-Service "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
+            Write-Output "Safely restarted and disabled NlaSvc to enforce Private network profiles"
+            } catch {
+            Write-Warning "Failed to disable NlaSvc safely: $_"
+            }
+            }
+            } catch {
+            Write-Warning "Failed to check or restart NlaSvc: $_"
+            }
+            
+            # --- 10. Install watchdog script to enforce Private profiles ---
+            try {
+            $watchdogPath = "C:\ProgramData\EnforcePrivateNetworks_.ps1"
+            $watchdogContent = @"
+            # Enforce all network profiles to Private and disable NlaSvc safely
+            try {
+            Write-Output 'Starting EnforcePrivateNetworks script...'
+            
+            # Registry path to network profiles
+            `$profilesPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'
+            
+            # Force all profiles to Private
+            if (Test-Path `$profilesPath) {
+            Get-ChildItem `$profilesPath | ForEach-Object {
+            try {
+            Set-ItemProperty -Path `$_.PSPath -Name 'Category' -Value 1 -Force
+            Write-Output "Registry forced Private for profile `$(`$_.PSChildName)"
+            } catch {
+            Write-Warning "Failed to update registry for profile `$(`$_.PSChildName): `$_"
+            }
+            }
+            }
+            
+            # Stop and disable NlaSvc
+            `$nla = Get-Service 'NlaSvc' -ErrorAction SilentlyContinue
+            if (`$nla) {
+            Stop-Service 'NlaSvc' -Force -ErrorAction SilentlyContinue
+            Set-Service 'NlaSvc' -StartupType Disabled -ErrorAction SilentlyContinue
+            Write-Output "Stopped and disabled NlaSvc service"
+            }
+            
+            Write-Output 'EnforcePrivateNetworks script completed successfully.'
+            } catch {
+            Write-Warning "Script failed: `$_"
+            }
+            "@
+            $watchdogContent | Set-Content -Path $watchdogPath -Force -Encoding UTF8
+            
+            $taskName = "EnforcePrivateNetworks"
+            if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+            }
+            
+            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File `"$watchdogPath`""
+            $trigger = New-ScheduledTaskTrigger -AtStartup
+            Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $taskName -Description "Watchdog to enforce Private
+            network profiles and disable NlaSvc" -User "SYSTEM" -RunLevel Highest
+            Write-Output "Watchdog script installed and Scheduled Task created."
+            } catch {
+            Write-Warning "Failed to install watchdog: $_"
+            }
+            
+            Write-Output "PostHyperVSetup completed successfully."
+            } catch {
+            Write-Output "PostHyperVSetup encountered a fatal error: $_"
+            }
+            
+            # --- 12. Cleanup ---
+            try {
+            Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
+            if ($helperPath) {
+            Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
+            Write-Output "Removed helper script: $helperPath"
+            }
+            Write-Output "Cleanup complete"
+            } catch {
+            Write-Warning "Cleanup failed: $_"
+            }
+            
+            # --- Extend C: to use all unallocated space ---
+            try {
+            $cDisk = Get-Partition -DriveLetter C | Get-Disk
+            $cPartition = Get-Partition -DriveLetter C
+            
+            # Only extend if there’s free/unallocated space
+            $sizeRemaining = ($cDisk | Get-PartitionSupportedSize -PartitionNumber $cPartition.PartitionNumber)
+            if ($sizeRemaining.SizeMax -gt $cPartition.Size) {
+            Resize-Partition -DriveLetter C -Size $sizeRemaining.SizeMax
+            Write-Output "C: drive extended to maximum available size."
+            } else {
+            Write-Output "No unallocated space to extend C: drive."
+            }
+            } catch {
+            Write-Warning "Failed to extend C: drive: $_"
+            }
+            
+            
+            '@ # must be at column 0
+            
+            try {
+            $helperContent | Out-File -FilePath $helperPath -Encoding UTF8 -Force
+            Add-Content -Path $installLog -Value "Wrote helper script to $helperPath"
+            # Right after writing the helper script
+            Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$helperPath`"" -Wait
+            } catch {
+            Add-Content -Path $installLog -Value "Failed to write helper script: $_"
+            }
+            
+            # Register scheduled task to run the helper once at startup
+            try {
+            # Define the name of the scheduled task
+            $taskName = "PostHyperVSetup"
+            # Remove any existing task with the same name to avoid conflicts
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+            # Define the action the scheduled task will perform: run PowerShell with the helper script
+            $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File
+            `"$helperPath`""
+            # Set the trigger for the task: run at user AtStartup
+            $trigger = New-ScheduledTaskTrigger -AtStartup
+            # Define task settings with proper Windows version and description
+            # Create a ScheduledTaskSettingsSet for Windows 10
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
+            # $settings.Description = "Post-Hyper-V setup script: configures network, disables popups, and creates Hyper-V Manager
+            shortcut"
+            # $settings.Author = "Windows 10 Developer"
+            # Define the principal (user context) for the task:
+            # RunLevel Highest runs with elevated privileges
+            $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
+            # Register (create) the scheduled task with the defined name, action, trigger, and principal
+            # -Force ensures it overwrites any existing task with the same name
+            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings
+            -Force
+            
+            
+            } catch {
+            # If anything fails, log the error message to the install log
+            Add-Content -Path $installLog -Value "Failed to register scheduled task: $_"
+            }
+            
+            Notify-Webhook -Status "provisioning" -Step "enabling_hyperv" -Message "Enabling Windows Hyper-v"
+            
+            # --Disable NlaSvc before reboot---
+            # Do NOT stop it immediately (causes timeout in provisioning)
+            Set-Service -Name "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
+            
+            # --- Enable Hyper-V ---
+            try {
+            $hyperVFeature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All
+            if ($hyperVFeature.State -ne "Enabled") {
+            Notify-Webhook -Status "provisioning" -Step "hyperv_enable" -Message "Enabling Hyper-V..."
+            Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All -NoRestart
+            Notify-Webhook -Status "info" -Step "hyperv_enable" -Message "Scheduled post-reboot continuation."
+            Notify-Webhook -Status "provisioning" -Step "hyperv_restart" -Message "Restarting computer to complete Hyper-V
+            installation..."
+            Restart-Computer -Force
+            exit
+            } else {
+            # --- RUN POST-HYPER-V HELPER IMMEDIATELY ---
+            try {
+            # Correctly get the collection of network profiles
+            $profiles = Get-NetConnectionProfile
+            # Set each profile to Private
+            foreach ($profile in $profiles) {
+            Set-NetConnectionProfile -InterfaceIndex $profile.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+            }
+            Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
+            $servicesToDisable = @("FDResPub","FDHost","UPnPHost","SSDPSRV","NlaSvc")
+            foreach ($svc in $servicesToDisable) { Stop-Service $svc -Force -ErrorAction SilentlyContinue; Set-Service $svc
+            -StartupType Disabled -ErrorAction SilentlyContinue }
+            New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1
+            -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name
+            "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard"
+            -Value 0 -PropertyType DWord -Force | Out-Null
+            # Create Hyper-V Manager shortcut in Public Desktop (visible to all)
+            $publicDesktop = "C:\Users\Public\Desktop"
+            if (-not (Test-Path $publicDesktop)) { New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }
+            $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
+            $wsh = New-Object -ComObject WScript.Shell
+            $sc = $wsh.CreateShortcut($shortcutPath)
+            $sc.TargetPath = "$env:windir\System32\virtmgmt.msc"
+            $sc.IconLocation = "$env:windir\System32\virtmgmt.msc,0"
+            $sc.Save()
+            } catch { Write-Warning "Failed to run helper immediately: $_" }
+            }
+            } catch {
+            Notify-Webhook -Status "failed" -Step "hyperv_enable" -Message "Hyper-V installation failed: $_"
+            exit 1
+            }
+            
+            Add-Content -Path $installLog -Value "Setup script completed at $(Get-Date)"
+            '''
+            # Dictionary of placeholders -> values to insert into the script.
+            # You can add more entries here later if needed (e.g., __ADMIN_EMAIL__, __SERVER_NAME__).
+            replacements = {
+            "__WEBHOOK_URL__": WEBHOOK_URL or "", # Replace with passed value or empty string
+            }
+            
+            # Loop through all placeholders and replace them in the script text
+            for placeholder, value in replacements.items():
+            script = script.replace(placeholder, value)
+            
+            # Return the final PowerShell script with replacements applied
+            return script
+            
+            # --- HOW TO ADD MULTIPLE VALUES ---
+            # 1. Add extra function parameters, e.g.:
+            # def generate_setup(WEBHOOK_URL: str = None, ADMIN_EMAIL: str = None, SERVER_NAME: str = None) -> str:
+            #
+            # 2. Add new entries in the dictionary:
+            # replacements = {
+            # "__WEBHOOK_URL__": WEBHOOK_URL or "",
+            # "__ADMIN_EMAIL__": ADMIN_EMAIL or "",
+            # "__SERVER_NAME__": SERVER_NAME or "",
+            # }
+            #
+            # 3. Place matching placeholders in your PowerShell script where needed:
+            # $env:ADMIN_EMAIL = "__ADMIN_EMAIL__"
+            # $env:SERVER_NAME = "__SERVER_NAME__"
+            #
+            # When the function runs, all placeholders get replaced automatically.
+
+        </code></pre>
+    </main>
+</body>
+
+</html>

@@ -371,6 +371,7 @@ async def provision_vm_background(
             )
             return
 
+        # GENERATING SNAPSHOT AND RETURN EXPORT SAS URL
         snapshot_name = f"{snapshot_vm_name}-os-snapshot-{int(time.time())}"
         # Container storage(storage cant contains _ or - just numbers and letters)
         try:
@@ -499,15 +500,15 @@ async def provision_vm_background(
             )
             return
 
-
+        #THIS CREATES A STORAGE ACCOUNT NAME FOR vhdusb to receive fixed-size bootable .vhd files
         # Container storage(storage cant contains _ or - just numbers and letters)
         try:
             AZURE_STORAGE_CONFIG = await run_azure_operation(
                 create_vhd_export_container_and_sas,
-                storage_account_name=storage_account_name,
+                storage_account_name="vhdusb",
                 storage_account_key=AZURE_STORAGE_ACCOUNT_KEY,
                 storage_url=AZURE_STORAGE_URL,
-                vhd_container_name="vhdexports",
+                vhd_container_name="vhdusb",
                 expiry_hours=24
             )
             print(f"SAS URL ready: {AZURE_STORAGE_CONFIG['sas_token_url']}")
@@ -533,11 +534,14 @@ async def provision_vm_background(
             )
             return
 
-        # Generate and upload setup script
+        # Generate and upload setup script "{vm_name}-setup.ps1"
         print_info("Generating PowerShell setup script...")
         ssl_email = os.environ.get('SENDER_EMAIL')
         global SNAPSHOT_URL
 
+        #SNAPSHOT_URL: Generated os-disk-snapshot download URL for Hyper-V
+        #AZURE_SAS_TOKEN: Generated SAS Upload URL for az-copy uploading bootable-fixed-size.vhd
+        #WEBHOOK_URL: Keep Front-End informed during auto-installation on Windows
         ps_script = generate_setup.generate_setup(
             SNAPSHOT_URL=SNAPSHOT_URL,
             WEBHOOK_URL=hook_url,
