@@ -13,7 +13,6 @@ import string
 import shutil
 import platform
 import dns.resolver
-from urllib.parse import quote_plus
 from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import ClientSecretCredential
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions, generate_container_sas, ContainerSasPermissions
@@ -543,9 +542,8 @@ async def provision_vm_background(
         #SNAPSHOT_URL: Generated os-disk-snapshot download URL for Hyper-V
         #AZURE_SAS_TOKEN: Generated SAS Upload URL for az-copy uploading bootable-fixed-size.vhd
         #WEBHOOK_URL: Keep Front-End informed during auto-installation on Windows
-        encoded_sas = quote_plus(SNAPSHOT_URL)
         ps_script = generate_setup.generate_setup(
-            SNAPSHOT_URL=encoded_sas,
+            SNAPSHOT_URL=SNAPSHOT_URL,
             WEBHOOK_URL=hook_url,
             AZURE_SAS_TOKEN=VHD_EXPORT_SAS_URL
         )

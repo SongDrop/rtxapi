@@ -13,7 +13,6 @@ import string
 import shutil
 import platform
 import dns.resolver
-from urllib.parse import quote_plus
 from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import ClientSecretCredential
 from azure.mgmt.compute.models import GrantAccessData, AccessLevel
@@ -373,7 +372,6 @@ async def snapshot_vm_background(credentials, vm_name, resource_group, location,
                 html_content=html_content,
                 use_tls=True
             )
-            encoded_sas = quote_plus(snapshot_sas_url)  # encodes ? & = etc
             # Final success update
             await post_status_update(
                 hook_url=hook_url,
@@ -385,7 +383,7 @@ async def snapshot_vm_background(credentials, vm_name, resource_group, location,
                     "details": {
                         "step": "completed",
                         "message": "VM provisioning successful",
-                        "url": f"https://cdn.sdappnet.cloud/rtx/snapshot.html?snapshot_name={snapshot_name}&created_at={datetime.utcnow().isoformat()}&snapshot_url={encoded_sas}",
+                        "url": f"https://cdn.sdappnet.cloud/rtx/snapshot.html?snapshot_name={snapshot_name}&created_at={datetime.utcnow().isoformat()}&snapshot_url={snapshot_sas_url}",
                         "timestamp": datetime.utcnow().isoformat()
                     }
                 }
