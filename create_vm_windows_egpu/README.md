@@ -1,6 +1,6 @@
-# Hyper-V Setup Script Explanation
+# Windows eGPU Setup Script Explanation
 
-This PowerShell setup script performs a comprehensive setup and configuration on a Windows machine, primarily to prepare it for Hyper-V installation and system/user debloating. Here is a breakdown of its functionality:
+This PowerShell setup script performs a comprehensive setup and configuration on a Windows machine, primarily to prepare it for Nvidia eGPU installation and system/user debloating. Here is a breakdown of its functionality:
 
 ## 1. Admin Privileges Check
 
@@ -65,24 +65,19 @@ This PowerShell setup script performs a comprehensive setup and configuration on
 - Registers a scheduled task to run the helper script once at startup.
 - Ensures post-reboot tasks are applied, like completing Hyper-V setup and enforcing network settings.
 
-## 9. Hyper-V Installation
+## 9. Low-latency streaming Installation
 
-- Checks if Hyper-V is already enabled.
-- If not enabled:
-  - Notifies the webhook that Hyper-V is being installed.
-  - Enables `Microsoft-Hyper-V-All` feature.
-  - Schedules a reboot to finalize installation.
-- If already enabled:
-  - Notifies the webhook.
-  - Immediately creates a Hyper-V Manager shortcut on the Public Desktop.
+- Download Nvidia Driver for low-latency streaming
+- Download sunshine.exe for low-latecy streaming
+- Download VirtualCable audio for low-latecy streaming
 
 ## 10. Completion
 
 - Automatically allocating unused space on C:\
 - Writes final log entry with the setup completion timestamp.
-- Script is fully automated, combining system hardening, debloating, network configuration, and Hyper-V setup.
+- Script is fully automated, combining system hardening, debloating, network configuration, and low-latency streaming setup.
 
 ---
 
 **Summary:**  
-This script is designed for automated Windows provisioning. It prepares the machine by disabling telemetry and unnecessary services, applying user and system-level debloat, configuring network privacy, and installing/enabling Hyper-V with a post-reboot helper. All actions are logged and optionally reported to a webhook for monitoring purposes.
+This script is designed for automated Windows provisioning. It prepares the machine by disabling telemetry and unnecessary services, applying user and system-level debloat, configuring network privacy, and installing/enabling low-latency streaming with a post-reboot helper. All actions are logged and optionally reported to a webhook for monitoring purposes.
