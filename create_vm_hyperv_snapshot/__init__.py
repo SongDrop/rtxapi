@@ -418,7 +418,9 @@ async def snapshot_vm_background(credentials, vm_name, resource_group, location,
 async def stop_vm_to_snapshot(compute_client: ComputeManagementClient, vm_name: str, resource_group: str):
     try:
         print(f"Stopping VM '{vm_name}' in resource group '{resource_group}'...")
-        poller = compute_client.virtual_machines.begin_deallocate(resource_group, vm_name)
+        #stop only, if it's deallocated it will get a new IP address.
+        poller = compute_client.virtual_machines.begin_power_off(resource_group, vm_name, skip_shutdown=False)
+        #poller = compute_client.virtual_machines.begin_deallocate(resource_group, vm_name)
         await asyncio.to_thread(poller.result)
         print(f"VM '{vm_name}' is now stopped/deallocated.")
     except Exception as e:
