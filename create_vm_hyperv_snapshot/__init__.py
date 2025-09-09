@@ -295,12 +295,30 @@ async def snapshot_vm_background(credentials, vm_name, resource_group, location,
             "details": {"step": "generating_sas", "message": "Generating SAS URL for snapshot"}
         })
 
-        grant_access_params = GrantAccessData(access=AccessLevel.read, duration_in_seconds=36000)
+        # grant_access_params = GrantAccessData(access=AccessLevel.read, duration_in_seconds=36000)
+        # snapshot_access = await asyncio.to_thread(
+        #     lambda: compute_client.snapshots.begin_grant_access(resource_group, snapshot_name, grant_access_params).result()
+        # )
+        # snapshot_sas_url = snapshot_access.access_sas
+        # print_info(f"SAS URL generated: {snapshot_sas_url}")
+
+        # Async-safe call to begin_grant_access
         snapshot_access = await asyncio.to_thread(
-            lambda: compute_client.snapshots.begin_grant_access(resource_group, snapshot_name, grant_access_params).result()
+            lambda: compute_client.snapshots.begin_grant_access(
+                resource_group_name=resource_group,
+                snapshot_name=snapshot_name,
+                grant_access_data={
+                    "access": "Read",             # Access type
+                    "durationInSeconds": 36000,     # SAS expiry in seconds
+                    "fileFormat": "VHD"          # Optional: VHD or VHDX
+                }
+            ).result()
         )
-        snapshot_sas_url = snapshot_access.access_sas
-        print_info(f"SAS URL generated: {snapshot_sas_url}")
+
+        # accessSAS is the property containing the SAS URL
+        snapshot_sas_url = snapshot_access.accessSAS
+        print(f"SAS URL generated: {snapshot_sas_url}")
+    
 
         await post_status_update(hook_url, {
             "vm_name": vm_name,

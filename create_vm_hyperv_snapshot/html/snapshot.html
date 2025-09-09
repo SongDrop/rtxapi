@@ -103,7 +103,18 @@
         const params = new URLSearchParams(window.location.search);
         const snapshotName = params.get('snapshot_name') || 'N/A';
         const createdAt = params.get('created_at') || 'N/A';
-        const snapshotURL = params.get('snapshot_url') || '#';
+
+        // Try to reconstruct full snapshot URL
+        let snapshotURL = params.get('snapshot_url') || '#';
+
+        // If the SAS wasn't encoded properly, try to rebuild it from the raw query string
+        if (snapshotURL && snapshotURL.includes("http") && !snapshotURL.includes("&sig=")) {
+            const fullQuery = window.location.search.substring(1); // remove "?"
+            const match = fullQuery.match(/snapshot_url=(.+)/);
+            if (match) {
+                snapshotURL = decodeURIComponent(match[1]);
+            }
+        }
 
         // Populate HTML elements
         document.getElementById('snapshot_name').textContent = snapshotName;
@@ -112,6 +123,7 @@
         snapshotLink.href = snapshotURL;
         snapshotLink.textContent = snapshotURL;
     </script>
+
 </body>
 
 </html>
