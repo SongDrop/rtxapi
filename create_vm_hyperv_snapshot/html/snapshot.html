@@ -99,35 +99,21 @@
     </div>
 
     <script>
-        function getQueryParam(name) {
-            const urlParams = new URLSearchParams(window.location.search);
-            return urlParams.get(name);
-        }
+        // Parse URL query parameters
+        const params = new URLSearchParams(window.location.search);
+        const snapshotName = params.get('snapshot_name') || 'N/A';
+        const createdAt = params.get('created_at') || 'N/A';
 
-        let snapshotURL = getQueryParam('snapshot_url') || '#';
+        // URL-decode SAS URL
+        let snapshotURL = params.get('snapshot_url') ? decodeURIComponent(params.get('snapshot_url')) : '#';
 
-        if (snapshotURL !== '#') {
-            // First decode
-            snapshotURL = decodeURIComponent(snapshotURL);
-
-            // If it still contains % signs, decode again (handles double encoding)
-            if (snapshotURL.includes('%')) {
-                snapshotURL = decodeURIComponent(snapshotURL);
-            }
-        }
-
-        // Now snapshotURL is fully usable
-        console.log("Decoded SAS URL:", snapshotURL);
-
-        document.getElementById('snapshot_url').href = snapshotURL;
-        document.getElementById('snapshot_url').textContent = snapshotURL;
+        // Populate HTML elements
+        document.getElementById('snapshot_name').textContent = snapshotName;
+        document.getElementById('created_at').textContent = createdAt;
+        const snapshotLink = document.getElementById('snapshot_url');
+        snapshotLink.href = snapshotURL;
+        snapshotLink.textContent = snapshotURL;
     </script>
-
-
-
-
-
-
 
 </body>
 

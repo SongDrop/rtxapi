@@ -374,7 +374,7 @@ async def snapshot_vm_background(credentials, vm_name, resource_group, location,
             sender_email = os.environ.get('SENDER_EMAIL')
             recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
 
-            snapshot_sas_encoded = urllib.parse.quote(snapshot_sas_url, safe='')
+            snapshot_sas_encoded = urllib.parse.quote(snapshot_sas_url, safe=':/?&=')
             html_content = html_email.HTMLEmail(
                 snapshot_name=snapshot_name,
                 created_at=datetime.utcnow().isoformat(),
