@@ -67,7 +67,7 @@ This PowerShell setup script performs a comprehensive setup and configuration on
 
 ## 9. WebRDS streaming Installation
 
-- Setup WebRDS for browser based Windows streaming
+- Setup WebRDS for browser based Windows streaming for optional domain
 
 ## 10. Completion
 

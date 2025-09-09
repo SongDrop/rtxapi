@@ -378,7 +378,7 @@ async def provision_vm_background(
         # Generate and upload setup script
         print_info("Generating PowerShell setup script...")
         ssl_email = os.environ.get('SENDER_EMAIL')
-        ps_script = generate_setup.generate_setup(WEBHOOK_URL=hook_url)
+        ps_script = generate_setup.generate_setup(WEBHOOK_URL=hook_url, RDS_DOMAIN=f"rds.{domain}")
         
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
         container_name = 'vm-startup-scripts'
