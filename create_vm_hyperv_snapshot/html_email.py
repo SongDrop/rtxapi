@@ -1,4 +1,4 @@
-def HTMLEmailSnapshot(snapshot_name: str, created_at: str, snapshot_url: str) -> str:
+def HTMLEmail(snapshot_name: str, created_at: str, snapshot_url: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 
