@@ -474,6 +474,36 @@ try {
     Write-Output "PostHyperVSetup encountered a fatal error: $_"
 }
 
+    # --- 12. Cleanup ---
+    try {
+        Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
+        if ($helperPath) {
+            Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
+            Write-Output "Removed helper script: $helperPath"
+        }
+        Write-Output "Cleanup complete"
+    } catch {
+        Write-Warning "Cleanup failed: $_"
+    }
+
+    # --- Extend C: to use all unallocated space ---
+    try {
+        $cDisk = Get-Partition -DriveLetter C | Get-Disk
+        $cPartition = Get-Partition -DriveLetter C
+
+        # Only extend if there’s free/unallocated space
+        $sizeRemaining = ($cDisk | Get-PartitionSupportedSize -PartitionNumber $cPartition.PartitionNumber)
+        if ($sizeRemaining.SizeMax -gt $cPartition.Size) {
+            Resize-Partition -DriveLetter C -Size $sizeRemaining.SizeMax
+            Write-Output "C: drive extended to maximum available size."
+        } else {
+            Write-Output "No unallocated space to extend C: drive."
+        }
+    } catch {
+        Write-Warning "Failed to extend C: drive: $_"
+    }
+
+
 '@  # must be at column 0
 
 try {

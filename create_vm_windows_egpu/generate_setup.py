@@ -287,7 +287,7 @@ $helperPath = "C:\ProgramData\PostWindowsSetup.ps1"
 
 # Create helper script content
 $helperContent = @'
- # Post-reboot Windows setup script with watchdog for network profiles
+# Post-reboot Windows setup script with watchdog for network profiles
 try {
     Write-Output "Starting PostWindowsSetup..."
 
@@ -377,7 +377,7 @@ try {
         Write-Warning "Failed to update firewall notification settings: $_"
     }
 
-    # --- 9. Safely restart NlaSvc to enforce Private profiles ---
+    # --- 8. Safely restart NlaSvc to enforce Private profiles ---
     try {
         $needRestartNla = $false
         if (Test-Path $profilesPath) {
@@ -400,42 +400,42 @@ try {
         Write-Warning "Failed to check or restart NlaSvc: $_"
     }
 
-    # --- 10. Install watchdog script to enforce Private profiles ---
+    # --- 9. Install watchdog script to enforce Private profiles ---
     try {
-        $watchdogPath = "C:\ProgramData\EnforcePrivateNetworks.ps1"
+        $watchdogPath = "C:\ProgramData\EnforcePrivateNetworks_.ps1"
         $watchdogContent = @"
-            # Enforce all network profiles to Private and disable NlaSvc safely
+# Enforce all network profiles to Private and disable NlaSvc safely
+try {
+    Write-Output 'Starting EnforcePrivateNetworks script...'
+
+    # Registry path to network profiles
+    `$profilesPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'
+
+    # Force all profiles to Private
+    if (Test-Path `$profilesPath) {
+        Get-ChildItem `$profilesPath | ForEach-Object {
             try {
-                Write-Output 'Starting EnforcePrivateNetworks script...'
-
-                # Registry path to network profiles
-                $profilesPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'
-
-                # Force all profiles to Private
-                if (Test-Path $profilesPath) {
-                    Get-ChildItem $profilesPath | ForEach-Object {
-                        try {
-                            Set-ItemProperty -Path $_.PSPath -Name 'Category' -Value 1 -Force
-                            Write-Output "Registry forced Private for profile $($_.PSChildName)"
-                        } catch {
-                            Write-Warning "Failed to update registry for profile $($_.PSChildName): $_"
-                        }
-                    }
-                }
-
-                # Stop and disable NlaSvc
-                $nla = Get-Service 'NlaSvc' -ErrorAction SilentlyContinue
-                if ($nla) {
-                    Stop-Service 'NlaSvc' -Force -ErrorAction SilentlyContinue
-                    Set-Service 'NlaSvc' -StartupType Disabled -ErrorAction SilentlyContinue
-                    Write-Output "Stopped and disabled NlaSvc service"
-                }
-
-                Write-Output 'EnforcePrivateNetworks script completed successfully.'
+                Set-ItemProperty -Path `$_.PSPath -Name 'Category' -Value 1 -Force
+                Write-Output "Registry forced Private for profile `$(`$_.PSChildName)"
             } catch {
-                Write-Warning "Script failed: $_"
-            }   
-        "@
+                Write-Warning "Failed to update registry for profile `$(`$_.PSChildName): `$_"
+            }
+        }
+    }
+
+    # Stop and disable NlaSvc
+    `$nla = Get-Service 'NlaSvc' -ErrorAction SilentlyContinue
+    if (`$nla) {
+        Stop-Service 'NlaSvc' -Force -ErrorAction SilentlyContinue
+        Set-Service 'NlaSvc' -StartupType Disabled -ErrorAction SilentlyContinue
+        Write-Output "Stopped and disabled NlaSvc service"
+    }
+
+    Write-Output 'EnforcePrivateNetworks script completed successfully.'
+} catch {
+    Write-Warning "Script failed: `$_"
+}
+"@
         $watchdogContent | Set-Content -Path $watchdogPath -Force -Encoding UTF8
 
         $taskName = "EnforcePrivateNetworks"
@@ -451,6 +451,39 @@ try {
         Write-Warning "Failed to install watchdog: $_"
     }
 
+    Write-Output "PostWindowsSetup completed successfully."
+} catch {
+    Write-Output "PostWindowsSetup encountered a fatal error: $_"
+}
+
+    # --- 10. Cleanup ---
+    try {
+        Unregister-ScheduledTask -TaskName "PostWindowsSetup" -Confirm:$false -ErrorAction SilentlyContinue
+        if ($helperPath) {
+            Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
+            Write-Output "Removed helper script: $helperPath"
+        }
+        Write-Output "Cleanup complete"
+    } catch {
+        Write-Warning "Cleanup failed: $_"
+    }
+
+    # --- Extend C: to use all unallocated space ---
+    try {
+        $cDisk = Get-Partition -DriveLetter C | Get-Disk
+        $cPartition = Get-Partition -DriveLetter C
+
+        # Only extend if there’s free/unallocated space
+        $sizeRemaining = ($cDisk | Get-PartitionSupportedSize -PartitionNumber $cPartition.PartitionNumber)
+        if ($sizeRemaining.SizeMax -gt $cPartition.Size) {
+            Resize-Partition -DriveLetter C -Size $sizeRemaining.SizeMax
+            Write-Output "C: drive extended to maximum available size."
+        } else {
+            Write-Output "No unallocated space to extend C: drive."
+        }
+    } catch {
+        Write-Warning "Failed to extend C: drive: $_"
+    }
 
     # --- Check for admin privileges ---
     $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -497,15 +530,13 @@ try {
     Add-Content -Path $installLog -Value "RDS setup completed at $(Get-Date)"
     Write-Host "RDS setup finished. Check $installLog for details."
 
-    Write-Output "PostWindowsSetup completed successfully."
-} catch {
-    Write-Output "PostWindowsSetup encountered a fatal error: $_"
-}
 '@  # must be at column 0
 
 try {
     $helperContent | Out-File -FilePath $helperPath -Encoding UTF8 -Force
     Add-Content -Path $installLog -Value "Wrote helper script to $helperPath"
+    # Right after writing the helper script
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$helperPath`"" -Wait
 } catch {
     Add-Content -Path $installLog -Value "Failed to write helper script: $_"
 }
@@ -523,6 +554,7 @@ try {
     # Define task settings with proper Windows version and description
     # Create a ScheduledTaskSettingsSet for Windows 10
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
+    # $settings.Description = "Post-Windows setup script: configures network, disables popups, and creates Windows Manager shortcut"
     # $settings.Author = "Windows 10 Developer"
     # Define the principal (user context) for the task:
     # RunLevel Highest runs with elevated privileges
@@ -530,6 +562,8 @@ try {
     # Register (create) the scheduled task with the defined name, action, trigger, and principal
     # -Force ensures it overwrites any existing task with the same name
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force
+
+    
 } catch {
     # If anything fails, log the error message to the install log
     Add-Content -Path $installLog -Value "Failed to register scheduled task: $_"
@@ -538,6 +572,7 @@ try {
 # --Disable NlaSvc before reboot---
 # Do NOT stop it immediately (causes timeout in provisioning)
 Set-Service -Name "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
+
 
 Add-Content -Path $installLog -Value "Setup script completed at $(Get-Date)"
 '''

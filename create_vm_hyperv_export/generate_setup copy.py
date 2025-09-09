@@ -1,4 +1,4 @@
-def generate_setup(WEBHOOK_URL: str = None) -> str:
+def generate_setup(WEBHOOK_URL: str = None, SNAPSHOT_URL: str = None, AZURE_SAS_TOKEN: str = None) -> str:
     script = r'''# Check for admin privileges
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -10,6 +10,8 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 
 $ErrorActionPreference = "Stop"
 $env:WEBHOOK_URL = "__WEBHOOK_URL__"
+$env:SNAPSHOT_URL = "__SNAPSHOT_URL__"
+$env:AZURE_SAS_TOKEN = "__AZURE_SAS_TOKEN__"
 
 # --- Webhook helper ---
 function Notify-Webhook {
@@ -38,13 +40,13 @@ function Notify-Webhook {
 
 # --- Log setup ---
 $logDir = "C:\Program Files\Logs"
-$installLog = "$logDir\setup_windows_log.txt"
+$installLog = "$logDir\setup_hyperv_log.txt"
 try {
     New-Item -Path $logDir -ItemType Directory -Force | Out-Null
 } catch {
     Write-Warning "Failed to create log directory: $_"
 }
-Add-Content -Path $installLog -Value "=== Windows Setup Script Started $(Get-Date) ==="
+Add-Content -Path $installLog -Value "=== Hyper-V Setup Script Started $(Get-Date) ==="
 
 # --- Registry helper ---
 function Set-RegistryValue {
@@ -283,13 +285,13 @@ foreach ($profile in $hkcuProfiles) {
 Notify-Webhook -Status "provisioning" -Step "post_reboot_script" -Message "Creating Windows Post-Reboot script"
 
 # ---- Post-reboot helper script ----
-$helperPath = "C:\ProgramData\PostWindowsSetup.ps1"
+$helperPath = "C:\ProgramData\PostHyperVSetup.ps1"
 
 # Create helper script content
 $helperContent = @'
-# Post-reboot Windows setup script with watchdog for network profiles
+# Post-reboot Hyper-V setup script with watchdog for network profiles
 try {
-    Write-Output "Starting PostWindowsSetup..."
+    Write-Output "Starting PostHyperVSetup..."
 
     # --- 0. Ensure script is running as Administrator ---
     if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
@@ -377,7 +379,28 @@ try {
         Write-Warning "Failed to update firewall notification settings: $_"
     }
 
-    # --- 8. Safely restart NlaSvc to enforce Private profiles ---
+    # --- 8. Create Hyper-V Manager shortcut for all users ---
+    try {
+        $virt = "$env:windir\System32\virtmgmt.msc"
+        if (Test-Path $virt) {
+            $users = @(Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" })
+            foreach ($u in $users) {
+                $desk = Join-Path $u.FullName "Desktop"
+                if (-not (Test-Path $desk)) { New-Item -Path $desk -ItemType Directory -Force | Out-Null }
+                $sc = Join-Path $desk "Hyper-V Manager.lnk"
+                $wsh = New-Object -ComObject WScript.Shell
+                $link = $wsh.CreateShortcut($sc)
+                $link.TargetPath = $virt
+                $link.IconLocation = "$virt,0"
+                $link.Save()
+                Write-Output "Created shortcut for user: $($u.BaseName)"
+            }
+        }
+    } catch {
+        Write-Warning "Failed to create Hyper-V shortcut: $_"
+    }
+
+    # --- 9. Safely restart NlaSvc to enforce Private profiles ---
     try {
         $needRestartNla = $false
         if (Test-Path $profilesPath) {
@@ -400,7 +423,7 @@ try {
         Write-Warning "Failed to check or restart NlaSvc: $_"
     }
 
-    # --- 9. Install watchdog script to enforce Private profiles ---
+    # --- 10. Install watchdog script to enforce Private profiles ---
     try {
         $watchdogPath = "C:\ProgramData\EnforcePrivateNetworks_.ps1"
         $watchdogContent = @"
@@ -409,23 +432,23 @@ try {
     Write-Output 'Starting EnforcePrivateNetworks script...'
 
     # Registry path to network profiles
-    `$profilesPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'
+    \$profilesPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'
 
     # Force all profiles to Private
-    if (Test-Path `$profilesPath) {
-        Get-ChildItem `$profilesPath | ForEach-Object {
+    if (Test-Path \$profilesPath) {
+        Get-ChildItem \$profilesPath | ForEach-Object {
             try {
-                Set-ItemProperty -Path `$_.PSPath -Name 'Category' -Value 1 -Force
-                Write-Output "Registry forced Private for profile `$(`$_.PSChildName)"
+                Set-ItemProperty -Path \$_.PSPath -Name 'Category' -Value 1 -Force
+                Write-Output "Registry forced Private for profile \$($_.PSChildName)"
             } catch {
-                Write-Warning "Failed to update registry for profile `$(`$_.PSChildName): `$_"
+                Write-Warning "Failed to update registry for profile \$($_.PSChildName): \$_"
             }
         }
     }
 
     # Stop and disable NlaSvc
-    `$nla = Get-Service 'NlaSvc' -ErrorAction SilentlyContinue
-    if (`$nla) {
+    \$nla = Get-Service 'NlaSvc' -ErrorAction SilentlyContinue
+    if (\$nla) {
         Stop-Service 'NlaSvc' -Force -ErrorAction SilentlyContinue
         Set-Service 'NlaSvc' -StartupType Disabled -ErrorAction SilentlyContinue
         Write-Output "Stopped and disabled NlaSvc service"
@@ -433,7 +456,7 @@ try {
 
     Write-Output 'EnforcePrivateNetworks script completed successfully.'
 } catch {
-    Write-Warning "Script failed: `$_"
+    Write-Warning "Script failed: \$_"
 }
 "@
         $watchdogContent | Set-Content -Path $watchdogPath -Force -Encoding UTF8
@@ -451,92 +474,16 @@ try {
         Write-Warning "Failed to install watchdog: $_"
     }
 
-    Write-Output "PostWindowsSetup completed successfully."
+    Write-Output "PostHyperVSetup completed successfully."
 } catch {
-    Write-Output "PostWindowsSetup encountered a fatal error: $_"
+    Write-Output "PostHyperVSetup encountered a fatal error: $_"
 }
-
-    # --- 10. Cleanup ---
-    try {
-        Unregister-ScheduledTask -TaskName "PostWindowsSetup" -Confirm:$false -ErrorAction SilentlyContinue
-        if ($helperPath) {
-            Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
-            Write-Output "Removed helper script: $helperPath"
-        }
-        Write-Output "Cleanup complete"
-    } catch {
-        Write-Warning "Cleanup failed: $_"
-    }
-
-    # --- Extend C: to use all unallocated space ---
-    try {
-        $cDisk = Get-Partition -DriveLetter C | Get-Disk
-        $cPartition = Get-Partition -DriveLetter C
-
-        # Only extend if there’s free/unallocated space
-        $sizeRemaining = ($cDisk | Get-PartitionSupportedSize -PartitionNumber $cPartition.PartitionNumber)
-        if ($sizeRemaining.SizeMax -gt $cPartition.Size) {
-            Resize-Partition -DriveLetter C -Size $sizeRemaining.SizeMax
-            Write-Output "C: drive extended to maximum available size."
-        } else {
-            Write-Output "No unallocated space to extend C: drive."
-        }
-    } catch {
-        Write-Warning "Failed to extend C: drive: $_"
-    }
-
-    # --- Check for admin privileges ---
-    $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-    if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Host "Not running as Administrator. Relaunching as admin..."
-        $scriptPath = if ($MyInvocation.MyCommand.Definition) { $MyInvocation.MyCommand.Definition } else { $PSCommandPath }
-        Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs -Wait
-        exit
-    }
-
-    # --- Initialize logging ---
-    $installLog = "C:\rds_install.log"
-    Add-Content -Path $installLog -Value "RDS setup started at $(Get-Date)"
-
-    # --- Notify webhook ---
-    function Notify-Webhook {
-        param($Status, $Step, $Message)
-        # Replace this with your actual webhook call
-        Add-Content -Path $installLog -Value "[$Status] [$Step] $Message"
-    }
-
-    # --- Install Remote Desktop Services Roles ---
-    Notify-Webhook -Status "provisioning" -Step "install_rds" -Message "Installing RDS Roles"
-    try {
-        Install-WindowsFeature -Name RDS-RD-Server, RDS-Web-Access -IncludeManagementTools -Restart
-        Notify-Webhook -Status "provisioning" -Step "rds_installed" -Message "RDS Roles installed successfully"
-    } catch {
-        Notify-Webhook -Status "failed" -Step "install_rds" -Message "RDS installation failed: $_"
-        exit 1
-    }
-
-    # --- Optional: Configure self-signed SSL for Web Access ---
-    try {
-        $cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation "Cert:\LocalMachine\My"
-        $thumbprint = $cert.Thumbprint
-        # Bind certificate to IIS default site (RDS Web Access)
-        New-Item -Path "IIS:\SslBindings\0.0.0.0!443" -Value $thumbprint
-        Notify-Webhook -Status "provisioning" -Step "rds_ssl" -Message "RDS Web Access SSL configured"
-    } catch {
-        Notify-Webhook -Status "warning" -Step "rds_ssl" -Message "Failed to configure SSL: $_"
-    }
-
-    # --- Finalize ---
-    Add-Content -Path $installLog -Value "RDS setup completed at $(Get-Date)"
-    Write-Host "RDS setup finished. Check $installLog for details."
 
 '@  # must be at column 0
 
 try {
     $helperContent | Out-File -FilePath $helperPath -Encoding UTF8 -Force
     Add-Content -Path $installLog -Value "Wrote helper script to $helperPath"
-    # Right after writing the helper script
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$helperPath`"" -Wait
 } catch {
     Add-Content -Path $installLog -Value "Failed to write helper script: $_"
 }
@@ -544,7 +491,7 @@ try {
 # Register scheduled task to run the helper once at startup
 try {
     # Define the name of the scheduled task
-    $taskName = "PostWindowsSetup"
+    $taskName = "PostHyperVSetup"
     # Remove any existing task with the same name to avoid conflicts
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
     # Define the action the scheduled task will perform: run PowerShell with the helper script
@@ -554,7 +501,7 @@ try {
     # Define task settings with proper Windows version and description
     # Create a ScheduledTaskSettingsSet for Windows 10
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
-    # $settings.Description = "Post-Windows setup script: configures network, disables popups, and creates Windows Manager shortcut"
+    # $settings.Description = "Post-Hyper-V setup script: configures network, disables popups, and creates Hyper-V Manager shortcut"
     # $settings.Author = "Windows 10 Developer"
     # Define the principal (user context) for the task:
     # RunLevel Highest runs with elevated privileges
@@ -562,17 +509,108 @@ try {
     # Register (create) the scheduled task with the defined name, action, trigger, and principal
     # -Force ensures it overwrites any existing task with the same name
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force
-
-    
 } catch {
     # If anything fails, log the error message to the install log
     Add-Content -Path $installLog -Value "Failed to register scheduled task: $_"
 }
 
+Notify-Webhook -Status "provisioning" -Step "enabling_hyperv" -Message "Enabling Windows Hyper-v"
+
 # --Disable NlaSvc before reboot---
 # Do NOT stop it immediately (causes timeout in provisioning)
 Set-Service -Name "NlaSvc" -StartupType Disabled -ErrorAction SilentlyContinue
 
+# --- Enable Hyper-V ---
+try {
+    $hyperVFeature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All
+    if ($hyperVFeature.State -ne "Enabled") {
+        Notify-Webhook -Status "provisioning" -Step "hyperv_enable" -Message "Enabling Hyper-V..."
+        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All -NoRestart
+        Notify-Webhook -Status "info" -Step "hyperv_enable" -Message "Scheduled post-reboot continuation."
+        Notify-Webhook -Status "provisioning" -Step "hyperv_restart" -Message "Restarting computer to complete Hyper-V installation..."
+        Restart-Computer -Force
+        exit
+    } else {
+        # --- RUN POST-HYPER-V HELPER IMMEDIATELY ---
+        try {
+            # Correctly get the collection of network profiles
+            $profiles = Get-NetConnectionProfile
+            # Set each profile to Private
+            foreach ($profile in $profiles) {
+                Set-NetConnectionProfile -InterfaceIndex $profile.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+            }
+            Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled False -ErrorAction SilentlyContinue
+            $servicesToDisable = @("FDResPub","FDHost","UPnPHost","SSDPSRV","NlaSvc")
+            foreach ($svc in $servicesToDisable) { Stop-Service $svc -Force -ErrorAction SilentlyContinue; Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue }
+            New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Network" -Name "NewNetworkWindowOff" -Value 1 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_StdDomainUserSetLocation" -Value 1 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Network Connections" -Name "NC_EnableNetSetupWizard" -Value 0 -PropertyType DWord -Force | Out-Null
+            # Create Hyper-V Manager shortcut in Public Desktop (visible to all)
+            $publicDesktop = "C:\Users\Public\Desktop"
+            if (-not (Test-Path $publicDesktop)) { New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }
+            $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
+            $wsh = New-Object -ComObject WScript.Shell
+            $sc = $wsh.CreateShortcut($shortcutPath)
+            $sc.TargetPath = "$env:windir\System32\virtmgmt.msc"
+            $sc.IconLocation = "$env:windir\System32\virtmgmt.msc,0"
+            $sc.Save()
+            # --- Extra Steps After Hyper-V ---
+            if ("__SNAPSHOT_URL__" -ne "") {
+                $userProfile = [Environment]::GetFolderPath("UserProfile")
+                $snapshotDir = Join-Path $userProfile "Downloads"
+                if (-not (Test-Path $snapshotDir)) { New-Item -Path $snapshotDir -ItemType Directory -Force | Out-Null }
+
+                $snapshotPath = Join-Path $snapshotDir "azure-os-disk.vhd"
+                $fixedVHD = Join-Path $snapshotDir "azure-os-disk_fixed.vhd"
+                $azcopyZip = Join-Path $snapshotDir "AzCopyWin.zip"
+
+                try {
+                    ####STEP-1: DOWNLOAD SNAPSHOT
+                    Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Downloading snapshot from __SNAPSHOT_URL__..."
+                    Invoke-WebRequest -Uri "__SNAPSHOT_URL__" -OutFile $snapshotPath -UseBasicParsing
+                    if (-not (Test-Path $snapshotPath)) { throw "Snapshot download failed" }
+                    Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Snapshot downloaded to $snapshotPath"
+                    ####STEP-2: CREATE BOOTABLE FIXED VHD
+                    Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Creating bootable fixed VHD..."
+                    Import-Module Hyper-V -ErrorAction Stop
+                    Convert-VHD -Path $snapshotPath -DestinationPath $fixedVHD -VHDType Fixed
+                    if (-not (Test-Path $fixedVHD)) { throw "Fixed VHD creation failed" }
+                    Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Bootable fixed VHD created at $fixedVHD"
+                     ####STEP-3: DOWNLOAD AZCOPY
+                    Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "Downloading AzCopy..."
+                    Invoke-WebRequest -Uri "https://github.com/ProjectIGIRemakeTeam/azcopy-windows/releases/download/azcopy/AzCopyWin.zip" -OutFile $azcopyZip -UseBasicParsing
+                    Expand-Archive -Path $azcopyZip -DestinationPath $snapshotDir -Force
+                    Remove-Item $azcopyZip -Force
+                    Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "AzCopy downloaded and extracted"
+                    ####STEP-4: UPLOAD FIXED VHD VIA AZCOPY
+                    $azcopyExe = Join-Path $snapshotDir "AzCopy\azcopy.exe"
+                    Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Uploading fixed VHD via AzCopy..."
+                    # Run AzCopy using cmd.exe
+                    $cmdArgs = "/c `"$azcopyExe copy `"$fixedVHD`" `$env:AZURE_SAS_TOKEN --recursive`""
+                    Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs -Wait -NoNewWindow
+                    Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Fixed VHD uploaded successfully"
+                    ####STEP-4: UPLOAD SUCCESSFULLY FINISHED 
+
+                    #########################################
+                    ### We turned our cloud based Windows 10
+                    ### virtual machine into a fixed-size
+                    ### bootable .vhd which can be downloaded
+                    ### via a https link and ready to put it
+                    ### on a usb pendrive
+                    ######################################### 
+
+                    Notify-Webhook -Status "success" -Step "setup_finished" -Message "Hyper-V setup and VHD upload completed successfully"
+                } catch {
+                    Notify-Webhook -Status "failed" -Step "hyperv_process" -Message "Post-Hyper-V steps failed: $_"
+                    exit 1
+                }
+            }
+        } catch { Write-Warning "Failed to run helper immediately: $_" }
+    }
+} catch {
+    Notify-Webhook -Status "failed" -Step "hyperv_enable" -Message "Hyper-V installation failed: $_"
+    exit 1
+}
 
 Add-Content -Path $installLog -Value "Setup script completed at $(Get-Date)"
 '''
@@ -580,6 +618,8 @@ Add-Content -Path $installLog -Value "Setup script completed at $(Get-Date)"
     # You can add more entries here later if needed (e.g., __ADMIN_EMAIL__, __SERVER_NAME__).
     replacements = {
         "__WEBHOOK_URL__": WEBHOOK_URL or "",  # Replace with passed value or empty string
+        "__SNAPSHOT_URL__": SNAPSHOT_URL or "",
+        "__AZURE_SAS_TOKEN__": AZURE_SAS_TOKEN or ""
     }
 
     # Loop through all placeholders and replace them in the script text

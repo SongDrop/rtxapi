@@ -382,19 +382,16 @@ try {
     # --- 8. Create Hyper-V Manager shortcut for all users ---
     try {
         $virt = "$env:windir\System32\virtmgmt.msc"
+        $publicDesktop = "C:\Users\Public\Desktop"
         if (Test-Path $virt) {
-            $users = @(Get-ChildItem "C:\Users" -Directory | Where-Object { Test-Path "$($_.FullName)\NTUSER.DAT" })
-            foreach ($u in $users) {
-                $desk = Join-Path $u.FullName "Desktop"
-                if (-not (Test-Path $desk)) { New-Item -Path $desk -ItemType Directory -Force | Out-Null }
-                $sc = Join-Path $desk "Hyper-V Manager.lnk"
-                $wsh = New-Object -ComObject WScript.Shell
-                $link = $wsh.CreateShortcut($sc)
-                $link.TargetPath = $virt
-                $link.IconLocation = "$virt,0"
-                $link.Save()
-                Write-Output "Created shortcut for user: $($u.BaseName)"
-            }
+            if (-not (Test-Path $publicDesktop)) { New-Item -Path $publicDesktop -ItemType Directory -Force | Out-Null }
+            $shortcutPath = Join-Path $publicDesktop "Hyper-V Manager.lnk"
+            $wsh = New-Object -ComObject WScript.Shell
+            $sc = $wsh.CreateShortcut($shortcutPath)
+            $sc.TargetPath = $virt
+            $sc.IconLocation = "$virt,0"
+            $sc.Save()
+            Write-Output "Created Hyper-V Manager shortcut in Public Desktop"
         }
     } catch {
         Write-Warning "Failed to create Hyper-V shortcut: $_"
@@ -432,23 +429,23 @@ try {
     Write-Output 'Starting EnforcePrivateNetworks script...'
 
     # Registry path to network profiles
-    \$profilesPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'
+    `$profilesPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\Profiles'
 
     # Force all profiles to Private
-    if (Test-Path \$profilesPath) {
-        Get-ChildItem \$profilesPath | ForEach-Object {
+    if (Test-Path `$profilesPath) {
+        Get-ChildItem `$profilesPath | ForEach-Object {
             try {
-                Set-ItemProperty -Path \$_.PSPath -Name 'Category' -Value 1 -Force
-                Write-Output "Registry forced Private for profile \$($_.PSChildName)"
+                Set-ItemProperty -Path `$_.PSPath -Name 'Category' -Value 1 -Force
+                Write-Output "Registry forced Private for profile `$(`$_.PSChildName)"
             } catch {
-                Write-Warning "Failed to update registry for profile \$($_.PSChildName): \$_"
+                Write-Warning "Failed to update registry for profile `$(`$_.PSChildName): `$_"
             }
         }
     }
 
     # Stop and disable NlaSvc
-    \$nla = Get-Service 'NlaSvc' -ErrorAction SilentlyContinue
-    if (\$nla) {
+    `$nla = Get-Service 'NlaSvc' -ErrorAction SilentlyContinue
+    if (`$nla) {
         Stop-Service 'NlaSvc' -Force -ErrorAction SilentlyContinue
         Set-Service 'NlaSvc' -StartupType Disabled -ErrorAction SilentlyContinue
         Write-Output "Stopped and disabled NlaSvc service"
@@ -456,7 +453,7 @@ try {
 
     Write-Output 'EnforcePrivateNetworks script completed successfully.'
 } catch {
-    Write-Warning "Script failed: \$_"
+    Write-Warning "Script failed: `$_"
 }
 "@
         $watchdogContent | Set-Content -Path $watchdogPath -Force -Encoding UTF8
@@ -479,11 +476,98 @@ try {
     Write-Output "PostHyperVSetup encountered a fatal error: $_"
 }
 
+    # --- 12. Cleanup ---
+    try {
+        Unregister-ScheduledTask -TaskName "PostHyperVSetup" -Confirm:$false -ErrorAction SilentlyContinue
+        if ($helperPath) {
+            Remove-Item -Path "$helperPath" -Force -ErrorAction SilentlyContinue
+            Write-Output "Removed helper script: $helperPath"
+        }
+        Write-Output "Cleanup complete"
+    } catch {
+        Write-Warning "Cleanup failed: $_"
+    }
+
+    # --- Extend C: to use all unallocated space ---
+    try {
+        $cDisk = Get-Partition -DriveLetter C | Get-Disk
+        $cPartition = Get-Partition -DriveLetter C
+
+        # Only extend if there’s free/unallocated space
+        $sizeRemaining = ($cDisk | Get-PartitionSupportedSize -PartitionNumber $cPartition.PartitionNumber)
+        if ($sizeRemaining.SizeMax -gt $cPartition.Size) {
+            Resize-Partition -DriveLetter C -Size $sizeRemaining.SizeMax
+            Write-Output "C: drive extended to maximum available size."
+        } else {
+            Write-Output "No unallocated space to extend C: drive."
+        }
+    } catch {
+        Write-Warning "Failed to extend C: drive: $_"
+    }
+
+    # --- Extra Steps After Hyper-V ---
+    if ("__SNAPSHOT_URL__" -ne "") {
+        $userProfile = [Environment]::GetFolderPath("UserProfile")
+        $snapshotDir = Join-Path $userProfile "Downloads"
+        if (-not (Test-Path $snapshotDir)) { New-Item -Path $snapshotDir -ItemType Directory -Force | Out-Null }
+
+        $snapshotPath = Join-Path $snapshotDir "azure-os-disk.vhd"
+        $fixedVHD = Join-Path $snapshotDir "azure-os-disk_fixed.vhd"
+        $azcopyZip = Join-Path $snapshotDir "AzCopyWin.zip"
+
+        try {
+            ####STEP-1: DOWNLOAD SNAPSHOT
+            Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Downloading snapshot from __SNAPSHOT_URL__..."
+            Invoke-WebRequest -Uri "__SNAPSHOT_URL__" -OutFile $snapshotPath -UseBasicParsing
+            if (-not (Test-Path $snapshotPath)) { throw "Snapshot download failed" }
+            Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Snapshot downloaded to $snapshotPath"
+            
+            ####STEP-2: CREATE BOOTABLE FIXED VHD
+            Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Creating bootable fixed VHD..."
+            Import-Module Hyper-V -ErrorAction Stop
+            Convert-VHD -Path $snapshotPath -DestinationPath $fixedVHD -VHDType Fixed
+            if (-not (Test-Path $fixedVHD)) { throw "Fixed VHD creation failed" }
+            Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Bootable fixed VHD created at $fixedVHD"
+            
+            ####STEP-3: DOWNLOAD AZCOPY
+            Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "Downloading AzCopy..."
+            Invoke-WebRequest -Uri "https://github.com/ProjectIGIRemakeTeam/azcopy-windows/releases/download/azcopy/AzCopyWin.zip" -OutFile $azcopyZip -UseBasicParsing
+            Expand-Archive -Path $azcopyZip -DestinationPath $snapshotDir -Force
+            Remove-Item $azcopyZip -Force
+            Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "AzCopy downloaded and extracted"
+            
+            ####STEP-4: UPLOAD FIXED VHD VIA AZCOPY
+            $azcopyExe = Join-Path $snapshotDir "AzCopy\azcopy.exe"
+            Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Uploading fixed VHD via AzCopy..."
+            
+            # Run AzCopy using cmd.exe
+            $cmdArgs = "/c `"$azcopyExe copy `"$fixedVHD`" `$env:AZURE_SAS_TOKEN --recursive`""
+            Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs -Wait -NoNewWindow
+            Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Fixed VHD uploaded successfully"
+            ####STEP-4: UPLOAD SUCCESSFULLY FINISHED 
+
+            #########################################
+            ### We turned our cloud based Windows 10
+            ### virtual machine into a fixed-size
+            ### bootable .vhd which can be downloaded
+            ### via a https link and ready to put it
+            ### on a usb pendrive
+            ######################################### 
+
+            Notify-Webhook -Status "success" -Step "setup_finished" -Message "Hyper-V setup and VHD upload completed successfully"
+        } catch {
+            Notify-Webhook -Status "failed" -Step "hyperv_process" -Message "Post-Hyper-V steps failed: $_"
+            exit 1
+        }
+    }
+
 '@  # must be at column 0
 
 try {
     $helperContent | Out-File -FilePath $helperPath -Encoding UTF8 -Force
     Add-Content -Path $installLog -Value "Wrote helper script to $helperPath"
+    # Right after writing the helper script
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$helperPath`"" -Wait
 } catch {
     Add-Content -Path $installLog -Value "Failed to write helper script: $_"
 }
@@ -509,6 +593,8 @@ try {
     # Register (create) the scheduled task with the defined name, action, trigger, and principal
     # -Force ensures it overwrites any existing task with the same name
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force
+
+    
 } catch {
     # If anything fails, log the error message to the install log
     Add-Content -Path $installLog -Value "Failed to register scheduled task: $_"
@@ -554,57 +640,6 @@ try {
             $sc.TargetPath = "$env:windir\System32\virtmgmt.msc"
             $sc.IconLocation = "$env:windir\System32\virtmgmt.msc,0"
             $sc.Save()
-            # --- Extra Steps After Hyper-V ---
-            if ("__SNAPSHOT_URL__" -ne "") {
-                $userProfile = [Environment]::GetFolderPath("UserProfile")
-                $snapshotDir = Join-Path $userProfile "Downloads"
-                if (-not (Test-Path $snapshotDir)) { New-Item -Path $snapshotDir -ItemType Directory -Force | Out-Null }
-
-                $snapshotPath = Join-Path $snapshotDir "azure-os-disk.vhd"
-                $fixedVHD = Join-Path $snapshotDir "azure-os-disk_fixed.vhd"
-                $azcopyZip = Join-Path $snapshotDir "AzCopyWin.zip"
-
-                try {
-                    ####STEP-1: DOWNLOAD SNAPSHOT
-                    Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Downloading snapshot from __SNAPSHOT_URL__..."
-                    Invoke-WebRequest -Uri "__SNAPSHOT_URL__" -OutFile $snapshotPath -UseBasicParsing
-                    if (-not (Test-Path $snapshotPath)) { throw "Snapshot download failed" }
-                    Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Snapshot downloaded to $snapshotPath"
-                    ####STEP-2: CREATE BOOTABLE FIXED VHD
-                    Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Creating bootable fixed VHD..."
-                    Import-Module Hyper-V -ErrorAction Stop
-                    Convert-VHD -Path $snapshotPath -DestinationPath $fixedVHD -VHDType Fixed
-                    if (-not (Test-Path $fixedVHD)) { throw "Fixed VHD creation failed" }
-                    Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Bootable fixed VHD created at $fixedVHD"
-                     ####STEP-3: DOWNLOAD AZCOPY
-                    Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "Downloading AzCopy..."
-                    Invoke-WebRequest -Uri "https://github.com/ProjectIGIRemakeTeam/azcopy-windows/releases/download/azcopy/AzCopyWin.zip" -OutFile $azcopyZip -UseBasicParsing
-                    Expand-Archive -Path $azcopyZip -DestinationPath $snapshotDir -Force
-                    Remove-Item $azcopyZip -Force
-                    Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "AzCopy downloaded and extracted"
-                    ####STEP-4: UPLOAD FIXED VHD VIA AZCOPY
-                    $azcopyExe = Join-Path $snapshotDir "AzCopy\azcopy.exe"
-                    Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Uploading fixed VHD via AzCopy..."
-                    # Run AzCopy using cmd.exe
-                    $cmdArgs = "/c `"$azcopyExe copy `"$fixedVHD`" `$env:AZURE_SAS_TOKEN --recursive`""
-                    Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs -Wait -NoNewWindow
-                    Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Fixed VHD uploaded successfully"
-                    ####STEP-4: UPLOAD SUCCESSFULLY FINISHED 
-
-                    #########################################
-                    ### We turned our cloud based Windows 10
-                    ### virtual machine into a fixed-size
-                    ### bootable .vhd which can be downloaded
-                    ### via a https link and ready to put it
-                    ### on a usb pendrive
-                    ######################################### 
-
-                    Notify-Webhook -Status "success" -Step "setup_finished" -Message "Hyper-V setup and VHD upload completed successfully"
-                } catch {
-                    Notify-Webhook -Status "failed" -Step "hyperv_process" -Message "Post-Hyper-V steps failed: $_"
-                    exit 1
-                }
-            }
         } catch { Write-Warning "Failed to run helper immediately: $_" }
     }
 } catch {
