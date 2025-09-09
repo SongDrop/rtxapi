@@ -8,6 +8,7 @@ import aiohttp
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv()
+import urllib.parse
 import random
 import string
 import shutil
@@ -373,10 +374,11 @@ async def snapshot_vm_background(credentials, vm_name, resource_group, location,
             sender_email = os.environ.get('SENDER_EMAIL')
             recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
 
+            snapshot_sas_encoded = urllib.parse.quote(snapshot_sas_url, safe='')
             html_content = html_email.HTMLEmail(
                 snapshot_name=snapshot_name,
                 created_at=datetime.utcnow().isoformat(),
-                snapshot_url=snapshot_sas_url
+                snapshot_url=snapshot_sas_encoded
             )
 
             await html_email_send.send_html_email_smtp(
@@ -401,7 +403,7 @@ async def snapshot_vm_background(credentials, vm_name, resource_group, location,
                     "details": {
                         "step": "completed",
                         "message": "VM provisioning successful",
-                        "url": f"https://cdn.sdappnet.cloud/rtx/snapshot.html?snapshot_name={snapshot_name}&created_at={datetime.utcnow().isoformat()}&snapshot_url={snapshot_sas_url}",
+                        "url": f"https://cdn.sdappnet.cloud/rtx/snapshot.html?snapshot_name={snapshot_name}&created_at={datetime.utcnow().isoformat()}&snapshot_url={snapshot_sas_encoded}",
                         "timestamp": datetime.utcnow().isoformat()
                     }
                 }

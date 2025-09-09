@@ -99,30 +99,25 @@
     </div>
 
     <script>
-        // Parse URL query parameters
-        const params = new URLSearchParams(window.location.search);
-        const snapshotName = params.get('snapshot_name') || 'N/A';
-        const createdAt = params.get('created_at') || 'N/A';
+        const query = window.location.search.substring(1); // remove '?'
+        const snapshotName = query.match(/snapshot_name=([^&]+)/)?.[1] || 'N/A';
+        const createdAt = query.match(/created_at=([^&]+)/)?.[1] || 'N/A';
 
-        // Try to reconstruct full snapshot URL
-        let snapshotURL = params.get('snapshot_url') || '#';
-
-        // If the SAS wasn't encoded properly, try to rebuild it from the raw query string
-        if (snapshotURL && snapshotURL.includes("http") && !snapshotURL.includes("&sig=")) {
-            const fullQuery = window.location.search.substring(1); // remove "?"
-            const match = fullQuery.match(/snapshot_url=(.+)/);
-            if (match) {
-                snapshotURL = decodeURIComponent(match[1]);
-            }
+        // Rebuild snapshot_url from the first occurrence of 'snapshot_url='
+        let snapshotURL = '#';
+        const snapshotMatch = query.match(/snapshot_url=(https?:\/\/.+)/);
+        if (snapshotMatch) {
+            snapshotURL = decodeURIComponent(snapshotMatch[1]);
         }
 
-        // Populate HTML elements
         document.getElementById('snapshot_name').textContent = snapshotName;
         document.getElementById('created_at').textContent = createdAt;
         const snapshotLink = document.getElementById('snapshot_url');
         snapshotLink.href = snapshotURL;
         snapshotLink.textContent = snapshotURL;
     </script>
+
+
 
 </body>
 
