@@ -315,8 +315,8 @@ async def snapshot_vm_background(credentials, vm_name, resource_group, location,
             ).result()
         )
 
-        # accessSAS is the property containing the SAS URL
-        snapshot_sas_url = snapshot_access.accessSAS
+        # access_sas is the correct property
+        snapshot_sas_url = snapshot_access.access_sas
         print(f"SAS URL generated: {snapshot_sas_url}")
     
 
