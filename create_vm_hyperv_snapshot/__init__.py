@@ -378,7 +378,7 @@ async def snapshot_vm_background(credentials, vm_name, resource_group, location,
             html_content = html_email.HTMLEmail(
                 snapshot_name=snapshot_name,
                 created_at=datetime.utcnow().isoformat(),
-                snapshot_url=snapshot_sas_encoded
+                snapshot_url=snapshot_sas_url
             )
 
             await html_email_send.send_html_email_smtp(

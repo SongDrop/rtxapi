@@ -99,23 +99,33 @@
     </div>
 
     <script>
-        const query = window.location.search.substring(1); // remove '?'
-        const snapshotName = query.match(/snapshot_name=([^&]+)/)?.[1] || 'N/A';
-        const createdAt = query.match(/created_at=([^&]+)/)?.[1] || 'N/A';
-
-        // Rebuild snapshot_url from the first occurrence of 'snapshot_url='
-        let snapshotURL = '#';
-        const snapshotMatch = query.match(/snapshot_url=(https?:\/\/.+)/);
-        if (snapshotMatch) {
-            snapshotURL = decodeURIComponent(snapshotMatch[1]);
+        function getQueryParam(name) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(name);
         }
 
-        document.getElementById('snapshot_name').textContent = snapshotName;
-        document.getElementById('created_at').textContent = createdAt;
-        const snapshotLink = document.getElementById('snapshot_url');
-        snapshotLink.href = snapshotURL;
-        snapshotLink.textContent = snapshotURL;
+        let snapshotURL = getQueryParam('snapshot_url') || '#';
+
+        if (snapshotURL !== '#') {
+            // First decode
+            snapshotURL = decodeURIComponent(snapshotURL);
+
+            // If it still contains % signs, decode again (handles double encoding)
+            if (snapshotURL.includes('%')) {
+                snapshotURL = decodeURIComponent(snapshotURL);
+            }
+        }
+
+        // Now snapshotURL is fully usable
+        console.log("Decoded SAS URL:", snapshotURL);
+
+        document.getElementById('snapshot_url').href = snapshotURL;
+        document.getElementById('snapshot_url').textContent = snapshotURL;
     </script>
+
+
+
+
 
 
 
