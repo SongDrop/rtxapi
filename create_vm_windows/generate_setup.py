@@ -499,14 +499,7 @@ try {
     $installLog = "C:\rds_install.log"
     Add-Content -Path $installLog -Value "RDS setup started at $(Get-Date)"
 
-    # --- Notify webhook ---
-    function Notify-Webhook {
-        param($Status, $Step, $Message)
-        # Replace this with your actual webhook call
-        Add-Content -Path $installLog -Value "[$Status] [$Step] $Message"
-    }
-
-    # --- Install Remote Desktop Services Roles ---
+    # --- Install RDS Roles ---
     Notify-Webhook -Status "provisioning" -Step "install_rds" -Message "Installing RDS Roles"
     try {
         Install-WindowsFeature -Name RDS-RD-Server, RDS-Web-Access -IncludeManagementTools -Restart
@@ -516,24 +509,109 @@ try {
         exit 1
     }
 
-    # --- Optional: Configure self-signed SSL for Web Access ---
+    # --- Configure SSL for RDS Web Access ---
     try {
-        if ([string]::IsNullOrEmpty($env:RDS_DOMAIN)) {
-            # No domain specified, use only computer name
-            $cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation "Cert:\LocalMachine\My"
+        $certThumbprint = $null
+
+        # Attempt to find an existing LE certificate in LocalMachine\My
+        $LECert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -like "*$env:RDS_DOMAIN*" } | Sort-Object NotAfter -Descending | Select-Object -First 1
+        if ($LECert) {
+            $certThumbprint = $LECert.Thumbprint
+            Notify-Webhook -Status "provisioning" -Step "rds_ssl" -Message "Found existing LE certificate: $certThumbprint"
         } else {
-            # Domain provided, include it in the certificate
-            $cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME, $env:RDS_DOMAIN -CertStoreLocation "Cert:\LocalMachine\My"
+            # Fallback: generate a self-signed certificate
+            if ([string]::IsNullOrEmpty($env:RDS_DOMAIN)) {
+                $dnsName = $env:COMPUTERNAME
+            } else {
+                $dnsName = "$env:COMPUTERNAME,$env:RDS_DOMAIN"
+            }
+
+            $selfCert = New-SelfSignedCertificate -DnsName $dnsName -CertStoreLocation "Cert:\LocalMachine\My"
+            $certThumbprint = $selfCert.Thumbprint
+            Notify-Webhook -Status "provisioning" -Step "rds_ssl" -Message "Generated self-signed certificate: $certThumbprint"
         }
 
-        $thumbprint = $cert.Thumbprint
         # Bind certificate to IIS default site (RDS Web Access)
-        New-Item -Path "IIS:\SslBindings\0.0.0.0!443" -Value $thumbprint
+        if ($certThumbprint) {
+            New-Item -Path "IIS:\SslBindings\0.0.0.0!443" -Value $certThumbprint -ErrorAction Stop
+            Notify-Webhook -Status "provisioning" -Step "rds_ssl" -Message "Certificate bound to RDS Web Access IIS site"
+        } else {
+            Notify-Webhook -Status "warning" -Step "rds_ssl" -Message "No certificate available for binding"
+        }
 
-        Notify-Webhook -Status "provisioning" -Step "rds_ssl" -Message "RDS Web Access SSL configured"
     } catch {
         Notify-Webhook -Status "warning" -Step "rds_ssl" -Message "Failed to configure SSL: $_"
     }
+
+    # --- Optional: Apply cert to RD Gateway, RD Listener, RD WebAccess, RD Redirector, RD Connection Broker ---
+    param(
+        [Parameter(Position=0,Mandatory=$false)]
+        [string]$RDCB = $env:RDS_DOMAIN,  # Default to provided domain or local
+        [Parameter(Position=1,Mandatory=$false)]
+        [string]$OldCertThumbprint
+    )
+
+    $LocalHost = "$($env:COMPUTERNAME).$((Get-WmiObject Win32_ComputerSystem).Domain)"
+    if (-not $RDCB) { $RDCB = $LocalHost }
+
+    try {
+        if ($RDCB -ne $LocalHost) { $RDCBPS = New-PSSession -ComputerName $RDCB }
+    } catch {
+        Notify-Webhook -Status "failed" -Step "rds_cert_remote" -Message "Could not create remote PowerShell session to RD Connection Broker: $_"
+        return
+    }
+
+    Import-Module RemoteDesktopServices -ErrorAction Stop
+
+    $CertInStore = Get-ChildItem -Path Cert:\LocalMachine\My -Recurse | Where-Object { $_.Thumbprint -eq $certThumbprint } | Select-Object -First 1
+    if ($CertInStore) {
+        # RD Gateway listener
+        try {
+            Set-Item -Path RDS:\GatewayServer\SSLCertificate\Thumbprint -Value $CertInStore.Thumbprint -ErrorAction Stop
+            Restart-Service TSGateway -Force -ErrorAction SilentlyContinue
+            Notify-Webhook -Status "provisioning" -Step "rdgateway" -Message "RD Gateway certificate applied"
+        } catch {
+            Notify-Webhook -Status "failed" -Step "rdgateway" -Message "Failed to apply RD Gateway certificate: $_"
+        }
+
+        # RDP listener
+        try {
+            wmic /namespace:\\root\cimv2\TerminalServices PATH Win32_TSGeneralSetting Set SSLCertificateSHA1Hash="$($CertInStore.Thumbprint)"
+            Notify-Webhook -Status "provisioning" -Step "rd_listener" -Message "RDP listener certificate applied"
+        } catch {
+            Notify-Webhook -Status "failed" -Step "rd_listener" -Message "Failed to apply RDP listener certificate: $_"
+        }
+
+        # Export PFX for RDS roles
+        try {
+            Add-Type -AssemblyName 'System.Web'
+            $tempPasswordPfx = [System.Web.Security.Membership]::GeneratePassword(16, 6) | ConvertTo-SecureString -Force -AsPlainText
+            $tempPfxPath = [IO.Path]::Combine($env:TEMP, [System.Guid]::NewGuid().ToString() + ".pfx")
+            Export-PfxCertificate -Cert $CertInStore -FilePath $tempPfxPath -Force -Password $tempPasswordPfx
+        } catch {
+            Notify-Webhook -Status "failed" -Step "rds_pfx" -Message "Failed to export temporary PFX: $_"
+            return
+        }
+
+        # Apply to RDS roles
+        foreach ($role in @("RDPublishing", "RDWebAccess", "RDRedirector", "RDGateway")) {
+            try {
+                Set-RDCertificate -Role $role -ImportPath $tempPfxPath -Password $tempPasswordPfx -ConnectionBroker $RDCB -Force
+                Notify-Webhook -Status "provisioning" -Step $role -Message "$role certificate applied"
+            } catch {
+                Notify-Webhook -Status "failed" -Step $role -Message "Failed to apply $role certificate: $_"
+            }
+        }
+
+        # Cleanup
+        Remove-Item -Path $tempPfxPath -Force
+        if ($RDCB -ne $LocalHost) { Remove-PSSession $RDCBPS }
+    } else {
+        Notify-Webhook -Status "failed" -Step "rds_cert" -Message "Certificate not found in store"
+    }
+
+    Add-Content -Path $installLog -Value "RDS setup completed at $(Get-Date)"
+
 
     # --- Finalize ---
     Add-Content -Path $installLog -Value "RDS setup completed at $(Get-Date)"
