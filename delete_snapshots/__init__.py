@@ -76,10 +76,12 @@ async def post_status_update(hook_url: str, status_data: dict) -> dict:
     return {"success": False, "error": "Unknown error", "status_url": ""}
 
 
+
 async def main(req: func.HttpRequest) -> func.HttpResponse:
     logger.info("Processing request to delete snapshots.")
 
     try:
+        # --- Parse input ---
         try:
             req_body = req.get_json()
         except ValueError:
@@ -99,23 +101,23 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID')
         if not subscription_id:
             err = "AZURE_SUBSCRIPTION_ID environment variable is not set."
-            print_error(err)
+            logger.error(err)
             return func.HttpResponse(
                 json.dumps({"error": err}),
                 status_code=500,
                 mimetype="application/json"
             )
 
+        # --- Authenticate ---
         credentials = ClientSecretCredential(
             client_id=os.environ['AZURE_APP_CLIENT_ID'],
             client_secret=os.environ['AZURE_APP_CLIENT_SECRET'],
             tenant_id=os.environ['AZURE_APP_TENANT_ID']
         )
-
         compute_client = ComputeManagementClient(credentials, subscription_id)
 
-        # Initial status update
-        hook_response = await post_status_update(
+        # --- Initial webhook status ---
+        await post_status_update(
             hook_url=hook_url,
             status_data={
                 "vm_name": None,
@@ -129,64 +131,66 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 }
             }
         )
-        status_url = hook_response.get("status_url", "")
 
-        # List snapshots
-        snapshots = await run_blocking(compute_client.snapshots.list_by_resource_group, resource_group)
+        # --- List snapshots ---
+        logger.info(f"[INFO] Listing snapshots in resource group '{resource_group}'")
+        snapshots_gen = await run_blocking(compute_client.snapshots.list_by_resource_group, resource_group)
+        snapshots = list(snapshots_gen)
+        logger.info(f"[INFO] Found {len(snapshots)} snapshots in '{resource_group}'")
+
         deleted_snapshots = []
 
         for snapshot in snapshots:
-            if "snapshot" in snapshot.name.lower():
-                snapshot_name = snapshot.name
-                print_info(f"Processing snapshot: {snapshot_name}")
+            snapshot_name = snapshot.name
+            logger.info(f"[INFO] Processing snapshot: {snapshot_name}")
 
-                # Cancel any active SAS/export
-                try:
-                    await run_blocking(
-                        compute_client.snapshots.begin_grant_access,
-                        resource_group_name=resource_group,
-                        snapshot_name=snapshot_name,
-                        grant_access_data={"access": "None", "durationInSeconds": 0}
-                    ).result()
-                    print_info(f"Cancelled export/SAS for snapshot {snapshot_name}")
-                except Exception as e:
-                    print_warn(f"No active export or failed to cancel for {snapshot_name}: {e}")
+            # --- Cancel any active SAS/export ---
+            try:
+                await run_blocking(
+                    compute_client.snapshots.begin_grant_access,
+                    resource_group_name=resource_group,
+                    snapshot_name=snapshot_name,
+                    grant_access_data={"access": "None", "durationInSeconds": 0}
+                ).result()
+                logger.info(f"[INFO] Cancelled export/SAS for snapshot {snapshot_name}")
+            except Exception as e:
+                logger.warning(f"[WARN] No active export or failed to cancel for {snapshot_name}: {e}")
 
-                # Delete snapshot
-                try:
-                    await run_blocking(
-                        compute_client.snapshots.begin_delete,
-                        resource_group_name=resource_group,
-                        snapshot_name=snapshot_name
-                    ).wait()
-                    deleted_snapshots.append(snapshot_name)
-                    print_info(f"Deleted snapshot: {snapshot_name}")
+            # --- Delete snapshot ---
+            try:
+                await run_blocking(
+                    compute_client.snapshots.begin_delete,
+                    resource_group_name=resource_group,
+                    snapshot_name=snapshot_name
+                ).wait()
+                deleted_snapshots.append(snapshot_name)
+                logger.info(f"[INFO] Deleted snapshot: {snapshot_name}")
 
-                    # Status update for this snapshot
-                    if hook_url:
-                        await post_status_update(
-                            hook_url=hook_url,
-                            status_data={
-                                "vm_name": None,
-                                "status": "provisioning",
-                                "resource_group": resource_group,
-                                "location": location,
-                                "details": {
-                                    "step": "snapshot_deleted",
-                                    "snapshot_name": snapshot_name,
-                                    "timestamp": datetime.utcnow().isoformat()
-                                }
+                # --- Update webhook ---
+                if hook_url:
+                    await post_status_update(
+                        hook_url=hook_url,
+                        status_data={
+                            "vm_name": None,
+                            "status": "provisioning",
+                            "resource_group": resource_group,
+                            "location": location,
+                            "details": {
+                                "step": "snapshot_deleted",
+                                "snapshot_name": snapshot_name,
+                                "timestamp": datetime.utcnow().isoformat()
                             }
-                        )
+                        }
+                    )
 
-                except Exception as e:
-                    print_warn(f"Failed to delete snapshot {snapshot_name}: {e}")
+            except Exception as e:
+                logger.warning(f"[WARN] Failed to delete snapshot {snapshot_name}: {e}")
 
+        # --- Final result ---
         result = {
             "resource_group": resource_group,
             "deleted_snapshots": deleted_snapshots,
-            "deleted_count": len(deleted_snapshots),
-            "status_url": status_url
+            "deleted_count": len(deleted_snapshots)
         }
 
         return func.HttpResponse(

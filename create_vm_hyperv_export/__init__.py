@@ -330,47 +330,6 @@ async def provision_vm_background(
         network_client = NetworkManagementClient(credentials, subscription_id)
         dns_client = DnsManagementClient(credentials, subscription_id)
         
-        # STOP THE VM FIRST TO GENERATE THE SNAPSHOT
-        try:      
-            await stop_vm_to_snapshot(
-                compute_client=compute_client,
-                vm_name=snapshot_vm_name, 
-                resource_group=resource_group
-            )
-
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "vm_to_snapshot_stopped_success",
-                        "message": f"VM '{snapshot_vm_name}' stopped successfully.",
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to stop VM to snapshot: {str(e)}"
-            print_error(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "vm_to_snapshot_stop_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
-
         # GENERATING SNAPSHOT AND RETURN EXPORT SAS URLs
         global SNAPSHOT_URL
         # Container storage(storage cant contains _ or - just numbers and letters)
@@ -405,46 +364,6 @@ async def provision_vm_background(
             )
             return
 
-        # RESTART THE VM AFTER SNAPSHOT
-        try:
-            await restart_vm(
-                compute_client=compute_client,
-                vm_name=snapshot_vm_name,
-                resource_group=resource_group
-            )
-
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "provisioning",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "vm_to_snapshot_restarted_success",
-                        "message": f"VM '{snapshot_vm_name}' restarted successfully.",
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-        except Exception as e:
-            error_msg = f"Failed to restart VM after snapshot: {str(e)}"
-            print_error(error_msg)
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "vm_name": vm_name,
-                    "status": "failed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "details": {
-                        "step": "vm_to_snapshot_restart_failed",
-                        "error": error_msg,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                }
-            )
-            return
 
         # Handle subdomain
         subdomain = vm_name.strip().strip('.') if vm_name else None
@@ -501,6 +420,7 @@ async def provision_vm_background(
 
         #THIS CREATES A STORAGE ACCOUNT NAME FOR vhdusb to receive fixed-size bootable .vhd files
         global VHD_EXPORT_SAS_URL
+        global VHD_SNAPSHOT_NAME
         # Container storage(storage cant contains _ or - just numbers and letters)
         try:
             AZURE_STORAGE_CONFIG = await run_azure_operation(
@@ -870,6 +790,19 @@ async def provision_vm_background(
             return
 
         # Create VM
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "creating_virtual_machine",
+                    "message": "Virtual machine creating in progress."
+                }
+            }
+        )
         try:            
             # Create VM configuration
             os_disk = {
@@ -1648,6 +1581,15 @@ async def create_vm_snapshot_and_generate_sas(
         dict: {"sas_token_url": <sas_url>}
     """
     try:
+        # Creating snapshot 
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {"step": "creating_snapshot", "message": "Snapshot creating in process..."}
+        })
+
         # Get VM details
         vm = await asyncio.to_thread(compute_client.virtual_machines.get, resource_group, vm_name)
         if not vm:
@@ -1660,8 +1602,39 @@ async def create_vm_snapshot_and_generate_sas(
         snapshot_name = f"{vm_name}-snapshot-{int(time.time())}"
 
         # Stop VM before snapshot
-        await stop_vm_to_snapshot(compute_client, vm_name, resource_group)
+        try:
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "stopping_vm",
+                    "message": "Stopping VM before snapshot",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            })
+            await stop_vm_to_snapshot(compute_client, vm_name, resource_group)
+        except Exception as e:
+            error_msg = f"Failed to stop VM '{vm_name}': {str(e)}"
+            print_error(error_msg)
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "failed",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {"step": "stop_vm_failed", "error": error_msg, "timestamp": datetime.utcnow().isoformat()}
+            })
+            return  # stop processing if VM cannot be stopped
 
+        # Creating snapshot 
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {"step": "creating_snapshot", "message": "Snapshot creating in process..."}
+        })
         # Create snapshot
         snapshot_params = {
             "location": location,
@@ -1672,6 +1645,29 @@ async def create_vm_snapshot_and_generate_sas(
         snapshot = await asyncio.to_thread(poller.result)
         print(f"Snapshot '{snapshot_name}' created successfully.")
 
+        # Notify snapshot creation
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {
+                "step": "snapshot_created",
+                "message": f"Snapshot '{snapshot_name}' created successfully",
+                "snapshot_id": snapshot.id,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        })
+         # Generate SAS URL
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {"step": "generating_sas", "message": "Generating SAS URL for snapshot"}
+        })
+
+        # Async-safe call to begin_grant_access
         # Generate SAS URL for snapshot
         print(f"Generating SAS URL for snapshot '{snapshot_name}'...")
         snapshot_access = await asyncio.to_thread(
@@ -1689,25 +1685,42 @@ async def create_vm_snapshot_and_generate_sas(
         print(f"SAS URL generated: {sas_url}")
 
         # Optionally, post status update
-        if hook_url:
+        await post_status_update(hook_url, {
+            "vm_name": vm_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "details": {
+                "step": "sas_generated",
+                "message": "SAS URL generated successfully",
+                "snapshot_url": sas_url,
+                "snapshot_id": snapshot.id,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        })
+
+        # Restart VM after snapshot
+        try:
             await post_status_update(hook_url, {
                 "vm_name": vm_name,
                 "status": "provisioning",
                 "resource_group": resource_group,
                 "location": location,
-                "details": {
-                    "step": "sas_generated",
-                    "message": "SAS URL generated successfully",
-                    "snapshot_url": sas_url,
-                    "snapshot_id": snapshot.id,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
+                "details": {"step": "restarting_vm", "message": "Restarting VM after snapshot"}
+            })
+            await restart_vm(compute_client, vm_name, resource_group)
+        except Exception as e:
+            error_msg = f"Failed to restart VM '{vm_name}': {str(e)}"
+            print_warn(error_msg)
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "warning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {"step": "restart_vm_failed", "warning": error_msg}
             })
 
-        # Restart VM after snapshot
-        await restart_vm(compute_client, vm_name, resource_group)
-
-        return {"sas_token_url": sas_url}
+        return {"sas_token_url": sas_url, "snapshot_name": snapshot_name}
 
     except Exception as e:
         error_msg = f"Failed to create snapshot or generate SAS: {str(e)}"

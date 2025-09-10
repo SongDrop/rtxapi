@@ -742,6 +742,19 @@ async def provision_vm_background(
             )
             return
 
+        await post_status_update(
+            hook_url=hook_url,
+            status_data={
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "creating_virtual_machine",
+                    "message": "Virtual machine creating in progress."
+                }
+            }
+        )
         # Create VM
         try:            
             # Get gallery image version
