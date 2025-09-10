@@ -433,6 +433,7 @@ async def provision_vm_background(
             )
             print(f"SAS URL ready: {AZURE_STORAGE_CONFIG['sas_token_url']}")
             VHD_EXPORT_SAS_URL = AZURE_STORAGE_CONFIG['sas_token_url']
+            VHD_SNAPSHOT_NAME = AZURE_STORAGE_CONFIG['snapshot_name']
 
         except Exception as e:
             error_msg = f"Failed to setup VHD export: {str(e)}"
@@ -464,7 +465,8 @@ async def provision_vm_background(
         ps_script = generate_setup.generate_setup(
             SNAPSHOT_URL=SNAPSHOT_URL,
             WEBHOOK_URL=hook_url,
-            AZURE_SAS_TOKEN=VHD_EXPORT_SAS_URL
+            AZURE_SAS_TOKEN=VHD_EXPORT_SAS_URL,
+            VHD_SNAPSHOT_NAME=VHD_SNAPSHOT_NAME
         )
         
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)

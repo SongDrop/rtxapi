@@ -1,4 +1,4 @@
-def generate_setup(WEBHOOK_URL: str = None, SNAPSHOT_URL: str = None, AZURE_SAS_TOKEN: str = None) -> str:
+def generate_setup(WEBHOOK_URL: str = None, SNAPSHOT_URL: str = None, AZURE_SAS_TOKEN: str = None, VHD_SNAPSHOT_NAME: str = None) -> str:
     script = r'''# Check for admin privileges
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -12,6 +12,8 @@ $ErrorActionPreference = "Stop"
 $env:WEBHOOK_URL = "__WEBHOOK_URL__"
 $env:SNAPSHOT_URL = "__SNAPSHOT_URL__"
 $env:AZURE_SAS_TOKEN = "__AZURE_SAS_TOKEN__"
+$env:VHD_SNAPSHOT_NAME = "__VHD_SNAPSHOT_NAME__"
+
 
 # --- Webhook helper ---
 function Notify-Webhook {
@@ -512,8 +514,20 @@ try {
         if (-not (Test-Path $snapshotDir)) { New-Item -Path $snapshotDir -ItemType Directory -Force | Out-Null }
 
         # Paths
-        $snapshotPath = Join-Path $snapshotDir "azure-os-disk.vhd"                      # downloaded file
-        $fixedVHD     = Join-Path $snapshotDir "azure-os-disk_fixed.vhd"               # conversion target
+        # --- Snapshot / Fixed VHD naming ---
+        if ($env:VHD_SNAPSHOT_NAME -and $env:VHD_SNAPSHOT_NAME.Trim() -ne "") {
+            $snapshotName = "$($env:VHD_SNAPSHOT_NAME).vhd"
+            $fixedName    = "$($env:VHD_SNAPSHOT_NAME)_fixed_bootable236gb.vhd"
+        } else {
+            $snapshotName = "azure-os-disk.vhd"
+            $fixedName    = "azure-os-disk_fixed_bootable236gb.vhd"
+        }
+
+        $snapshotPath = Join-Path $snapshotDir $snapshotName
+        $fixedVHD     = Join-Path $snapshotDir $fixedName
+
+        Write-Host "Snapshot VHD path: $snapshotPath"
+        Write-Host "Fixed VHD path:    $fixedVHD"
         $azcopyURL    = "https://github.com/ProjectIGIRemakeTeam/azcopy-windows/releases/download/azcopy/AzCopyWin.zip"
         $azcopyZip    = Join-Path $snapshotDir "AzCopyWin.zip"
         $sdeleteZip   = Join-Path $snapshotDir "SDelete.zip"
@@ -857,7 +871,8 @@ Add-Content -Path $installLog -Value "Setup script completed at $(Get-Date)"
     replacements = {
         "__WEBHOOK_URL__": WEBHOOK_URL or "",  # Replace with passed value or empty string
         "__SNAPSHOT_URL__": SNAPSHOT_URL or "",
-        "__AZURE_SAS_TOKEN__": AZURE_SAS_TOKEN or ""
+        "__AZURE_SAS_TOKEN__": AZURE_SAS_TOKEN or "",
+        "__VHD_SNAPSHOT_NAME__": VHD_SNAPSHOT_NAME or "",
     }
 
     # Loop through all placeholders and replace them in the script text
