@@ -517,17 +517,29 @@ try {
 
         try {
             ####STEP-1: DOWNLOAD SNAPSHOT
-            Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Downloading snapshot from __SNAPSHOT_URL__..."
-            Invoke-WebRequest -Uri "__SNAPSHOT_URL__" -OutFile $snapshotPath -UseBasicParsing
-            if (-not (Test-Path $snapshotPath)) { throw "Snapshot download failed" }
-            Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Snapshot downloaded to $snapshotPath"
-            
+            # --- Download Azure VM snapshot VHD ---
+            $userProfile = [Environment]::GetFolderPath("UserProfile")
+            $snapshotDir = Join-Path $userProfile "Downloads"
+            if (-not (Test-Path $snapshotDir)) { New-Item -Path $snapshotDir -ItemType Directory -Force | Out-Null }
+
+            # Local path for the downloaded VHD
+            $snapshotPath = Join-Path $snapshotDir "azure-os-disk.vhd"
+
+            try {
+                Write-Output "Downloading snapshot from $env:SNAPSHOT_URL ..."
+                Invoke-WebRequest -Uri $env:SNAPSHOT_URL -OutFile $snapshotPath -UseBasicParsing
+                if (-not (Test-Path $snapshotPath)) { throw "Snapshot download failed" }
+                Write-Output "Snapshot downloaded successfully to $snapshotPath"
+            } catch {
+                Write-Error "Failed to download snapshot: $_"
+                exit 1
+            }
             ####STEP-2: CREATE BOOTABLE FIXED VHD
-            Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Creating bootable fixed VHD..."
-            Import-Module Hyper-V -ErrorAction Stop
-            Convert-VHD -Path $snapshotPath -DestinationPath $fixedVHD -VHDType Fixed
-            if (-not (Test-Path $fixedVHD)) { throw "Fixed VHD creation failed" }
-            Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Bootable fixed VHD created at $fixedVHD"
+            # Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Creating bootable fixed VHD..."
+            # Import-Module Hyper-V -ErrorAction Stop
+            # Convert-VHD -Path $snapshotPath -DestinationPath $fixedVHD -VHDType Fixed
+            # if (-not (Test-Path $fixedVHD)) { throw "Fixed VHD creation failed" }
+            # Notify-Webhook -Status "provisioning" -Step "hyperv_finalize" -Message "Bootable fixed VHD created at $fixedVHD"
             
             ####STEP-3: DOWNLOAD AZCOPY
             Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "Downloading AzCopy..."
@@ -537,13 +549,13 @@ try {
             Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "AzCopy downloaded and extracted"
             
             ####STEP-4: UPLOAD FIXED VHD VIA AZCOPY
-            $azcopyExe = Join-Path $snapshotDir "AzCopy\azcopy.exe"
-            Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Uploading fixed VHD via AzCopy..."
+            # $azcopyExe = Join-Path $snapshotDir "AzCopy\azcopy.exe"
+            # Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Uploading fixed VHD via AzCopy..."
             
             # Run AzCopy using cmd.exe
-            $cmdArgs = "/c `"$azcopyExe copy `"$fixedVHD`" `$env:AZURE_SAS_TOKEN --recursive`""
-            Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs -Wait -NoNewWindow
-            Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Fixed VHD uploaded successfully"
+            # $cmdArgs = "/c `"$azcopyExe copy `"$fixedVHD`" `$env:AZURE_SAS_TOKEN --recursive`""
+            # Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs -Wait -NoNewWindow
+            # Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Fixed VHD uploaded successfully"
             ####STEP-4: UPLOAD SUCCESSFULLY FINISHED 
 
             #########################################

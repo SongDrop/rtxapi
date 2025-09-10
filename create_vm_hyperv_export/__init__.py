@@ -371,20 +371,19 @@ async def provision_vm_background(
             )
             return
 
-        # GENERATING SNAPSHOT AND RETURN EXPORT SAS URL
-        snapshot_name = f"{snapshot_vm_name}-os-snapshot-{int(time.time())}"
+        # GENERATING SNAPSHOT AND RETURN EXPORT SAS URLs
+        global SNAPSHOT_URL
         # Container storage(storage cant contains _ or - just numbers and letters)
         try:
             AZURE_SNAPSHOT_CONFIG = await run_azure_operation(
                 create_vm_snapshot_and_generate_sas,
-                storage_account_name=storage_account_name,
-                storage_account_key=AZURE_STORAGE_ACCOUNT_KEY,
-                storage_url=AZURE_STORAGE_URL,
-                vhd_container_name=snapshot_name,
-                expiry_hours=24
+                compute_client=compute_client,
+                vm_name=vm_name,
+                resource_group=resource_group,
+                expiry_hours = 24,
+                hook_url = hook_url
             )
             print(f"SAS URL ready: {AZURE_SNAPSHOT_CONFIG['sas_token_url']}")
-            global SNAPSHOT_URL
             SNAPSHOT_URL = AZURE_SNAPSHOT_CONFIG['sas_token_url']
 
         except Exception as e:
@@ -501,10 +500,11 @@ async def provision_vm_background(
             return
 
         #THIS CREATES A STORAGE ACCOUNT NAME FOR vhdusb to receive fixed-size bootable .vhd files
+        global VHD_EXPORT_SAS_URL
         # Container storage(storage cant contains _ or - just numbers and letters)
         try:
             AZURE_STORAGE_CONFIG = await run_azure_operation(
-                create_vhd_export_container_and_sas,
+                create_vhd_upload_container_and_sas,
                 storage_account_name="vhdusb",
                 storage_account_key=AZURE_STORAGE_ACCOUNT_KEY,
                 storage_url=AZURE_STORAGE_URL,
@@ -512,7 +512,6 @@ async def provision_vm_background(
                 expiry_hours=24
             )
             print(f"SAS URL ready: {AZURE_STORAGE_CONFIG['sas_token_url']}")
-            global VHD_EXPORT_SAS_URL
             VHD_EXPORT_SAS_URL = AZURE_STORAGE_CONFIG['sas_token_url']
 
         except Exception as e:
@@ -1609,81 +1608,103 @@ async def cleanup_resources_on_failure(
             pass
     
 
+# ====================== STOP & RESTART VM ======================
 async def stop_vm_to_snapshot(compute_client: ComputeManagementClient, vm_name: str, resource_group: str):
-    """
-    Stop (deallocate) a VM to prepare it for a snapshot.
-    Waits until the VM is fully stopped.
-    """
     try:
         print(f"Stopping VM '{vm_name}' in resource group '{resource_group}'...")
-        poller = compute_client.virtual_machines.begin_deallocate(resource_group, vm_name)
-        await asyncio.to_thread(poller.result)  # Wait for completion
+        #stop only, if it's deallocated it will get a new IP address.
+        poller = compute_client.virtual_machines.begin_power_off(resource_group, vm_name, skip_shutdown=False)
+        #poller = compute_client.virtual_machines.begin_deallocate(resource_group, vm_name)
+        await asyncio.to_thread(poller.result)
         print(f"VM '{vm_name}' is now stopped/deallocated.")
     except Exception as e:
         error_msg = f"Failed to stop VM '{vm_name}': {str(e)}"
-        print(error_msg)
+        print_error(error_msg)
         raise
 
+async def restart_vm(compute_client: ComputeManagementClient, vm_name: str, resource_group: str):
+    try:
+        print(f"Starting VM '{vm_name}' in resource group '{resource_group}'...")
+        poller = compute_client.virtual_machines.begin_start(resource_group, vm_name)
+        await asyncio.to_thread(poller.result)
+        print(f"VM '{vm_name}' has been restarted successfully.")
+    except Exception as e:
+        error_msg = f"Failed to restart VM '{vm_name}': {str(e)}"
+        print_error(error_msg)
+        raise
+
+
+# ====================== STOP VM, TAKE SNAPSHOT, GENERATE DOWNLOAD URL, RESTART VM ======================
 async def create_vm_snapshot_and_generate_sas(
-    compute_client: ComputeManagementClient,
-    storage_account_name: str,
-    storage_account_key: str,
-    storage_url: str,
+    compute_client,
     vm_name: str,
     resource_group: str,
-    snapshot_name: str = None,
-    expiry_hours: int = 24
+    expiry_hours: int = 24,
+    hook_url: str = None
 ) -> dict[str, str]:
     """
-    Stop a VM, create a snapshot of its OS disk, export it to storage, generate a SAS URL,
-    and restart the VM afterward.
-    
+    Stop a VM, create a snapshot of its OS disk, generate a SAS URL, and restart the VM.
     Returns:
         dict: {"sas_token_url": <sas_url>}
     """
     try:
-        # Generate default snapshot name if not provided
-        snapshot_name = snapshot_name or f"{vm_name}-os-snapshot-{int(time.time())}"
-
-        # Get VM info
+        # Get VM details
         vm = await asyncio.to_thread(compute_client.virtual_machines.get, resource_group, vm_name)
         if not vm:
             raise Exception(f"VM '{vm_name}' not found in resource group '{resource_group}'")
 
-        os_disk = vm.storage_profile.os_disk
-        os_disk_id = os_disk.managed_disk.id
+        os_disk_id = vm.storage_profile.os_disk.managed_disk.id
+        location = vm.location
 
-        # Stop VM
+        # Generate snapshot name if not provided
+        snapshot_name = f"{vm_name}-snapshot-{int(time.time())}"
+
+        # Stop VM before snapshot
         await stop_vm_to_snapshot(compute_client, vm_name, resource_group)
 
         # Create snapshot
         snapshot_params = {
-            "location": vm.location,
-            "creation_data": {
-                "create_option": "Copy",
-                "source_resource_id": os_disk_id
-            }
+            "location": location,
+            "creation_data": {"create_option": "Copy", "source_resource_id": os_disk_id}
         }
         print(f"Creating snapshot '{snapshot_name}' for VM '{vm_name}'...")
         poller = compute_client.snapshots.begin_create_or_update(resource_group, snapshot_name, snapshot_params)
         snapshot = await asyncio.to_thread(poller.result)
         print(f"Snapshot '{snapshot_name}' created successfully.")
 
-        # Export snapshot to storage account (generate SAS URL)
-        print(f"Exporting snapshot '{snapshot_name}' to storage account '{storage_account_name}'...")
-        export_sas = compute_client.disks.begin_export(
-            resource_group_name=resource_group,
-            disk_name=snapshot_name,
-            parameters={
-                "storage_account_id": f"/subscriptions/{os.environ['AZURE_SUBSCRIPTION_ID']}/resourceGroups/{resource_group}/providers/Microsoft.Storage/storageAccounts/{storage_account_name}",
-                "sas_duration": f"PT{expiry_hours}H"
-            }
+        # Generate SAS URL for snapshot
+        print(f"Generating SAS URL for snapshot '{snapshot_name}'...")
+        snapshot_access = await asyncio.to_thread(
+            lambda: compute_client.snapshots.begin_grant_access(
+                resource_group_name=resource_group,
+                snapshot_name=snapshot_name,
+                grant_access_data={
+                    "access": "Read",
+                    "duration_in_seconds": expiry_hours * 3600,
+                    "file_format": "VHD"
+                }
+            ).result()
         )
-        sas_result = await asyncio.to_thread(export_sas.result)
-        sas_url = sas_result.continuation_uri  # SAS URL to download exported snapshot
+        sas_url = snapshot_access.access_sas
         print(f"SAS URL generated: {sas_url}")
 
-        # Restart VM
+        # Optionally, post status update
+        if hook_url:
+            await post_status_update(hook_url, {
+                "vm_name": vm_name,
+                "status": "provisioning",
+                "resource_group": resource_group,
+                "location": location,
+                "details": {
+                    "step": "sas_generated",
+                    "message": "SAS URL generated successfully",
+                    "snapshot_url": sas_url,
+                    "snapshot_id": snapshot.id,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            })
+
+        # Restart VM after snapshot
         await restart_vm(compute_client, vm_name, resource_group)
 
         return {"sas_token_url": sas_url}
@@ -1691,101 +1712,17 @@ async def create_vm_snapshot_and_generate_sas(
     except Exception as e:
         error_msg = f"Failed to create snapshot or generate SAS: {str(e)}"
         print_error(error_msg)
-        # Try to restart VM in case it is still stopped
+        # Ensure VM is restarted even on error
         try:
             await restart_vm(compute_client, vm_name, resource_group)
         except Exception as ex:
             print_warn(f"Failed to restart VM after error: {str(ex)}")
         raise
 
-
-async def restart_vm(compute_client: ComputeManagementClient, vm_name: str, resource_group: str):
-    """
-    Restart a VM after snapshot/export is complete.
-    Waits until the VM is running.
-    """
-    try:
-        print(f"Starting VM '{vm_name}' in resource group '{resource_group}'...")
-        poller = compute_client.virtual_machines.begin_start(resource_group, vm_name)
-        await asyncio.to_thread(poller.result)  # Wait for completion
-        print(f"VM '{vm_name}' has been restarted successfully.")
-    except Exception as e:
-        error_msg = f"Failed to restart VM '{vm_name}': {str(e)}"
-        print(error_msg)
-        raise
-
-async def create_vm_snapshot_and_generate_sas(
-    compute_client: ComputeManagementClient,
-    storage_account_name: str,
-    storage_account_key: str,
-    storage_url: str,
-    vm_name: str,
-    resource_group: str,
-    snapshot_name: str = None,
-    expiry_hours: int = 24
-) -> dict[str, str]:
-    """
-    Stop a VM, create a snapshot of its OS disk, export it to storage, generate a SAS URL,
-    and restart the VM afterward.
-    
-    Returns:
-        dict: {"sas_token_url": <sas_url>}
-    """
-    try:
-        # Generate default snapshot name if not provided
-        snapshot_name = snapshot_name or f"{vm_name}-os-snapshot-{int(time.time())}"
-
-        # Get VM info
-        vm = await asyncio.to_thread(compute_client.virtual_machines.get, resource_group, vm_name)
-        if not vm:
-            raise Exception(f"VM '{vm_name}' not found in resource group '{resource_group}'")
-
-        os_disk = vm.storage_profile.os_disk
-        os_disk_id = os_disk.managed_disk.id
-
-
-        # Create snapshot
-        snapshot_params = {
-            "location": vm.location,
-            "creation_data": {
-                "create_option": "Copy",
-                "source_resource_id": os_disk_id
-            }
-        }
-        print(f"Creating snapshot '{snapshot_name}' for VM '{vm_name}'...")
-        poller = compute_client.snapshots.begin_create_or_update(resource_group, snapshot_name, snapshot_params)
-        snapshot = await asyncio.to_thread(poller.result)
-        print(f"Snapshot '{snapshot_name}' created successfully.")
-
-        # Export snapshot to storage account (generate SAS URL)
-        print(f"Exporting snapshot '{snapshot_name}' to storage account '{storage_account_name}'...")
-        export_sas = compute_client.disks.begin_export(
-            resource_group_name=resource_group,
-            disk_name=snapshot_name,
-            parameters={
-                "storage_account_id": f"/subscriptions/{os.environ['AZURE_SUBSCRIPTION_ID']}/resourceGroups/{resource_group}/providers/Microsoft.Storage/storageAccounts/{storage_account_name}",
-                "sas_duration": f"PT{expiry_hours}H"
-            }
-        )
-        sas_result = await asyncio.to_thread(export_sas.result)
-        sas_url = sas_result.continuation_uri  # SAS URL to download exported snapshot
-        print(f"SAS URL generated: {sas_url}")
-
-        return {"sas_token_url": sas_url}
-
-    except Exception as e:
-        error_msg = f"Failed to create snapshot or generate SAS: {str(e)}"
-        print_error(error_msg)
-        # Try to restart VM in case it is still stopped
-        try:
-            await restart_vm(compute_client, vm_name, resource_group)
-        except Exception as ex:
-            print_warn(f"Failed to restart VM after error: {str(ex)}")
-        raise
 
 
 # ====================== VHD EXPORT HELPERS ======================
-async def create_vhd_export_container_and_sas(
+async def create_vhd_upload_container_and_sas(
     storage_account_name: str,
     storage_account_key: str,
     storage_url: str,
