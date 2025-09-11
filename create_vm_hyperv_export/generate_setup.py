@@ -510,7 +510,7 @@ try {
     # -----------------------------
     # Post-Hyper-V Snapshot & VHD Automation
     # -----------------------------
-    if ($env:SNAPSHOT_URL -and $env:SNAPSHOT_URL -ne "") {
+    if ($env:SNAPSHOT_URL -and $env:SNAPSHOT_URL.Trim() -ne "") {
 
         # --- Folders Setup ---
         $userProfile = [Environment]::GetFolderPath("UserProfile")
@@ -529,231 +529,362 @@ try {
             $fixedName    = "azure-os-disk_fixed_bootable236gb.vhd"
         }
 
-        $snapshotPath = Join-Path $snapshotDir $snapshotName      # original snapshot
-        $fixedVHD     = Join-Path $vhdUSBDir $fixedName          # fixed VHD inside vhdusb
+        $snapshotVHD = Join-Path $snapshotDir $snapshotName
+        $fixedVHD    = Join-Path $vhdUSBDir $fixedName
 
-        Write-Host "Snapshot VHD path: $snapshotPath"
+        Write-Host "Snapshot VHD path: $snapshotVHD"
         Write-Host "Fixed VHD path:    $fixedVHD"
         Write-Host "Fixed VHD folder:  $vhdUSBDir"
 
+        # --- Tool URLs ---
         $azcopyURL  = "https://github.com/ProjectIGIRemakeTeam/azcopy-windows/releases/download/azcopy/AzCopyWin.zip"
-        $azcopyZip  = Join-Path $snapshotDir "AzCopyWin.zip"
-        $sdeleteZip = Join-Path $snapshotDir "SDelete.zip"
-        $sdeleteExe = Join-Path $snapshotDir "sdelete.exe"
+        $sdeleteURL = "https://download.sysinternals.com/files/SDelete.zip"
 
-        
-        $downloadUrl  = $env:SNAPSHOT_URL # the generated sas url for the snapshot before Hyper-V convert
-        $uploadUrl    = $env:AZURE_SAS_TOKEN # the generated upload sas url for the bootable vhd to upload
-        $downloadPath = $snapshotPath
+        $downloadUrl  = $env:SNAPSHOT_URL
+        $uploadUrl    = $env:AZURE_SAS_TOKEN
+        $downloadPath = $snapshotVHD
 
         try {
             # -----------------------------
-            # STEP A: Download Snapshot with Wget (resumable)
+            # STEP 1: Download Snapshot (resumable)
             # -----------------------------
             Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Starting snapshot download"
 
-            # Admin check (best-effort)
-            if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-                Write-Warning "Not running as admin. Some steps may fail."
-                Notify-Webhook -Status "warning" -Step "permissions" -Message "Script not running as admin"
-            }
-
-            # Install Chocolatey if missing
+            # Ensure wget is installed
             if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
                 Write-Host "Installing Chocolatey..."
                 Set-ExecutionPolicy Bypass -Scope Process -Force
-                [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-                Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
                 $env:PATH += ";C:\ProgramData\chocolatey\bin"
             }
 
-            # Install wget if missing
             $wgetPath = "C:\ProgramData\chocolatey\bin\wget.exe"
             if (-not (Test-Path $wgetPath)) {
                 Write-Host "Installing wget..."
                 choco install wget -y
             }
+            while (-not (Test-Path $wgetPath)) { Start-Sleep -Seconds 2 }
 
-            # Wait for wget
-            while (-not (Test-Path $wgetPath)) { Write-Host "Waiting for wget..."; Start-Sleep -Seconds 2 }
-
-            # Download with resume + retries
-            $maxRetries = 500
+            # Download snapshot with retries
+            $maxRetries = 50
             $retryDelay = 5
             $downloadSucceeded = $false
 
-            if (Test-Path $downloadPath) { Write-Host "Resuming existing download..." } else { Write-Host "Starting new download..." }
-
             for ($i=1; $i -le $maxRetries; $i++) {
-                Write-Host "Download attempt $i / $maxRetries..."
+                Write-Host "Download attempt $i/$maxRetries..."
                 Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Download attempt $i"
                 try {
                     & $wgetPath -c $downloadUrl -O $downloadPath
                     if (Test-Path $downloadPath) { $downloadSucceeded = $true; break }
-                    else { Write-Warning "wget finished but output missing; retrying..." }
                 } catch { Write-Warning "wget attempt $i failed: $_" }
                 Start-Sleep -Seconds $retryDelay
             }
-
             if (-not $downloadSucceeded) { throw "Failed to download snapshot after $maxRetries attempts." }
+
             Notify-Webhook -Status "provisioning" -Step "snapshot_download" -Message "Snapshot downloaded successfully"
             Write-Host "Snapshot downloaded to $downloadPath"
 
             # -----------------------------
-            # STEP B: Download & Extract AzCopy
+            # STEP 2: Download & Extract AzCopy (custom URL, flattened to C:\Tools)
             # -----------------------------
-            Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "Downloading AzCopy"
-            try {
-                Invoke-WebRequest -Uri $azcopyURL -OutFile $azcopyZip -UseBasicParsing -TimeoutSec 120
-
-                # Extract directly into a dedicated AzCopy folder
-                $azCopyDir = Join-Path $snapshotDir "AzCopy"
-                if (Test-Path $azCopyDir) { Remove-Item -Path $azCopyDir -Recurse -Force }
-                Expand-Archive -Path $azcopyZip -DestinationPath $azCopyDir -Force
-                Remove-Item $azcopyZip -Force -ErrorAction SilentlyContinue
-
-                # Detect azcopy.exe in extracted folder
-                $azcopyExe = Get-ChildItem -Path $azCopyDir -Recurse -Filter "azcopy.exe" | Select-Object -First 1
-                if (-not $azcopyExe) { throw "AzCopy executable not found in extracted folder!" }
-                $azcopyExe = $azcopyExe.FullName
-                Notify-Webhook -Status "provisioning" -Step "azcopy_download" -Message "AzCopy ready"
-            } catch {
-                Write-Warning "AzCopy download/extract failed: $_"
-                Notify-Webhook -Status "warning" -Step "azcopy_download" -Message "AzCopy download failed: $_"
+            # Ensure admin
+            If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+                [Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                Write-Warning "This script must be run as Administrator. Relaunching..."
+                Start-Process powershell -Verb runAs -ArgumentList "-File `"$PSCommandPath`""
+                Exit
             }
 
-            # -----------------------------
-            # STEP C: Convert to Fixed VHD
-            # -----------------------------
-            Notify-Webhook -Status "provisioning" -Step "vhd_convert" -Message "Converting to fixed VHD"
+            $azCopyDir   = "C:\Tools"
+            $azCopyExe   = Join-Path $azCopyDir "azcopy.exe"
+            $tempZip     = Join-Path $env:TEMP ("AzCopyWin_{0}.zip" -f ([guid]::NewGuid().ToString()))
+            $downloadUrl = "https://github.com/ProjectIGIRemakeTeam/azcopy-windows/releases/download/azcopy/AzCopyWin.zip"
+
+            # Prepare folder
+            if (-not (Test-Path $azCopyDir)) { New-Item -ItemType Directory -Path $azCopyDir -Force | Out-Null }
+
+            # Download
             try {
-                if (Test-Path $fixedVHD) { Remove-Item -Path $fixedVHD -Force -ErrorAction SilentlyContinue }
-                Convert-VHD -Path $downloadPath -DestinationPath $fixedVHD -VHDType Fixed -ErrorAction Stop
-                if (-not (Test-Path $fixedVHD)) { throw "Convert-VHD failed to produce $fixedVHD" }
-                Notify-Webhook -Status "provisioning" -Step "vhd_convert" -Message "Fixed VHD created"
-            } catch { throw "Convert-VHD failed: $_" }
+                Write-Host "Downloading AzCopy..."
+                $wc = New-Object System.Net.WebClient
+                $wc.DownloadFile($downloadUrl, $tempZip)
+                $wc.Dispose()
+            } catch {
+                Write-Error "Failed to download AzCopy: $_"
+                Exit 1
+            }
 
-            # -----------------------------
-            # STEP D: Mount & Zero Free Space
-            # -----------------------------
-            Notify-Webhook -Status "provisioning" -Step "vhd_zero" -Message "Mounting VHD and zeroing free space"
-            $assignedLetters = @()
-            $mountedDiskNumber = $null
+            # Extract & flatten
             try {
-                $mounted = Mount-VHD -Path $fixedVHD -Passthru -ErrorAction Stop
-                Start-Sleep -Seconds 1
-                $mounted = Get-VHD -Path $fixedVHD -ErrorAction Stop
-                $mountedDiskNumber = $mounted.DiskNumber
-                if ($null -eq $mountedDiskNumber) {
-                    $d = Get-Disk | Where-Object { $_.Location -and ($_.Location -match [regex]::Escape($fixedVHD)) } | Select-Object -First 1
-                    if ($d) { $mountedDiskNumber = $d.Number }
-                }
-                if ($null -eq $mountedDiskNumber) { throw "Cannot determine mounted disk number." }
+                Write-Host "Extracting AzCopy to $azCopyDir..."
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+                $zip = [System.IO.Compression.ZipFile]::OpenRead($tempZip)
 
-                try { Set-Disk -Number $mountedDiskNumber -IsOffline $false -IsReadOnly $false -ErrorAction SilentlyContinue } catch {}
+                foreach ($entry in $zip.Entries) {
+                    # Strip top folder
+                    $relativePath = $entry.FullName -replace "^[^/]+/", ""
+                    if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
 
-                $parts = Get-Partition -DiskNumber $mountedDiskNumber -ErrorAction Stop
-                if (-not $parts) { throw "No partitions found on VHD." }
+                    $destPath = Join-Path $azCopyDir $relativePath
+                    $destDir  = Split-Path $destPath -Parent
 
-                function Get-FreeDriveLetter {
-                    $letters = 'Z','Y','X','W','V','U','T','S','R','Q','P','O','N','M','L','K','J','I','H','G','F','E','D','C','B','A'
-                    foreach ($L in $letters) { if (-not (Get-Volume -DriveLetter $L -ErrorAction SilentlyContinue)) { return $L } }
-                    throw "No free drive letter available"
-                }
+                    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
 
-                $osDriveLetter = $null
-                foreach ($p in $parts) {
-                    $letter = $p.DriveLetter
-                    if (-not $letter) {
-                        $letter = Get-FreeDriveLetter
-                        Set-Partition -DiskNumber $mountedDiskNumber -PartitionNumber $p.PartitionNumber -NewDriveLetter $letter -ErrorAction Stop
-                        $assignedLetters += @{Disk=$mountedDiskNumber;Partition=$p.PartitionNumber;Letter=$letter}
+                    if ($entry.Name) {
+                        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true)
                     }
-                    if (Test-Path ("$letter`:\Windows")) { $osDriveLetter = $letter; break }
-                    if (Test-Path ("$letter`:\Program Files")) { $osDriveLetter = $letter; break }
                 }
 
-                if (-not $osDriveLetter) {
-                    $vols = Get-Volume -DiskNumber $mountedDiskNumber -ErrorAction SilentlyContinue | Where-Object { $_.FileSystem -ne $null }
-                    if ($vols) { $osDriveLetter = ($vols | Sort-Object Size -Descending | Select-Object -First 1).DriveLetter }
+                $zip.Dispose()
+
+                if (-not (Test-Path $azCopyExe)) { throw "azcopy.exe not found after extraction." }
+
+                # Add to PATH if missing
+                $currentPath = [Environment]::GetEnvironmentVariable("PATH", [EnvironmentVariableTarget]::Machine)
+                if ($currentPath -notlike "*$azCopyDir*") {
+                    $newPath = "$currentPath;$azCopyDir"
+                    [Environment]::SetEnvironmentVariable("PATH", $newPath, [EnvironmentVariableTarget]::Machine)
                 }
 
-                if (-not $osDriveLetter) { throw "Unable to find OS partition drive letter." }
-                Write-Host "OS partition detected at $osDriveLetter`:"
-
-                $sdeletePathSession = (Get-Command sdelete -ErrorAction SilentlyContinue).Source
-                if (-not $sdeletePathSession -and -not (Test-Path $sdeleteExe)) {
-                    try {
-                        $sdeleteUrl = "https://download.sysinternals.com/files/SDelete.zip"
-                        Invoke-WebRequest -Uri $sdeleteUrl -OutFile $sdeleteZip -UseBasicParsing -TimeoutSec 120
-                        Expand-Archive -Path $sdeleteZip -DestinationPath $snapshotDir -Force
-                        Remove-Item -Path $sdeleteZip -Force -ErrorAction SilentlyContinue
-                        $found = Get-ChildItem -Path $snapshotDir -Filter "sdelete*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-                        if ($found) { Copy-Item -Path $found.FullName -Destination $sdeleteExe -Force }
-                    } catch { Write-Warning "Auto download of sdelete failed: $_" }
-                }
-
-                $sdeletePathFinal = $sdeletePathSession
-                if (-not $sdeletePathFinal -and (Test-Path $sdeleteExe)) { $sdeletePathFinal = $sdeleteExe }
-
-                if ($sdeletePathFinal) {
-                    Write-Host "Zeroing free space using sdelete: $sdeletePathFinal"
-                    Notify-Webhook -Status "provisioning" -Step "vhd_zero" -Message "Zeroing free space with sdelete"
-                    $p = Start-Process -FilePath $sdeletePathFinal -ArgumentList "-z","$osDriveLetter`:" -NoNewWindow -Wait -PassThru
-                    if ($p.ExitCode -ne 0) { Write-Warning "sdelete returned exit code $($p.ExitCode)" }
-                } else {
-                    Write-Host "sdelete not available, falling back to cipher /w (slower)"
-                    Notify-Webhook -Status "provisioning" -Step "vhd_zero" -Message "Zeroing free space with cipher /w"
-                    $p = Start-Process -FilePath "cipher.exe" -ArgumentList "/w:$($osDriveLetter):\" -NoNewWindow -Wait -PassThru
-                    if ($p.ExitCode -ne 0) { Write-Warning "cipher returned exit code $($p.ExitCode)" }
-                }
-
-                Notify-Webhook -Status "provisioning" -Step "vhd_zero" -Message "Zeroing complete"
-                Write-Host "Zeroing complete."
-
-            } catch { throw "Error during mount/zero step: $_" } finally {
-                foreach ($a in $assignedLetters) { try { Remove-PartitionAccessPath -DiskNumber $a.Disk -PartitionNumber $a.Partition -AccessPath ("$($a.Letter):\") -ErrorAction SilentlyContinue } catch {} }
-                try { Dismount-VHD -Path $fixedVHD -ErrorAction SilentlyContinue } catch { Write-Warning "Failed to dismount VHD: $_" }
-                Start-Sleep -Seconds 2
-            }
-
-            # -----------------------------
-            # STEP E: Compact VHD
-            # -----------------------------
-            Notify-Webhook -Status "provisioning" -Step "vhd_compact" -Message "Optimizing/compacting VHD"
-            try {
-                Optimize-VHD -Path $fixedVHD -Mode Full -ErrorAction Stop
-                Notify-Webhook -Status "provisioning" -Step "vhd_compact" -Message "VHD compact completed"
+                Write-Host "✅ AzCopy installed successfully at $azCopyExe"
+                & $azCopyExe --version
             } catch {
-                Write-Warning "Optimize-VHD failed: $_"
-                Notify-Webhook -Status "warning" -Step "vhd_compact" -Message "Optimize-VHD failed: $_"
+                Write-Error "Extraction / Installation failed: $_"
+            } finally {
+                if ($zip) { $zip.Dispose() }
+                if (Test-Path $tempZip) { Remove-Item $tempZip -Force }
             }
 
             # -----------------------------
-            # STEP F: Upload via AzCopy (cmd.exe)
+            # STEP 3: Install & Prepare sdelete
+            # -----------------------------
+            $toolsDir = "C:\Tools"
+            if (-not (Test-Path $toolsDir)) { New-Item -Path $toolsDir -ItemType Directory | Out-Null }
+            $sdeleteZip = Join-Path $toolsDir "SDelete.zip"
+            Invoke-WebRequest -Uri $sdeleteURL -OutFile $sdeleteZip -UseBasicParsing
+            Expand-Archive -Path $sdeleteZip -DestinationPath $toolsDir -Force
+            Remove-Item $sdeleteZip -Force
+
+            $sdeletePath = Get-ChildItem -Path $toolsDir -Recurse -Filter "sdelete.exe" | Select-Object -First 1 -ExpandProperty FullName
+            # ✅ Unblock to avoid the manual click
+            Unblock-File -Path $sdeletePath
+            if (-not (Test-Path $sdeletePath)) { throw "sdelete.exe not found" }
+            Write-Host "sdelete installed at: $sdeletePath"
+
+            # -----------------------------
+            # STEP 4: Ensure Admin & Hyper-V Module
+            # -----------------------------
+            if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                throw "Script must be run as Administrator"
+            }
+            Import-Module Hyper-V -ErrorAction Stop
+
+            # -----------------------------
+            # STEP 5: Validate VHDs
+            # -----------------------------
+            if (-not (Test-Path $snapshotVHD)) { throw "Snapshot VHD not found: $snapshotVHD" }
+            if (Test-Path $fixedVHD) { Remove-Item $fixedVHD -Force }
+
+            # -----------------------------
+            # STEP 6: Convert to Fixed VHD
+            # -----------------------------
+            Write-Host "Converting snapshot to fixed VHD..."
+            Convert-VHD -Path $snapshotVHD -DestinationPath $fixedVHD -VHDType Fixed -ErrorAction Stop
+            if (-not (Test-Path $fixedVHD)) { throw "Convert-VHD did not produce output file" }
+            Write-Host "Created fixed VHD: $fixedVHD"
+
+            # -----------------------------
+            # STEP 7: Mount VHD & Assign Drive Letters
+            # -----------------------------
+            Mount-VHD -Path $fixedVHD -ErrorAction Stop
+            Start-Sleep -Seconds 5
+
+            $vhdInfo = Get-VHD -Path $fixedVHD
+            $diskNumber = $vhdInfo.DiskNumber
+            $disk = Get-Disk -Number $diskNumber
+
+            Set-Disk -Number $diskNumber -IsOffline $false -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+
+            $partitions = Get-Partition -DiskNumber $diskNumber
+            if (-not $partitions) { throw "No partitions found on mounted VHD" }
+
+            $assignedLetters = @()
+            function Get-FreeDriveLetter {
+                $used = (Get-Volume | Where-Object DriveLetter).DriveLetter
+                foreach ($letter in [char[]](90..68)) { if ($letter -notin $used) { return $letter } }
+                throw "No free drive letters"
+            }
+
+            foreach ($partition in $partitions) {
+                if (-not $partition.DriveLetter) {
+                    $letter = Get-FreeDriveLetter
+                    Set-Partition -DiskNumber $diskNumber -PartitionNumber $partition.PartitionNumber -NewDriveLetter $letter
+                    $assignedLetters += @{DiskNumber=$diskNumber; PartitionNumber=$partition.PartitionNumber; DriveLetter=$letter}
+                }
+            }
+
+            # Detect OS partition
+            $osDrive = ($partitions | Where-Object { $_.DriveLetter -and (Test-Path ("$($_.DriveLetter):\Windows")) }).DriveLetter
+            if (-not $osDrive) { $osDrive = ($partitions | Where-Object DriveLetter | Select-Object -First 1).DriveLetter }
+            $drivePath = "$osDrive:\"
+            Write-Host "OS partition detected on drive $drivePath"
+
+            # -----------------------------
+            # STEP 8: Zero Free Space
+            # -----------------------------
+            if (Test-Path $sdeletePath) {
+                Write-Host "Zeroing free space with sdelete..."
+                $proc = Start-Process -FilePath $sdeletePath -ArgumentList "-z", "$osDrive:"  "-accepteula" -NoNewWindow -Wait -PassThru
+                if ($proc.ExitCode -ne 0) { Write-Warning "sdelete failed, falling back to cipher"; Start-Process cipher.exe -ArgumentList "/w:$drivePath" -NoNewWindow -Wait }
+            } else {
+                Start-Process cipher.exe -ArgumentList "/w:$drivePath" -NoNewWindow -Wait
+            }
+
+            # -----------------------------
+            # STEP 9: Cleanup - Remove Drive Letters & Dismount
+            # -----------------------------
+            foreach ($assignment in $assignedLetters) {
+                Remove-PartitionAccessPath -DiskNumber $assignment.DiskNumber -PartitionNumber $assignment.PartitionNumber -AccessPath "$($assignment.DriveLetter):\" -ErrorAction SilentlyContinue
+            }
+            Dismount-VHD -Path $fixedVHD -ErrorAction SilentlyContinue
+
+            # -----------------------------
+            # STEP 10: Compact VHD
+            # -----------------------------
+            Write-Host "Compacting VHD..."
+            Optimize-VHD -Path $fixedVHD -Mode Full -ErrorAction SilentlyContinue
+
+            # -----------------------------
+            # STEP 11: Report Size
+            # -----------------------------
+            $sizeGB = [math]::Round((Get-Item $fixedVHD).Length / 1GB, 2)
+            Write-Host "Final VHD size: $sizeGB GB"
+            Write-Host "Output file: $fixedVHD"
+
+            # -----------------------------
+            # STEP 12: Upload via AzCopy
             # -----------------------------
             Notify-Webhook -Status "provisioning" -Step "vhd_upload" -Message "Uploading fixed VHD via AzCopy..."
+            # -----------------------------
+            # Upload VHD to Azure Storage with AzCopy (via cmd.exe)
+            # -----------------------------
 
-            if (-not (Test-Path $fixedVHD)) { Write-Error "Fixed VHD not found: $fixedVHD"; exit 1 }
-            if (-not (Test-Path $azcopyExe)) { Write-Error "AzCopy not found: $azcopyExe"; exit 1 }
+            # Ensure script runs as admin
+            If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+                Write-Warning "This script must be run as Administrator. Relaunching..."
+                Start-Process powershell -Verb runAs -ArgumentList "-File `"$PSCommandPath`""
+                Exit
+            }
 
-            $destinationUrl = "$uploadUrl"
-            Write-Host "Uploading $fixedVHD to Azure..."
+            # Path to local VHD (localVHD has to be inside a FOLDER as azcopy upload --recursive)
+            $localVHD = "$fixedVHD"
+
+            # Destination (example: storage account container with SAS token)
+            $destinationUrl = "$AZURE_SAS_TOKEN"
+
+            # AzCopy directory (flattened to Tools)
+            $azCopyDir = "C:\Tools"
+            $azCopyExe = Join-Path $azCopyDir "azcopy.exe"
+
+            # Validate paths
+            if (-not (Test-Path $localVHD)) {
+                Write-Error "❌ Local VHD not found: $localVHD"
+                Exit 1
+            }
+            if (-not (Test-Path $azCopyExe)) {
+                Write-Error "❌ AzCopy not installed. Run download-azcopy-github.ps1 first."
+                Exit 1
+            }
+
+            Write-Host "🚀 Starting upload of $localVHD to Azure with AzCopy (cmd.exe)..."
 
             try {
-                # Use full path to azcopy.exe
-                $cmd = "`"$azcopyExe`" copy `"$fixedVHD`" `"$destinationUrl`" --recursive"
-                $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -Wait -PassThru -NoNewWindow
-                if ($process.ExitCode -eq 0) { Write-Host "Upload completed successfully." }
-                else { Write-Error "AzCopy exited with code $($process.ExitCode). Upload failed." }
-            } catch { Write-Error "Upload failed: $_" }
+                # Build AzCopy command
+                $cmd = "cd `"$azCopyDir`" && azcopy.exe copy `"$localVHD`" `"$destinationUrl`" --recursive"
 
+                # Run inside cmd.exe
+                $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -Wait -PassThru -NoNewWindow
+
+                if ($process.ExitCode -eq 0) {
+                    Write-Host "✅ Upload completed successfully."
+                } else {
+                    Write-Error "❌ AzCopy exited with code $($process.ExitCode). Upload failed."
+                }
+            } catch {
+                Write-Error "❌ Upload failed: $_"
+            }
             Notify-Webhook -Status "success" -Step "setup_finished" -Message "Hyper-V setup and VHD processing completed successfully"
 
+            # -----------------------------
+            # STEP 0: Download and install rclone (optional)
+            # -----------------------------
+            # $toolsDir = "C:\Tools"
+            # if (-not (Test-Path $toolsDir)) { New-Item -Path $toolsDir -ItemType Directory | Out-Null }
+
+            # $rcloneZip = Join-Path $toolsDir "rclone.zip"
+            # $rcloneUrl = "https://downloads.rclone.org/rclone-current-windows-amd64.zip"
+
+            # Write-Host "Downloading rclone..."
+            # Invoke-WebRequest -Uri $rcloneUrl -OutFile $rcloneZip -UseBasicParsing
+
+            # Write-Host "Extracting rclone..."
+            # Expand-Archive -Path $rcloneZip -DestinationPath $toolsDir -Force
+
+            # $rclonePath = Get-ChildItem -Path $toolsDir -Recurse -Filter "rclone.exe" | Select-Object -First 1 -ExpandProperty FullName
+            # if (-not (Test-Path $rclonePath)) { Write-Error "rclone installation failed"; exit 1 }
+            # Write-Host "✅ rclone installed successfully at: $rclonePath"
+
+            # # -----------------------------
+            # # STEP 1: Configure Backblaze B2 remote automatically
+            # # -----------------------------
+            # $remoteName = "b2remote"
+            # $bucketName = "my-bucket-name"        # Change this to your bucket
+            # $appKeyId   = "YOUR_APP_KEY_ID"       # Replace with your key ID
+            # $appKey     = "YOUR_APP_KEY"          # Replace with your application key
+
+            # # Create rclone config file if it doesn't exist
+            # $rcloneConfigDir = "$env:USERPROFILE\.config\rclone"
+            # if (-not (Test-Path $rcloneConfigDir)) { New-Item -Path $rcloneConfigDir -ItemType Directory | Out-Null }
+            # $rcloneConfigFile = Join-Path $rcloneConfigDir "rclone.conf"
+
+            # # Add B2 remote configuration
+            # $configText = @"
+            # [$remoteName]
+            # type = b2
+            # account = $appKeyId
+            # key = $appKey
+            # endpoint =
+            # "@
+
+            # # If config exists, append or replace the remote
+            # if (Test-Path $rcloneConfigFile) {
+            #     # Remove old remote if exists
+            #     (Get-Content $rcloneConfigFile) -notmatch "^\[$remoteName\]" | Set-Content $rcloneConfigFile
+            #     Add-Content -Path $rcloneConfigFile -Value $configText
+            # } else {
+            #     $configText | Out-File -FilePath $rcloneConfigFile -Encoding ASCII
+            # }
+            # Write-Host "✅ Backblaze B2 remote '$remoteName' configured successfully."
+
+            # # -----------------------------
+            # # STEP 2: Upload file to B2
+            # # -----------------------------
+            # $remotePath = "$remoteName:$bucketName/vhds/"
+
+            # Write-Host "Uploading $fixedVHD to Backblaze B2..."
+            # $cmd = "`"$rclonePath`" copy `"$fixedVHD`" `"$remotePath`" --progress"
+            # $proc = Start-Process -FilePath cmd.exe -ArgumentList "/c $cmd" -Wait -PassThru -NoNewWindow
+
+            # if ($proc.ExitCode -eq 0) {
+            #     Write-Host "✅ Upload to B2 completed successfully."
+            # } else {
+            #     Write-Error "❌ rclone upload to B2 failed with code $($proc.ExitCode)"
+            # }
         } catch {
-            $err = $_
-            Write-Error "Post-Hyper-V steps failed: $err"
-            Notify-Webhook -Status "failed" -Step "hyperv_process" -Message "Post-Hyper-V steps failed: $err"
+            Write-Error "Post-Hyper-V steps failed: $_"
+            Notify-Webhook -Status "failed" -Step "hyperv_process" -Message "Post-Hyper-V steps failed: $_"
             exit 1
         }
 
@@ -761,9 +892,6 @@ try {
         Write-Output "No snapshot URL provided, skipping VHD processing"
         Notify-Webhook -Status "provisioning" -Step "no_snapshot" -Message "No snapshot URL provided"
     }
-
-
-
 
 '@  # must be at column 0
 

@@ -1,206 +1,196 @@
-# Azure Windows VM Provisioning Script - Step-by-Step Documentation
+# Azure Windows VM Provisioning and Hyper-V VHD Export Documentation
 
-This document explains what the provided Python async script does, step by step.
+This document explains, step by step, the combined Python async and PowerShell scripts used to provision a Windows VM in Azure, capture a snapshot, and automatically convert/export it as a bootable VHD.
 
 ---
 
-## 1. Initialization and Setup
+## 1. Initialization and Setup (Python)
 
-- Imports environment variables for Azure credentials, SMTP configuration, and other runtime settings.
-- Sets global variables for storage account keys, snapshot URLs, and SAS tokens.
-- Prepares helper functions for printing logs (`print_info`, `print_warn`, `print_error`, `print_success`) and posting status updates to a webhook.
+- Loads environment variables for Azure credentials, SMTP, and webhook configuration.
+- Sets global variables for:
+  - Storage account keys
+  - Snapshot URLs
+  - SAS tokens for secure access
+- Prepares helper functions for:
+  - Logging (`print_info`, `print_warn`, `print_error`, `print_success`)
+  - Sending webhook status updates (`post_status_update`)
 
 ---
 
 ## 2. VM Snapshot and Storage Preparation
 
-1. **Stop VM for snapshot**:
+1. **Stop VM safely**:
 
-   - Calls `stop_vm_to_snapshot` to deallocate the VM to safely take a snapshot of the OS disk.
+   - Calls `stop_vm_to_snapshot` to deallocate the VM.
+   - Ensures the OS disk is in a consistent state.
 
-2. **Create VM snapshot**:
+2. **Create snapshot**:
 
-   - Uses `compute_client.snapshots.begin_create_or_update` to copy the VM’s OS disk.
+   - Copies the VM OS disk using `compute_client.snapshots.begin_create_or_update`.
 
-3. **Generate SAS URL for snapshot export**:
+3. **Generate SAS URL for snapshot**:
 
-   - Uses `compute_client.disks.begin_export` to export the snapshot to a storage account.
-   - SAS URL allows downloading the VHD file securely.
+   - Uses `compute_client.disks.begin_export` to produce a secure, temporary download link.
 
 4. **Restart VM**:
-   - After snapshot creation, the VM is restarted using `restart_vm`.
+   - Calls `restart_vm` after snapshot creation.
 
 ---
 
-## 3. Storage Account and VHD Export Container
+## 3. Temporary Storage Account and VHD Export Container
 
-1. **Create storage account**:
-
-   - Generates a unique name and calls `create_storage_account`.
-   - Stores `AZURE_STORAGE_ACCOUNT_KEY` and `AZURE_STORAGE_URL` for further operations.
-
-2. **Create VHD export container**:
-   - Calls `create_vhd_export_container_and_sas` to create a container (`vhdusb`) for fixed-size bootable VHD files.
-   - Generates a SAS token for uploading VHDs via AzCopy.
+- Creates a temporary Azure storage account for storing VHD exports.
+- Creates a container (`vhdusb`) and generates a SAS token for uploading fixed-size bootable VHD files using AzCopy.
 
 ---
 
 ## 4. PowerShell Setup Script Generation
 
-- Generates a setup script (`{vm_name}-setup.ps1`) with:
-  - `SNAPSHOT_URL` for Hyper-V download.
-  - `AZURE_SAS_TOKEN` for uploading VHDs.
-  - `WEBHOOK_URL` for sending status updates.
-- Uploads the script to a storage blob and generates a SAS URL for VM execution.
+- Dynamically generates a `setup.ps1` script with placeholders replaced for:
+  - `SNAPSHOT_URL`
+  - `AZURE_SAS_TOKEN`
+  - `WEBHOOK_URL`
+- The script is uploaded to blob storage and executed on the VM using `CustomScriptExtension`.
 
 ---
 
 ## 5. Network Infrastructure Setup
 
-1. **Create virtual network (VNet) and subnet**.
-2. **Create public IP** and associate it with the VM.
-3. **Create or get Network Security Group (NSG)**:
-   - Adds inbound rules for required ports defined in `PORTS_TO_OPEN`.
-4. **Create Network Interface (NIC)**:
-   - Attaches subnet, public IP, and NSG to the NIC.
+1. **Virtual Network and Subnet**: Creates VNet and subnet for the VM.
+2. **Public IP**: Assigns public IP to VM NIC.
+3. **Network Security Group (NSG)**: Adds inbound rules for required ports (`PORTS_TO_OPEN`).
+4. **Network Interface (NIC)**: Attaches subnet, public IP, and NSG.
 
 ---
 
 ## 6. VM Creation
 
-1. **Define VM OS Disk**:
-
-   - Standard_LRS, boot from image, SSD size defined by `OS_DISK_SSD_GB`.
-
-2. **Define OS Profile**:
-
-   - Admin username/password, Windows configuration with automatic updates enabled.
-
-3. **Define VM Image Reference**:
-
-   - Uses a fresh Windows marketplace image.
-
-4. **Define Security Profile**:
-
-   - Trusted Launch enabled.
-
-5. **Create VM**:
-   - Calls `compute_client.virtual_machines.begin_create_or_update` with all parameters.
+- Defines OS disk and VM image (fresh Windows Marketplace image).
+- Sets admin credentials and security profile (Trusted Launch).
+- Creates VM using `compute_client.virtual_machines.begin_create_or_update`.
 
 ---
 
-## 7. Public IP Verification
+## 7. Public IP and DNS Verification
 
-- Verifies the NIC has a public IP assigned.
-- Fetches and stores the public IP for DNS and notification purposes.
-- Cleans up resources if public IP is missing.
-
----
-
-## 8. DNS Configuration
-
-1. **Create DNS zone if not exists**.
-2. **Verify NS delegation** with retries using Google DNS as resolver.
-3. **Create DNS A records**:
-   - `pin.{subdomain}`
-   - `drop.{subdomain}`
-   - `web.{subdomain}`
+- Verifies public IP assignment.
+- Creates DNS zone and A records:
+  - `pin.{subdomain}`
+  - `drop.{subdomain}`
+  - `web.{subdomain}`
+- Retries NS delegation verification using public resolvers.
 
 ---
 
-## 9. Custom Script Extension Installation
+## 8. Custom Script Extension Execution
 
-- Installs the `CustomScriptExtension` on the VM.
-- Executes the uploaded PowerShell setup script from blob storage.
-- Updates webhook status on success or failure.
-
----
-
-## 10. Temporary Storage Cleanup
-
-- Deletes blob and container used for setup script.
-- Deletes temporary storage account.
-- Logs warning if cleanup fails (non-critical).
+- Installs `CustomScriptExtension` on VM.
+- Executes uploaded PowerShell setup script.
+- Updates webhook with success/failure of script execution.
 
 ---
 
-## 11. Completion Email
+## 9. PowerShell Setup Script – Hyper-V Preparation and Cleanup
 
-- Sends HTML email notification to configured recipients.
-- Includes:
-  - VM name
+1. **Admin Elevation**:
+
+   - Checks for admin privileges; relaunches if necessary.
+
+2. **System Debloat**:
+
+   - Registry tweaks for telemetry, Cortana, Windows Search, Edge first-run, and Windows Update auto settings.
+   - Disables unnecessary services (`WSearch`, `DiagTrack`, `WerSvc`).
+
+3. **User Debloat**:
+
+   - Adjusts HKCU keys for OneDrive, Xbox, GameBar, Office, notifications, and lock screen features.
+
+4. **Network Profile Enforcement**:
+
+   - Forces all network profiles to Private.
+   - Disables discovery-related firewall rules.
+
+5. **Post-Reboot Helper**:
+   - Ensures all tweaks persist after Hyper-V installation.
+   - Creates a watchdog script to enforce Private network profiles.
+   - Registers scheduled tasks for post-reboot execution.
+
+---
+
+## 10. Hyper-V Enablement and Snapshot Processing
+
+1. **Enable Hyper-V**:
+
+   - Checks if `Microsoft-Hyper-V-All` is installed.
+   - Enables Hyper-V if not already enabled and schedules a reboot.
+
+2. **VHD Download & Conversion**:
+
+   - Downloads snapshot VHD via `wget` (resumable).
+   - Converts dynamic VHD to fixed-size VHD using `Convert-VHD`.
+
+3. **Free Space Zeroing**:
+
+   - Uses `sdelete` or `cipher /w` to zero unused space, optimizing for USB export.
+
+4. **VHD Optimization**:
+
+   - Compacts VHD using `Optimize-VHD` to minimize size.
+
+5. **VHD Upload**:
+   - Uploads fixed VHD to Azure via AzCopy with SAS token.
+
+---
+
+## 11. Watchdog Script for Network and Services
+
+- Script ensures:
+  - All network profiles remain Private.
+  - `NlaSvc` and discovery-related services stay disabled.
+  - Scheduled tasks enforce network settings across reboots.
+
+---
+
+## 12. Cleanup and Logging
+
+- Removes temporary helper scripts.
+- Unregisters scheduled tasks.
+- Logs progress and errors to:
+  - `C:\Program Files\Logs\setup_hyperv_log.txt`
+- Sends webhook notifications at each significant step.
+
+---
+
+## 13. Final Status Reporting
+
+- Sends `completed` webhook status.
+- Optionally, sends email with:
+  - VM details
   - VHD download link
-  - AzCopy GitHub release link
-- Updates webhook status for email success or failure.
+  - AzCopy release link
 
 ---
 
-## 12. Final Status Update
+## 14. Error Handling
 
-- Waits briefly for cleanup to finish.
-- Sends final `completed` status to webhook.
-- Logs URLs for Moonlight service, drop files service, and pin code.
-
----
-
-## 13. Error Handling
-
-- Each major step has `try/except` blocks.
+- Each major step wrapped in `try/catch`.
 - On failure:
-  - Sends `failed` status to webhook with step name and error message.
-  - Cleans up Azure resources using `cleanup_resources_on_failure`.
-- Top-level exceptions are caught to ensure proper cleanup and logging.
+  - Sends `failed` webhook status.
+  - Cleans up Azure resources.
+- Ensures robust handling of partial failures, network issues, or file download errors.
 
 ---
 
-## 14. Helper Functions Overview
+## 15. Summary
 
-1. **Storage helpers**:
+The combined Python and PowerShell automation pipeline allows:
 
-   - `create_storage_account`
-   - `ensure_container_exists`
-   - `upload_blob_and_generate_sas`
+- **Fully automated VM provisioning** in Azure.
+- **Snapshot creation and export** to storage.
+- **Hyper-V setup on Windows VM**, including debloating and network hardening.
+- **Conversion to bootable fixed VHD** with free-space zeroing and optimization.
+- **Automated upload** to Azure storage or local USB export.
+- **Webhook and email notifications** at every step.
+- **Post-reboot persistence** with watchdog scripts.
 
-2. **VM Size compatibility**:
-
-   - `get_compatible_vm_sizes`
-   - `check_vm_size_compatibility`
-
-3. **DNS helpers**:
-
-   - `check_ns_delegation_with_retries`
-   - `check_ns_delegation`
-
-4. **Cleanup helpers**:
-
-   - `cleanup_temp_storage`
-   - `cleanup_resources_on_failure`
-
-5. **Snapshot helpers**:
-
-   - `stop_vm_to_snapshot`
-   - `create_vm_snapshot_and_generate_sas`
-   - `restart_vm`
-
-6. **VHD export helpers**:
-
-   - `create_vhd_export_container_and_sas`
-
-7. **Status update**:
-   - `post_status_update` with retry logic.
-
----
-
-### Summary
-
-This script fully automates the provisioning of a Windows VM in Azure with:
-
-- VM snapshot and export
-- Temporary storage handling
-- Network and DNS setup
-- Script extension execution
-- Email notification
-- Detailed webhook status updates at every step
-- Robust error handling and cleanup
-
-It is designed for automation pipelines where reliability, status reporting, and resource cleanup are critical.
+This enables a reliable **cloud → bootable Hyper-V/USB workflow** with minimal manual intervention.

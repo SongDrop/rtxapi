@@ -1,55 +1,71 @@
 # -----------------------------
-# Download & Install AzCopy (GitHub latest release)
+# Download & Install AzCopy (custom URL, flattened to C:\Tools)
 # -----------------------------
-# Ensure script runs as admin
-If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+
+# Ensure admin
+If (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Warning "This script must be run as Administrator. Relaunching..."
     Start-Process powershell -Verb runAs -ArgumentList "-File `"$PSCommandPath`""
     Exit
 }
 
-$azCopyDir = "C:\Program Files\AzCopy"
-$azCopyExe = Join-Path $azCopyDir "azcopy.exe"
-$tempZip   = "$env:TEMP\azcopy.zip"
+$azCopyDir   = "C:\Tools"
+$azCopyExe   = Join-Path $azCopyDir "azcopy.exe"
+$tempZip     = Join-Path $env:TEMP ("AzCopyWin_{0}.zip" -f ([guid]::NewGuid().ToString()))
+$downloadUrl = "https://github.com/ProjectIGIRemakeTeam/azcopy-windows/releases/download/azcopy/AzCopyWin.zip"
 
-# Create destination folder
-if (-not (Test-Path $azCopyDir)) {
-    New-Item -ItemType Directory -Path $azCopyDir -Force | Out-Null
-}
+# Prepare folder
+if (-not (Test-Path $azCopyDir)) { New-Item -ItemType Directory -Path $azCopyDir -Force | Out-Null }
 
-# -----------------------------
-# Download latest AzCopy from GitHub
-# -----------------------------
+# Download
 try {
-    Write-Host "Fetching latest AzCopy release info from GitHub..."
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/Azure/azure-storage-azcopy/releases/latest"
-    $asset   = $release.assets | Where-Object { $_.name -match "windows.*zip" } | Select-Object -First 1
-    if (-not $asset) { throw "Could not find AzCopy Windows zip asset in GitHub release." }
-
-    Write-Host "Downloading AzCopy from $($asset.browser_download_url)"
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tempZip -UseBasicParsing
+    Write-Host "Downloading AzCopy..."
+    $wc = New-Object System.Net.WebClient
+    $wc.DownloadFile($downloadUrl, $tempZip)
+    $wc.Dispose()
 } catch {
-    Write-Error "Failed to download AzCopy from GitHub: $_"
+    Write-Error "Failed to download AzCopy: $_"
     Exit 1
 }
 
-# -----------------------------
-# Extract and install
-# -----------------------------
+# Extract & flatten
 try {
     Write-Host "Extracting AzCopy to $azCopyDir..."
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($tempZip, $azCopyDir, $true)
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($tempZip)
+
+    foreach ($entry in $zip.Entries) {
+        # Strip top folder
+        $relativePath = $entry.FullName -replace "^[^/]+/", ""
+        if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
+
+        $destPath = Join-Path $azCopyDir $relativePath
+        $destDir  = Split-Path $destPath -Parent
+
+        if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+
+        if ($entry.Name) {
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true)
+        }
+    }
+
+    $zip.Dispose()
 
     if (-not (Test-Path $azCopyExe)) { throw "azcopy.exe not found after extraction." }
 
-    # Add to PATH
-    $env:PATH += ";$azCopyDir"
-    [Environment]::SetEnvironmentVariable("PATH", $env:PATH, [EnvironmentVariableTarget]::Machine)
+    # Add to PATH if missing
+    $currentPath = [Environment]::GetEnvironmentVariable("PATH", [EnvironmentVariableTarget]::Machine)
+    if ($currentPath -notlike "*$azCopyDir*") {
+        $newPath = "$currentPath;$azCopyDir"
+        [Environment]::SetEnvironmentVariable("PATH", $newPath, [EnvironmentVariableTarget]::Machine)
+    }
 
-    Write-Host "AzCopy installed successfully at $azCopyExe"
+    Write-Host "✅ AzCopy installed successfully at $azCopyExe"
+    & $azCopyExe --version
 } catch {
-    Write-Error "Installation failed: $_"
+    Write-Error "Extraction / Installation failed: $_"
 } finally {
+    if ($zip) { $zip.Dispose() }
     if (Test-Path $tempZip) { Remove-Item $tempZip -Force }
 }
