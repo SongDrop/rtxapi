@@ -1433,21 +1433,21 @@ def upload_blob_and_generate_sas(blob_service_client, container_name, blob_name,
 # ===== Hyper-V Compatible, Cost-Efficient VM Sizes =====
 def get_compatible_vm_sizes():
     """
-    Return list of VM sizes compatible with Hyper-V (no eGPU), balancing CPU, RAM, and cost.
+    Return list of VM sizes compatible with Hyper-V (no GPU), 
+    balancing CPU, RAM, and cost (D-Series v3).
     """
     return [
-        # 4 vCPUs, 16 GB RAM
-        'Standard_D4as_v4',
-        'Standard_D4ds_v4',
-        'Standard_D4s_v4',
+        # 2 vCPUs, 8 GB RAM (~£65.12/month)
+        'Standard_D2s_v3',
 
-        # 8 vCPUs, 32 GB RAM
-        'Standard_D8as_v4',
-        'Standard_D8ds_v4',
-        'Standard_D8s_v4',
+        # 4 vCPUs, 16 GB RAM (~£130.23/month)
+        'Standard_D4s_v3',
 
-        # 16 vCPUs, 64 GB RAM
-        'Standard_D16s_v4'
+        # 8 vCPUs, 32 GB RAM (~£260.46/month)
+        'Standard_D8s_v3',
+
+        # 16 vCPUs, 64 GB RAM (~£520.92/month)
+        'Standard_D16s_v3',
     ]
 
 
