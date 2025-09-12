@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Video Game VM Workflow — Spin, Build, Export (Cost & Steps)</title>
+    <style>
+        :root {
+            --bg: #f9fafb;
+            --card: #ffffff;
+            --accent: #2563eb;
+            --muted: #4b5563;
+            --ok: #059669;
+            --warn: #d97706;
+            --danger: #dc2626;
+            --glass: rgba(0, 0, 0, 0.03);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+        }
+
+        body {
+            background: linear-gradient(180deg, #f1f5f9 0%, #f9fafb 100%);
+            color: #111827;
+            margin: 0;
+            padding: 36px;
+        }
+
+        .container {
+            max-width: 980px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 20px;
+            letter-spacing: -0.2px
+        }
+
+        .card {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 18px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+            margin-bottom: 16px;
+            border: 1px solid rgba(0, 0, 0, 0.05);
+        }
+
+        .muted {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            gap: 16px;
+        }
+
+        .big {
+            font-size: 14px
+        }
+
+        .pill {
+            display: inline-block;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: var(--glass);
+            color: var(--muted);
+            font-weight: 600;
+            font-size: 13px
+        }
+
+        .cost {
+            font-weight: 700;
+            color: var(--accent);
+            font-size: 18px
+        }
+
+        dt {
+            color: var(--muted);
+            font-size: 13px
+        }
+
+        dd {
+            margin: 0 0 12px 0;
+            font-size: 15px
+        }
+
+        .steps {
+            counter-reset: step;
+            display: grid;
+            gap: 10px
+        }
+
+        .step {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start
+        }
+
+        .step::before {
+            counter-increment: step;
+            content: counter(step);
+            min-width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: var(--accent);
+            display: grid;
+            place-items: center;
+            color: white;
+            font-weight: 700
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 6px
+        }
+
+        th,
+        td {
+            padding: 10px 8px;
+            text-align: left;
+            border-bottom: 1px dashed rgba(0, 0, 0, 0.06);
+            font-size: 14px
+        }
+
+        footer {
+            margin-top: 18px;
+            color: var(--muted);
+            font-size: 13px
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 6px 10px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.04);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            font-weight: 700
+        }
+
+        .sources {
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.5
+        }
+
+        .cta {
+            display: inline-block;
+            margin-top: 12px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: linear-gradient(90deg, var(--accent), #1e3a8a);
+            color: white;
+            font-weight: 700;
+            text-decoration: none
+        }
+
+        code {
+            background: rgba(0, 0, 0, 0.05);
+            padding: 4px 6px;
+            border-radius: 6px;
+            color: #1e3a8a
+        }
+    </style>
+
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <img src="https://i.postimg.cc/sfpwJ4W6/nvidialogo.png"
+                style="width:56px;height:56px;border-radius:12px;background:linear-gradient(180deg,#08203a,#05253f);display:grid;place-items:center;font-weight:800;color:#bfe1ff">
+            </img>
+            <div>
+                <h1>Standard_NV6ads_A10_v5 VM workflow — Spin → Build → Export</h1>
+                <div class="muted">Create a GPU-capable VM, perform setup actions (install, pre-cache, build), then
+                    export the image. Costs and steps summarized below.</div>
+            </div>
+        </header>
+
+        <section class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+                <div>
+                    <div class="pill">VM SKU: <strong style="margin-left:8px">Standard_NV6ads_A10_v5</strong></div>
+                    <div style="margin-top:8px" class="muted">OS Disk (example): <code>256 GB</code> — GPU-enabled
+                        instance suitable for heavy builds and video game environment workloads.</div>
+                </div>
+                <div style="text-align:right">
+                    <div class="muted">Estimated total (one-time + 1 month)</div>
+                    <div class="cost">$41.41 → $44.17 USD</div>
+                    <div class="muted" style="margin-top:6px">(~£33.5 → £35.8) — depends on exact hourly VM price & disk
+                        tier</div>
+                </div>
+            </div>
+        </section>
+
+        <div class="grid">
+            <div>
+                <div class="card">
+                    <h3 style="margin-top:0;margin-bottom:8px">What you do</h3>
+                    <div class="muted">High-level flow</div>
+                    <div class="steps" style="margin-top:10px">
+                        <div class="step">
+                            <div>
+                                <strong>1. Spin up the VM</strong>
+                                <div class="muted">Create the NV6ads_A10_v5 instance, attach a 256 GB OS disk (managed
+                                    disk / Premium recommended).</div>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div>
+                                <strong>2. Build & pre-install</strong>
+                                <div class="muted">Install softwares on Windows 10, prepare the “clonable
+                                    workstation”
+                                    snapshot (example: 10 hours for first-time setup).</div>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div>
+                                <strong>3. Convert & compact image</strong>
+                                <div class="muted">Use the dynamic->compact->fixed pipeline to produce an Azure-ready
+                                    fixed VHD image.</div>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div>
+                                <strong>4. Export or clone</strong>
+                                <div class="muted">Export image for reuse, or create images for remote clones (costs
+                                    shown below).</div>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div>
+                                <strong>5. Auto-cleanup</strong>
+                                <div class="muted">VM is deleted (ephemeral), disks removed as needed to avoid ongoing
+                                    compute charges.</div>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div>
+                                <strong>6. Download uploaded vhd</strong>
+                                <div class="muted">Use <a
+                                        href="https://vhdusbdownloader.xyz/download">vhdusbdownloader</a> to download
+                                    the `your-os-fixed-size-bootable.vhd` to put it on usb pendrive.</div>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div>
+                                <strong>7. Create boxart for your usb</strong>
+                                <div class="muted">Follow this <a
+                                        href="https://vhdusbdownloader.xyz/tutorial">tutorial</a> to learn how to build
+                                    your first box for yur development environment built in th cloud.</div>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div>
+                                <strong>8. Make your game</strong>
+                                <div class="muted">Once you setup your development environment remotely and locally,the
+                                    production can begun, which is the fun part. Use <a
+                                        href="https://vhdusbdownloader.xyz/tutorial">team development tools</a> to
+                                    fasten your build times, and ship a product in 6 months.</div>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div>
+                                <strong>9. Design your end-user product box</strong>
+                                <div class="muted">Nw you have your own development environment box, and you finished
+                                    your game, it time to design the box-arts for your physical distribution.
+                                </div>
+                            </div>
+                        </div>
+                        <div class="step">
+                            <div>
+                                <strong>10. Release digitally and physically your game</strong>
+                                <div class="muted">Every game developers dream is to reach this point, when their video
+                                    game can lands in the shops.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top:12px">
+                    <h3 style="margin-top:0">Time assumptions (example)</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Action</th>
+                                <th>Estimated</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>vGPU VM setup & build Windows 10(first-time)</td>
+                                <td>~10 hours (example)</td>
+                            </tr>
+                            <tr>
+                                <td>Clone for scalable remote teamworks</td>
+                                <td>~15 minutes</td>
+                            </tr>
+                            <tr>
+                                <td>Download 256 GB snapshot (Hyper-V conversion)</td>
+                                <td>~1 hour (network-dependent)</td>
+                            </tr>
+
+                            <tr>
+                                <td>Hyper-V Conversion (dynamic→compact→fixed)</td>
+                                <td>~2 hours</td>
+                            </tr>
+                            <tr>
+                                <td>Upload to storage (AzCopy)</td>
+                                <td>~1 hour</td>
+                            </tr>
+                            <tr>
+                                <td>Download vhd to usb (vhdusbdownloader)</td>
+                                <td>~10 hours (with 10mbps download speed - max 120mbps)</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <aside>
+                <div class="card">
+                    <h4 style="margin-top:0">Cost breakdown (example)</h4>
+                    <dl>
+                        <dt>Snapshot egress (156 GB billable)</dt>
+                        <dd class="muted">$13.57 (one-time)</dd>
+                        <dt>NV6ads_A10_v5 VM (10 hours)</dt>
+                        <dd class="muted">$4.54 → $7.30</dd>
+                        <dt>256 GB Premium SSD v2 (first month)</dt>
+                        <dd class="muted">$23.30 / month</dd>
+                        <dt style="margin-top:6px">Total (one-time + 1 month)</dt>
+                        <dd class="cost">$41.41 → $44.17</dd>
+                    </dl>
+
+                    <div style="margin-top:12px">
+                        <span class="badge">Note</span>
+                        <div class="muted" style="margin-top:8px">Prices vary by region and exact SKU details. The NV
+                            series are GPU-enabled; check regional on-demand hourly in Azure portal for precise billing.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-top:12px">
+                    <h4 style="margin-top:0">Export costs & options</h4>
+                    <div class="muted">Two common workflows</div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Action</th>
+                                <th>Cost driver</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Export image to Blob (upload)</td>
+                                <td>Storage + (ingress free) — minimal extra cost besides storage</td>
+                            </tr>
+                            <tr>
+                                <td>Download exported image (egress)</td>
+                                <td>Egress charges (same rate used above)</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </aside>
+        </div>
+
+        <section class="card">
+            <h3 style="margin-top:0">How to use this system</h3>
+            <ol>
+                <li class="muted">Launch NV6ads_A10_v5 with a 256 GB managed OS disk.</li>
+                <li class="muted">Install and configure the workstation (your build, caches, etc.).</li>
+                <li class="muted">Run the dynamic→compact→fixed conversion pipeline to create an Azure-ready VHD.</li>
+                <li class="muted">Store the fixed VHD in Blob / managed disk (first-month cost shown above).</li>
+                <li class="muted">Optionally export / clone for remote spin-ups — those clones are lightweight to
+                    instantiate but pay storage & egress when moved.</li>
+            </ol>
+            <a class="cta" href="#">Save as PDF • Share</a>
+        </section>
+
+        <footer class="card sources">
+            <strong>Sources & notes</strong>
+            <ul>
+                <li>NVads A10 v5 series documentation (GPU VM family): Microsoft docs.
+                    :contentReference[oaicite:9]{index=9}</li>
+                <li>Public hourly price samples for NV6ads_A10_v5 (cloud pricing listings used as range examples).
+                    :contentReference[oaicite:10]{index=10}</li>
+                <li>Azure bandwidth/egress policy and examples. :contentReference[oaicite:11]{index=11}</li>
+                <li>Premium SSD v2 capacity (representative GB/month price used).
+                    :contentReference[oaicite:12]{index=12}</li>
+            </ul>
+            <div style="margin-top:8px" class="muted">This page is an estimate for planning & internal cost visibility.
+                Always verify final hourly and storage rates in the Azure Pricing Calculator or your subscription's
+                pricing page for your chosen region.</div>
+        </footer>
+    </div>
+</body>
+
+</html>
