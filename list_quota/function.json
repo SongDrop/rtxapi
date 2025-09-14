@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "list_images",
+      "route": "list_quota",
       "methods": ["get", "post"]
     },
     {

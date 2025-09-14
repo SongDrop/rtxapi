@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "list_snapshots_html",
+      "route": "list_snapshot_html",
       "methods": ["get", "post"]
     },
     {
