@@ -244,8 +244,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     "sku": snapshot.sku.name if snapshot.sku else "Standard",
                     "provisioning_state": snapshot.provisioning_state,
                     "time_created": snapshot.time_created.isoformat() if snapshot.time_created else "N/A",
-                    "os_type": snapshot.os_type.value if snapshot.os_type else "Unknown",
-                    "hyper_v_generation": snapshot.hyper_v_generation.value if snapshot.hyper_v_generation else "Unknown"
+                    "os_type": str(snapshot.os_type) if snapshot.os_type else "Unknown",
+                    "hyper_v_generation": str(snapshot.hyper_v_generation) if snapshot.hyper_v_generation else "Unknown"
                 })
             
             result = {
