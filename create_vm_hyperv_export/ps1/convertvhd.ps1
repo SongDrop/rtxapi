@@ -1,40 +1,23 @@
 # ============================================================
-# Convert snapshot VHD → dynamic VHDX → shrink → compact → fixed VHD
-# USB-safe and Azure-ready
+# Optimized VHD Conversion with Defrag & Compact Techniques
 # ============================================================
 
 #region Parameters
-$snapshotVHD   = "C:\Users\source\Downloads\sxshdjue3-snapshot-1757506900.vhd"   # Input snapshot
-$dynamicVHDX   = "C:\Users\source\Downloads\sxshdjue3-dynamic-vhd.vhdx"          # Temp dynamic
-$fixedAzureVHD = "C:\Users\source\Downloads\vhdusb\sxshdjue3-fixed-azure.vhd"   # Final fixed for USB/Azure
+$snapshotVHD    = "C:\Users\source\Downloads\sxshdjue3-snapshot-1757506900.vhd"
+$dynamicVHDX    = "C:\Users\source\Downloads\sxshdjue3-dynamic-vhd.vhdx"
+$fixedAzureVHD  = "C:\Users\source\Downloads\vhdusb\sxshdjue3-fixed-azure.vhd"
 $OverwriteFixedVHD = $true
-$toolsDir = "C:\Tools"
-$targetSizeGB = 220  # Max size for USB
+$targetSizeGB   = 220
 #endregion
 
-# --- Ensure Admin & Hyper-V module
+# --- Ensure Admin & Required Modules
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Error "Run this script as Administrator."
     exit 1
 }
-try { Import-Module Hyper-V -ErrorAction Stop } catch {
-    Write-Error "Hyper-V module not available. Install Hyper-V role first."
-    exit 1
-}
 
-# --- Prepare tools (sdelete)
-if (-not (Test-Path $toolsDir)) { New-Item -Path $toolsDir -ItemType Directory | Out-Null }
-$sdeleteZip = Join-Path $toolsDir "SDelete.zip"
-$sdeleteExtractDir = Join-Path $toolsDir "SDelete"
-$sdeletePath = Join-Path $sdeleteExtractDir "sdelete.exe"
-if (-not (Test-Path $sdeletePath)) {
-    Write-Host "Downloading SDelete..."
-    Invoke-WebRequest -Uri "https://download.sysinternals.com/files/SDelete.zip" -OutFile $sdeleteZip -UseBasicParsing
-    Expand-Archive -Path $sdeleteZip -DestinationPath $toolsDir -Force
-    $sdeletePath = Get-ChildItem -Path $toolsDir -Recurse -Filter "sdelete.exe" | Select-Object -First 1 -ExpandProperty FullName
-}
-Unblock-File -Path $sdeletePath
+Import-Module Hyper-V -ErrorAction Stop
 
 # --- Validate input
 if (-not (Test-Path $snapshotVHD)) { Write-Error "Snapshot VHD not found"; exit 1 }
@@ -44,75 +27,131 @@ if ((Test-Path $fixedAzureVHD) -and $OverwriteFixedVHD) { Remove-Item $fixedAzur
 # Step 1: Convert snapshot → dynamic VHDX
 # ============================================================
 try {
-    Write-Host "Converting snapshot → dynamic VHDX..."
+    Write-Host "[1/6] Converting snapshot → dynamic VHDX..."
     Convert-VHD -Path $snapshotVHD -DestinationPath $dynamicVHDX -VHDType Dynamic -ErrorAction Stop
-    Write-Host "Created dynamic VHDX: $dynamicVHDX"
+    Write-Host "✓ Created dynamic VHDX"
 } catch {
-    Write-Error "Convert-VHD to dynamic failed: $_"
+    Write-Error "Convert-VHD failed: $_"
     exit 1
 }
 
 # ============================================================
-# Step 2: Mount, shrink OS partition, zero free space, compact
+# Step 2: Mount VHDX for optimization
 # ============================================================
 try {
-    Write-Host "Mounting dynamic VHDX..."
+    Write-Host "[2/6] Mounting VHDX for optimization..."
     Mount-VHD -Path $dynamicVHDX -ErrorAction Stop
-    Start-Sleep -Seconds 5
+    Start-Sleep -Seconds 10
 
-    $disk = Get-Disk | Where-Object { $_.Location -like "*$([System.IO.Path]::GetFileName($dynamicVHDX))*" } | Select-Object -First 1
-    if (-not $disk) { throw "Could not find mounted disk for $dynamicVHDX" }
+    $disk = Get-Disk | Where-Object { $_.Location -like "*$(Split-Path $dynamicVHDX -Leaf)*" } | Select-Object -First 1
+    if (-not $disk) { throw "Could not find mounted disk" }
 
-    # Find OS partition
-    $osPartition = (Get-Partition -DiskNumber $disk.Number | Where-Object {
+    $osPartition = Get-Partition -DiskNumber $disk.Number | Where-Object {
         $_.DriveLetter -and (Test-Path "$($_.DriveLetter):\Windows")
-    } | Select-Object -First 1)
-    if (-not $osPartition) { throw "Could not locate OS partition inside VHDX" }
+    } | Select-Object -First 1
+
+    if (-not $osPartition) { throw "Could not locate OS partition" }
+    
     $osDrive = $osPartition.DriveLetter
-
-    # Shrink partition to fit USB
-    Write-Host "Resizing OS partition $($osPartition.PartitionNumber) to $targetSizeGB GB..."
-    Resize-Partition -DiskNumber $disk.Number -PartitionNumber $osPartition.PartitionNumber -Size ($targetSizeGB * 1GB)
-    Start-Sleep -Seconds 2
-
-    # Zero free space
-    Write-Host "Zeroing free space on $osDrive`:\ ..."
-    $proc = Start-Process -FilePath $sdeletePath -ArgumentList @("-z", "$osDrive`:", "-accepteula") -NoNewWindow -Wait -PassThru
-    if ($proc.ExitCode -ne 0) { 
-        Write-Warning "sdelete failed, fallback to cipher"
-        Start-Process cipher -ArgumentList "/w:$osDrive`:" -Wait
-    }
+    Write-Host "✓ Mounted as drive $osDrive`:"
 
 } catch {
-    Write-Error "Zeroing/shrink failed: $_"
-} finally {
-    Write-Host "Dismounting dynamic VHDX..."
-    Dismount-VHD -Path $dynamicVHDX -ErrorAction SilentlyContinue
-}
-
-# Compact dynamic VHDX
-try {
-    Write-Host "Compacting dynamic VHDX..."
-    Optimize-VHD -Path $dynamicVHDX -Mode Full -ErrorAction Stop
-    Write-Host "Dynamic VHDX compacted."
-} catch {
-    Write-Warning "Optimize-VHD failed: $_"
-}
-
-# ============================================================
-# Step 3: Convert compacted dynamic VHDX → fixed VHD (USB/Azure-ready)
-# ============================================================
-try {
-    Write-Host "Converting dynamic VHDX → fixed Azure/USB VHD..."
-    Convert-VHD -Path $dynamicVHDX -DestinationPath $fixedAzureVHD -VHDType Fixed -ErrorAction Stop
-    $sizeGB = [math]::Round((Get-Item $fixedAzureVHD).Length / 1GB, 2)
-    $hash = Get-FileHash -Path $fixedAzureVHD -Algorithm SHA256 | Select-Object -ExpandProperty Hash
-    Write-Host "✅ Final VHD: $fixedAzureVHD"
-    Write-Host "   Size  : $sizeGB GB"
-    Write-Host "   SHA256: $hash"
-} catch {
-    Write-Error "Final convert to fixed failed: $_"
+    Write-Error "Mount failed: $_"
     exit 1
+}
+
+# ============================================================
+# Step 3: Advanced Defragmentation Sequence (Community Method)
+# ============================================================
+try {
+    Write-Host "[3/6] Running advanced defragmentation sequence..."
+    
+    # Sequence from community wisdom
+    Write-Host "  Running defrag /x (free space consolidation)..."
+    Start-Process -FilePath "defrag.exe" -ArgumentList "$osDrive`: /x" -Wait -NoNewWindow
+    
+    Write-Host "  Running defrag /k /l (SSD optimization)..."
+    Start-Process -FilePath "defrag.exe" -ArgumentList "$osDrive`: /k /l" -Wait -NoNewWindow
+    
+    Write-Host "  Running defrag /x again..."
+    Start-Process -FilePath "defrag.exe" -ArgumentList "$osDrive`: /x" -Wait -NoNewWindow
+    
+    Write-Host "  Running defrag /k (final optimization)..."
+    Start-Process -FilePath "defrag.exe" -ArgumentList "$osDrive`: /k" -Wait -NoNewWindow
+    
+    Write-Host "✓ Defragmentation completed"
+
+} catch {
+    Write-Warning "Defragmentation failed: $($_.Exception.Message)"
+}
+
+# ============================================================
+# Step 4: Shrink Partition (if needed)
+# ============================================================
+try {
+    Write-Host "[4/6] Checking partition size..."
+    $partitionInfo = Get-Partition -DiskNumber $disk.Number -PartitionNumber $osPartition.PartitionNumber
+    $currentSizeGB = [math]::Round($partitionInfo.Size / 1GB, 2)
+    
+    if ($currentSizeGB -gt $targetSizeGB) {
+        Write-Host "Shrinking partition from $currentSizeGB GB to $targetSizeGB GB..."
+        Resize-Partition -DiskNumber $disk.Number -PartitionNumber $osPartition.PartitionNumber -Size ($targetSizeGB * 1GB) -ErrorAction Stop
+        Write-Host "✓ Partition shrunk"
+    } else {
+        Write-Host "✓ Partition already at optimal size ($currentSizeGB GB)"
+    }
+} catch {
+    Write-Warning "Partition shrink failed: $($_.Exception.Message)"
+}
+
+# ============================================================
+# Step 5: Dismount and Compact
+# ============================================================
+try {
+    Write-Host "[5/6] Dismounting and compacting VHDX..."
+    Dismount-VHD -Path $dynamicVHDX -ErrorAction Stop
+    
+    # Full optimization
+    Optimize-VHD -Path $dynamicVHDX -Mode Full -ErrorAction Stop
+    Write-Host "✓ VHDX compacted"
+
+} catch {
+    Write-Error "Compact failed: $_"
+    exit 1
+}
+
+# ============================================================
+# Step 6: Convert to Fixed VHD (Hyper-V native - FAST)
+# ============================================================
+try {
+    Write-Host "[6/6] Converting to fixed Azure VHD..."
+    $destFolder = Split-Path -Path $fixedAzureVHD -Parent
+    if (-not (Test-Path $destFolder)) { New-Item -Path $destFolder -ItemType Directory | Out-Null }
+
+    # Use Hyper-V's native conversion (fast)
+    Convert-VHD -Path $dynamicVHDX -DestinationPath $fixedAzureVHD -VHDType Fixed -ErrorAction Stop
+    
+    # Verify results
+    $finalVhd = Get-Item $fixedAzureVHD
+    $sizeGB = [math]::Round($finalVhd.Length / 1GB, 2)
+    $hash = Get-FileHash -Path $fixedAzureVHD -Algorithm SHA256 | Select-Object -ExpandProperty Hash
+
+    Write-Host "`n✅ CONVERSION COMPLETE"
+    Write-Host "   Final VHD: $fixedAzureVHD"
+    Write-Host "   Size: $sizeGB GB"
+    Write-Host "   SHA256: $hash"
+
+} catch {
+    Write-Error "Convert to fixed VHD failed: $_"
+    exit 1
+}
+
+# ============================================================
+# Cleanup
+# ============================================================
+if (Test-Path $dynamicVHDX) {
+    Remove-Item $dynamicVHDX -Force
+    Write-Host "Cleaned up temporary VHDX file."
 }
 
 Write-Host "Script completed successfully 🎉"

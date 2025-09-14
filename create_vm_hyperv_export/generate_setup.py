@@ -511,8 +511,22 @@ try {
     # Full VHD Automation Script (Download, Convert, Shrink, Compact, Upload)
     # -----------------------------
 
+# ============================================================
+# Full VHD Automation Script (Download, Convert, Shrink, Compact, Upload)
+# ============================================================
+
+
     if ($env:SNAPSHOT_URL -and $env:SNAPSHOT_URL.Trim() -ne "") {
 
+        # --- Ensure Admin & Required Modules
+        if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
+            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            Write-Error "Run this script as Administrator."
+            exit 1
+        }
+
+        Import-Module Hyper-V -ErrorAction Stop
+        
         # --- Folders Setup ---
         $userProfile = [Environment]::GetFolderPath("UserProfile")
         $snapshotDir = Join-Path $userProfile "Downloads"
@@ -547,7 +561,7 @@ try {
             # -----------------------------
             # STEP 1: Download Snapshot with wget (resumable)
             # -----------------------------
-            Write-Host "Ensuring wget is installed..."
+            Write-Host "[1/8] Ensuring wget is installed..."
             if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
                 Set-ExecutionPolicy Bypass -Scope Process -Force
                 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -556,26 +570,39 @@ try {
             }
 
             $wgetPath = "C:\ProgramData\chocolatey\bin\wget.exe"
-            if (-not (Test-Path $wgetPath)) { choco install wget -y }
+            if (-not (Test-Path $wgetPath)) { 
+                choco install wget -y --force --no-progress 
+            }
             while (-not (Test-Path $wgetPath)) { Start-Sleep -Seconds 2 }
 
             $downloadUrl  = $env:SNAPSHOT_URL
             $downloadPath = $snapshotVHD
             $maxRetries = 500
             $retryDelay = 5
+            
+            Write-Host "[2/8] Downloading snapshot VHD..."
             for ($attempt=1; $attempt -le $maxRetries; $attempt++) {
                 Write-Host "Download attempt $attempt of $maxRetries..."
                 try {
                     & $wgetPath -c $downloadUrl -O $downloadPath
-                    if (Test-Path $downloadPath) { break }
-                } catch { Start-Sleep -Seconds $retryDelay }
+                    if (Test-Path $downloadPath -PathType Leaf) { 
+                        if ((Get-Item $downloadPath).Length -gt 0) {
+                            Write-Host "✓ Download completed successfully"
+                            break 
+                        }
+                    }
+                } catch { 
+                    Write-Warning "Download attempt $attempt failed: $($_.Exception.Message)"
+                    Start-Sleep -Seconds $retryDelay 
+                }
             }
-            if (-not (Test-Path $downloadPath)) { throw "Snapshot download failed." }
+            if (-not (Test-Path $downloadPath)) { throw "Snapshot download failed after $maxRetries attempts." }
 
             # -----------------------------
             # STEP 2: Ensure sdelete installed
             # -----------------------------
-            if (-not (Test-Path $toolsDir)) { New-Item -Path $toolsDir -ItemType Directory | Out-Null }
+            Write-Host "[3/8] Setting up SDelete..."
+            if (-not (Test-Path $toolsDir)) { New-Item -Path $toolsDir -ItemType Directory -Force | Out-Null }
             $sdeleteZip = Join-Path $toolsDir "SDelete.zip"
             $sdeleteExtractDir = Join-Path $toolsDir "SDelete"
             $sdeletePath = Join-Path $sdeleteExtractDir "sdelete.exe"
@@ -584,101 +611,162 @@ try {
                 Write-Host "Downloading SDelete..."
                 Invoke-WebRequest -Uri $sdeleteURL -OutFile $sdeleteZip -UseBasicParsing
                 Expand-Archive -Path $sdeleteZip -DestinationPath $toolsDir -Force
-                Remove-Item $sdeleteZip -Force
+                Remove-Item $sdeleteZip -Force -ErrorAction SilentlyContinue
                 $sdeletePath = Get-ChildItem -Path $toolsDir -Recurse -Filter "sdelete.exe" | Select-Object -First 1 -ExpandProperty FullName
-                Unblock-File -Path $sdeletePath
+                if ($sdeletePath) { Unblock-File -Path $sdeletePath }
             }
 
             # -----------------------------
-            # STEP 3: Convert Snapshot → Dynamic VHDX → Shrink → Zero → Compact → Fixed VHD
+            # STEP 3: Convert and Optimize VHD
             # -----------------------------
-            if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
-                ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw "Run as Administrator" }
-
-            Import-Module Hyper-V -ErrorAction Stop
-
+            Write-Host "[4/8] Starting VHD conversion process..."
+            
+            # Validate input
+            if (-not (Test-Path $snapshotVHD)) { throw "Snapshot VHD not found" }
             if ((Test-Path $fixedVHD)) { Remove-Item $fixedVHD -Force }
 
-            Write-Host "Converting snapshot → dynamic VHDX..."
+            # Convert snapshot → dynamic VHDX
+            Write-Host "[5/8] Converting snapshot → dynamic VHDX..."
             Convert-VHD -Path $snapshotVHD -DestinationPath $dynamicVHDX -VHDType Dynamic -ErrorAction Stop
+            Write-Host "✓ Created dynamic VHDX"
 
-            Write-Host "Mounting dynamic VHDX..."
+            # Mount VHDX for optimization
+            Write-Host "[6/8] Mounting VHDX for optimization..."
             Mount-VHD -Path $dynamicVHDX -ErrorAction Stop
-            Start-Sleep -Seconds 5
-            $disk = Get-Disk | Where-Object { $_.Location -like "*$([System.IO.Path]::GetFileName($dynamicVHDX))*" } | Select-Object -First 1
-            if (-not $disk) { throw "Mounted disk not found" }
+            Start-Sleep -Seconds 10
 
-            $osPartition = (Get-Partition -DiskNumber $disk.Number | Where-Object { $_.DriveLetter -and (Test-Path "$($_.DriveLetter):\Windows") } | Select-Object -First 1)
-            if (-not $osPartition) { throw "OS partition not found" }
+            $disk = Get-Disk | Where-Object { $_.Location -like "*$(Split-Path $dynamicVHDX -Leaf)*" } | Select-Object -First 1
+            if (-not $disk) { throw "Could not find mounted disk" }
+
+            $osPartition = Get-Partition -DiskNumber $disk.Number | Where-Object {
+                $_.DriveLetter -and (Test-Path "$($_.DriveLetter):\Windows")
+            } | Select-Object -First 1
+
+            if (-not $osPartition) { throw "Could not locate OS partition" }
+            
             $osDrive = $osPartition.DriveLetter
+            Write-Host "✓ Mounted as drive $osDrive`:"
 
-            Write-Host "Shrinking OS partition to $targetSizeGB GB..."
-            Resize-Partition -DiskNumber $disk.Number -PartitionNumber $osPartition.PartitionNumber -Size ($targetSizeGB * 1GB)
-            Start-Sleep -Seconds 2
+            # Advanced Defragmentation Sequence
+            Write-Host "[7/8] Running advanced defragmentation sequence..."
+            
+            Write-Host "  Running defrag /x (free space consolidation)..."
+            Start-Process -FilePath "defrag.exe" -ArgumentList "$osDrive`: /x" -Wait -NoNewWindow
+            
+            Write-Host "  Running defrag /k /l (SSD optimization)..."
+            Start-Process -FilePath "defrag.exe" -ArgumentList "$osDrive`: /k /l" -Wait -NoNewWindow
+            
+            Write-Host "  Running defrag /x again..."
+            Start-Process -FilePath "defrag.exe" -ArgumentList "$osDrive`: /x" -Wait -NoNewWindow
+            
+            Write-Host "  Running defrag /k (final optimization)..."
+            Start-Process -FilePath "defrag.exe" -ArgumentList "$osDrive`: /k" -Wait -NoNewWindow
+            
+            Write-Host "✓ Defragmentation completed"
 
-            Write-Host "Zeroing free space on $osDrive:`\..."
-            $proc = Start-Process -FilePath $sdeletePath -ArgumentList @("-z", "$osDrive`:", "-accepteula") -NoNewWindow -Wait -PassThru
-            if ($proc.ExitCode -ne 0) { Start-Process cipher -ArgumentList "/w:$osDrive`:" -Wait }
+            # Check partition size
+            Write-Host "[8/8] Checking partition size..."
+            $partitionInfo = Get-Partition -DiskNumber $disk.Number -PartitionNumber $osPartition.PartitionNumber
+            $currentSizeGB = [math]::Round($partitionInfo.Size / 1GB, 2)
+            
+            if ($currentSizeGB -gt $targetSizeGB) {
+                Write-Host "Shrinking partition from $currentSizeGB GB to $targetSizeGB GB..."
+                Resize-Partition -DiskNumber $disk.Number -PartitionNumber $osPartition.PartitionNumber -Size ($targetSizeGB * 1GB) -ErrorAction Stop
+                Write-Host "✓ Partition shrunk"
+            } else {
+                Write-Host "✓ Partition already at optimal size ($currentSizeGB GB)"
+            }
 
-            Dismount-VHD -Path $dynamicVHDX -ErrorAction SilentlyContinue
-
-            Write-Host "Compacting dynamic VHDX..."
+            # Dismount and Compact
+            Write-Host "Dismounting and compacting VHDX..."
+            Dismount-VHD -Path $dynamicVHDX -ErrorAction Stop
+            
             Optimize-VHD -Path $dynamicVHDX -Mode Full -ErrorAction Stop
+            Write-Host "✓ VHDX compacted"
 
-            Write-Host "Converting dynamic VHDX → fixed VHD..."
+            # Convert to Fixed VHD
+            Write-Host "Converting to fixed Azure VHD..."
+            if (-not (Test-Path $vhdUSBDir)) { New-Item -Path $vhdUSBDir -ItemType Directory -Force | Out-Null }
+
             Convert-VHD -Path $dynamicVHDX -DestinationPath $fixedVHD -VHDType Fixed -ErrorAction Stop
-            $sizeGB = [math]::Round((Get-Item $fixedVHD).Length / 1GB, 2)
+            
+            # Verify results
+            $finalVhd = Get-Item $fixedVHD
+            $sizeGB = [math]::Round($finalVhd.Length / 1GB, 2)
             $hash = Get-FileHash -Path $fixedVHD -Algorithm SHA256 | Select-Object -ExpandProperty Hash
-            Write-Host "✅ Final VHD: $fixedVHD"
-            Write-Host "   Size  : $sizeGB GB"
+
+            Write-Host "`n✅ VHD CONVERSION COMPLETE"
+            Write-Host "   Final VHD: $fixedVHD"
+            Write-Host "   Size: $sizeGB GB"
             Write-Host "   SHA256: $hash"
 
+            # Cleanup temporary VHDX
+            if (Test-Path $dynamicVHDX) {
+                Remove-Item $dynamicVHDX -Force
+                Write-Host "Cleaned up temporary VHDX file."
+            }
+
             # -----------------------------
-            # STEP 4: Download & Flatten AzCopy
+            # STEP 4: Download & Setup AzCopy
             # -----------------------------
+            Write-Host "Setting up AzCopy for upload..."
             $azCopyDir   = "C:\Tools"
             $azCopyExe   = Join-Path $azCopyDir "azcopy.exe"
             $tempZip     = Join-Path $env:TEMP ("AzCopyWin_{0}.zip" -f ([guid]::NewGuid().ToString()))
             if (-not (Test-Path $azCopyDir)) { New-Item -ItemType Directory -Path $azCopyDir -Force | Out-Null }
 
-            Write-Host "Downloading AzCopy..."
-            $wc = New-Object System.Net.WebClient
-            $wc.DownloadFile($azCopyURL, $tempZip)
-            $wc.Dispose()
+            if (-not (Test-Path $azCopyExe)) {
+                Write-Host "Downloading AzCopy..."
+                $wc = New-Object System.Net.WebClient
+                $wc.DownloadFile($azCopyURL, $tempZip)
+                $wc.Dispose()
 
-            Write-Host "Extracting AzCopy..."
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            $zip = [System.IO.Compression.ZipFile]::OpenRead($tempZip)
-            foreach ($entry in $zip.Entries) {
-                $relativePath = $entry.FullName -replace "^[^/]+/", ""
-                if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
-                $destPath = Join-Path $azCopyDir $relativePath
-                $destDir  = Split-Path $destPath -Parent
-                if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-                if ($entry.Name) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true) }
+                Write-Host "Extracting AzCopy..."
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+                $zip = [System.IO.Compression.ZipFile]::OpenRead($tempZip)
+                foreach ($entry in $zip.Entries) {
+                    $relativePath = $entry.FullName -replace "^[^/]+/", ""
+                    if ([string]::IsNullOrWhiteSpace($relativePath)) { continue }
+                    $destPath = Join-Path $azCopyDir $relativePath
+                    $destDir  = Split-Path $destPath -Parent
+                    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+                    if ($entry.Name) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true) }
+                }
+                $zip.Dispose()
+                Remove-Item $tempZip -Force
             }
-            $zip.Dispose()
-            Remove-Item $tempZip -Force
+
             if (-not (Test-Path $azCopyExe)) { throw "azcopy.exe not found" }
             Write-Host "✅ AzCopy ready at $azCopyExe"
 
             # -----------------------------
             # STEP 5: Upload via AzCopy
             # -----------------------------
-            $destinationUrl = $env:AZURE_SAS_TOKEN
-            Write-Host "Uploading $fixedVHD to Azure..."
-            $cmd = "cd `"$azCopyDir`" && azcopy.exe copy `"$fixedVHD`" `"$destinationUrl`" --recursive"
-            $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -Wait -PassThru -NoNewWindow
-            if ($process.ExitCode -eq 0) { Write-Host "✅ Upload completed successfully" } else { Write-Error "Upload failed with code $($process.ExitCode)" }
+            if ($env:AZURE_SAS_TOKEN -and $env:AZURE_SAS_TOKEN.Trim() -ne "") {
+                $destinationUrl = $env:AZURE_SAS_TOKEN
+                Write-Host "Uploading $fixedVHD to Azure..."
+                $cmd = "cd `"$azCopyDir`" && azcopy.exe copy `"$fixedVHD`" `"$destinationUrl`" --recursive=true"
+                $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -Wait -PassThru -NoNewWindow
+                if ($process.ExitCode -eq 0) { 
+                    Write-Host "✅ Upload completed successfully" 
+                } else { 
+                    Write-Error "Upload failed with code $($process.ExitCode)" 
+                }
+            } else {
+                Write-Host "No Azure SAS token provided, skipping upload"
+            }
 
         } catch {
-            Write-Error "Script failed: $_"
+            Write-Error "Script failed: $($_.Exception.Message)"
+            Write-Error "Error details: $($_.ScriptStackTrace)"
             exit 1
         }
 
     } else {
         Write-Host "No snapshot URL provided, skipping VHD processing"
     }
+
+    Write-Host "Script completed successfully 🎉"
     
 '@  # must be at column 0
 
