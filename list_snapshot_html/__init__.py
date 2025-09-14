@@ -5,9 +5,168 @@ import azure.functions as func
 from azure.identity import ClientSecretCredential
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.resource import ResourceManagementClient
+from datetime import datetime, timezone
+
+def generate_snapshots_html(snapshot_data):
+    """Generate HTML from snapshot data"""
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Azure Snapshots</title>
+        <style>
+            body {{
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background-color: #f5f5f5;
+                color: #242424;
+            }}
+            .container {{
+                max-width: 1400px;
+                margin: 0 auto;
+                background-color: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            }}
+            h1 {{
+                color: #0078d4;
+                border-bottom: 2px solid #0078d4;
+                padding-bottom: 10px;
+            }}
+            .summary-info {{
+                background-color: #e3f2fd;
+                padding: 15px;
+                border-radius: 4px;
+                margin-bottom: 20px;
+            }}
+            .snapshot-header {{
+                display: grid;
+                grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr;
+                font-weight: bold;
+                background-color: #0078d4;
+                color: white;
+                padding: 12px;
+                border-radius: 4px;
+                margin-bottom: 10px;
+            }}
+            .snapshot-item {{
+                display: grid;
+                grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr;
+                padding: 12px;
+                border-bottom: 1px solid #e0e0e0;
+                align-items: center;
+            }}
+            .snapshot-item:nth-child(even) {{
+                background-color: #f9f9f9;
+            }}
+            .refresh-btn {{
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                padding: 10px 15px;
+                border-radius: 4px;
+                cursor: pointer;
+                margin-bottom: 20px;
+                font-size: 16px;
+            }}
+            .refresh-btn:hover {{
+                background-color: #106ebe;
+            }}
+            .size-badge {{
+                background-color: #e3f2fd;
+                padding: 4px 8px;
+                border-radius: 12px;
+                font-size: 12px;
+                color: #0078d4;
+            }}
+            .state-active {{
+                color: #4caf50;
+                font-weight: bold;
+            }}
+            .state-inactive {{
+                color: #ff5722;
+            }}
+            .action-btn {{
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+                cursor: pointer;
+                margin-right: 5px;
+                font-size: 12px;
+            }}
+            .action-btn:hover {{
+                background-color: #106ebe;
+            }}
+            .delete-btn {{
+                background-color: #ff5722;
+            }}
+            .delete-btn:hover {{
+                background-color: #e64a19;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Azure Snapshots</h1>
+            <button class="refresh-btn" onclick="window.location.reload()">Refresh Snapshots</button>
+            
+            <div class="summary-info">
+                <strong>Resource Group:</strong> {snapshot_data['resource_group']} <br>
+                <strong>Total Snapshots:</strong> {snapshot_data['snapshot_count']} <br>
+                <strong>Total Size:</strong> {snapshot_data['total_size_gb']} GB
+            </div>
+            
+            <div class="snapshot-header">
+                <span>Snapshot Name</span>
+                <span>Size (GB)</span>
+                <span>SKU</span>
+                <span>Created Time</span>
+                <span>Status</span>
+                <span>Actions</span>
+            </div>
+    """
+    
+    # Add each snapshot to the HTML
+    for snapshot in snapshot_data['snapshots']:
+        # Format created time
+        created_time = snapshot.get('time_created', 'N/A')
+        if created_time != 'N/A':
+            try:
+                created_dt = datetime.fromisoformat(created_time.replace('Z', '+00:00'))
+                created_time = created_dt.strftime('%Y-%m-%d %H:%M:%S')
+            except:
+                pass
+        
+        html_content += f"""
+            <div class="snapshot-item">
+                <span>{snapshot['name']}</span>
+                <span><div class="size-badge">{snapshot['disk_size_gb']} GB</div></span>
+                <span>{snapshot['sku']}</span>
+                <span>{created_time}</span>
+                <span class="state-active">{snapshot['provisioning_state']}</span>
+                <span>
+                    <button class="action-btn" onclick="alert('Create VM from {snapshot['name']}')">Create VM</button>
+                    <button class="action-btn delete-btn" onclick="alert('Delete {snapshot['name']}')">Delete</button>
+                </span>
+            </div>
+        """
+    
+    html_content += """
+        </div>
+    </body>
+    </html>
+    """
+    
+    return html_content
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Processing request to list Azure resources/VMs.')
+    logging.info('Processing request to list Azure snapshots.')
 
     try:
         # Parse inputs - prefer POST JSON body, fallback to query params
@@ -24,11 +183,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
 
-        list_vms_only = req_body.get('list_vms_only')
-        if list_vms_only is None:
-            # fallback to query param, treat 'yes'/'true'/1 as True
-            list_vms_only_str = req.params.get('list_vms_only', 'yes').lower()
-            list_vms_only = list_vms_only_str in ['yes', 'y', 'true', '1', '']
+        # Check if HTML format is requested
+        format_html = req.params.get('format') == 'html'
 
         # Authenticate with Azure
         try:
@@ -71,42 +227,57 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
 
-        if list_vms_only:
-            # List VMs in resource group
-            vms = compute_client.virtual_machines.list(resource_group)
-            vm_list = []
-            for vm in vms:
-                vm_list.append({
-                    "name": vm.name,
-                    "location": vm.location,
-                    "vm_size": vm.hardware_profile.vm_size if vm.hardware_profile else None
+        # List snapshots in resource group
+        try:
+            snapshots = compute_client.snapshots.list_by_resource_group(resource_group)
+            snapshot_list = []
+            total_size_gb = 0
+            
+            for snapshot in snapshots:
+                disk_size_gb = snapshot.disk_size_gb if snapshot.disk_size_gb else 0
+                total_size_gb += disk_size_gb
+                
+                snapshot_list.append({
+                    "name": snapshot.name,
+                    "location": snapshot.location,
+                    "disk_size_gb": disk_size_gb,
+                    "sku": snapshot.sku.name if snapshot.sku else "Standard",
+                    "provisioning_state": snapshot.provisioning_state,
+                    "time_created": snapshot.time_created.isoformat() if snapshot.time_created else "N/A",
+                    "os_type": snapshot.os_type.value if snapshot.os_type else "Unknown",
+                    "hyper_v_generation": snapshot.hyper_v_generation.value if snapshot.hyper_v_generation else "Unknown"
                 })
+            
             result = {
                 "resource_group": resource_group,
-                "vm_count": len(vm_list),
-                "vms": vm_list
+                "snapshot_count": len(snapshot_list),
+                "total_size_gb": total_size_gb,
+                "snapshots": snapshot_list
             }
-        else:
-            # List all resources in resource group
-            resources = resource_client.resources.list_by_resource_group(resource_group)
-            res_list = []
-            for res in resources:
-                res_list.append({
-                    "name": res.name,
-                    "type": res.type,
-                    "location": res.location
-                })
-            result = {
-                "resource_group": resource_group,
-                "resource_count": len(res_list),
-                "resources": res_list
-            }
+            
+        except Exception as e:
+            err = f"Error retrieving snapshots: {e}"
+            logging.error(err)
+            return func.HttpResponse(
+                json.dumps({"error": err}),
+                status_code=500,
+                mimetype="application/json"
+            )
 
-        return func.HttpResponse(
-            json.dumps(result),
-            status_code=200,
-            mimetype="application/json"
-        )
+        # Return HTML if requested
+        if format_html:
+            html_output = generate_snapshots_html(result)
+            return func.HttpResponse(
+                html_output,
+                status_code=200,
+                mimetype="text/html"
+            )
+        else:
+            return func.HttpResponse(
+                json.dumps(result),
+                status_code=200,
+                mimetype="application/json"
+            )
 
     except Exception as ex:
         logging.exception("Unhandled error:")
