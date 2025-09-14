@@ -69,6 +69,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
             req_body = {}
 
         vm_name = req_body.get('vm_name') or req.params.get('vm_name')
+        snapshot_vm = req_body.get('snapshot_vm') or req.params.get('snapshot_vm')
         resource_group = req_body.get('resource_group') or req.params.get('resource_group')
         domain = req_body.get('domain') or req.params.get('domain')
         location = req_body.get('location') or req.params.get('location')

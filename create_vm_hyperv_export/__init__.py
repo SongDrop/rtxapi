@@ -1314,12 +1314,12 @@ async def provision_vm_background(
             hook_url=hook_url,
             status_data={
                 "vm_name": vm_name,
-                "status": "completed",
+                "status": "provisioning",
                 "resource_group": resource_group,
                 "location": location,
                 "details": {
-                    "step": "completed",
-                    "message": "VM provisioning successful",
+                    "step": "provisioning",
+                    "message": "Hyper-V setup completed, vhd conversion started. Hang tight.",
                     "public_ip": public_ip,
                     "url": f"https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={public_ip}&user={WINDOWS_IMAGE_USERNAME}&vm_name={vm_name}",
                     "timestamp": datetime.utcnow().isoformat()
@@ -1328,9 +1328,6 @@ async def provision_vm_background(
         )
 
         print_success(f"Azure Windows VM provisioning completed successfully!")
-        print_success(f"Pin moonlight service at: https://pin.{subdomain}.{domain}")
-        print_success(f"Drop files service at: https://drop.{subdomain}.{domain}")
-        print_success(f"Pin: {DUMBDROP_PIN}")
         
     except Exception as e:
         # Top-level error handler for background task
