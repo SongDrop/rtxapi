@@ -7,7 +7,7 @@ from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.resource import ResourceManagementClient
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('Processing request to list Azure resources/VMs.')
+    logging.info('Processing request to list Azure snapshots.')
 
     try:
         # Parse inputs - prefer POST JSON body, fallback to query params
@@ -23,12 +23,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
                 mimetype="application/json"
             )
-
-        list_vms_only = req_body.get('list_vms_only')
-        if list_vms_only is None:
-            # fallback to query param, treat 'yes'/'true'/1 as True
-            list_vms_only_str = req.params.get('list_vms_only', 'yes').lower()
-            list_vms_only = list_vms_only_str in ['yes', 'y', 'true', '1', '']
 
         # Authenticate with Azure
         try:
@@ -71,42 +65,48 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json"
             )
 
-        if list_vms_only:
-            # List VMs in resource group
-            vms = compute_client.virtual_machines.list(resource_group)
-            vm_list = []
-            for vm in vms:
-                vm_list.append({
-                    "name": vm.name,
-                    "location": vm.location,
-                    "vm_size": vm.hardware_profile.vm_size if vm.hardware_profile else None
+        # List snapshots in resource group
+        try:
+            snapshots = compute_client.snapshots.list_by_resource_group(resource_group)
+            snapshot_list = []
+            total_size_gb = 0
+            
+            for snapshot in snapshots:
+                disk_size_gb = snapshot.disk_size_gb if snapshot.disk_size_gb else 0
+                total_size_gb += disk_size_gb
+                
+                snapshot_list.append({
+                    "name": snapshot.name,
+                    "location": snapshot.location,
+                    "disk_size_gb": disk_size_gb,
+                    "sku": snapshot.sku.name if snapshot.sku else "Standard",
+                    "provisioning_state": snapshot.provisioning_state,
+                    "time_created": snapshot.time_created.isoformat() if snapshot.time_created else "N/A",
+                    "os_type": str(snapshot.os_type) if snapshot.os_type else "Unknown",
+                    "hyper_v_generation": str(snapshot.hyper_v_generation) if snapshot.hyper_v_generation else "Unknown"
                 })
+            
             result = {
                 "resource_group": resource_group,
-                "vm_count": len(vm_list),
-                "vms": vm_list
+                "snapshot_count": len(snapshot_list),
+                "total_size_gb": total_size_gb,
+                "snapshots": snapshot_list
             }
-        else:
-            # List all resources in resource group
-            resources = resource_client.resources.list_by_resource_group(resource_group)
-            res_list = []
-            for res in resources:
-                res_list.append({
-                    "name": res.name,
-                    "type": res.type,
-                    "location": res.location
-                })
-            result = {
-                "resource_group": resource_group,
-                "resource_count": len(res_list),
-                "resources": res_list
-            }
-
-        return func.HttpResponse(
-            json.dumps(result),
-            status_code=200,
-            mimetype="application/json"
-        )
+            
+            return func.HttpResponse(
+                json.dumps(result),
+                status_code=200,
+                mimetype="application/json"
+            )
+            
+        except Exception as e:
+            err = f"Error retrieving snapshots: {e}"
+            logging.error(err)
+            return func.HttpResponse(
+                json.dumps({"error": err}),
+                status_code=500,
+                mimetype="application/json"
+            )
 
     except Exception as ex:
         logging.exception("Unhandled error:")
