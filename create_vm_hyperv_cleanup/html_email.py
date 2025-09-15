@@ -1,21 +1,11 @@
-def HTMLEmail(vhd_name: str, vhd_size_gib: float, sas_download_url: str, github_app_url: str, 
-              snapshot_vm: str, design_files_url: str, github_repo_url: str):
+def HTMLEmail(snapshot_vm: str, vhd_download_url: str, vhdusb_app_url: str, design_files_url: str, github_repo_url: str):
     """
-    vhd_name: e.g. "azure-os-disk_fixed.vhd"
-    vhd_size_gib: file size in GiB (binary)
-    sas_download_url: direct link to download VHD
-    github_app_url: link to the app that flashes the VHD onto a USB
-    snapshot_vm: name of the snapshot VM
-    design_files_url: link to design files for box art and 3D cases
-    github_repo_url: link to GitHub repository for contributions
+    snapshot_vm: The name of the snapshot VM
+    vhd_download_url: Direct download URL for the VHD file
+    vhdusb_app_url: URL to download the VHDUSBDownloader app
+    design_files_url: URL for design files (3D models, box art)
+    github_repo_url: URL for the GitHub repository
     """
-    # Calculate decimal GB
-    vhd_size_gb = vhd_size_gib * 1024**3 / 1_000_000_000  # binary GiB → decimal GB
-    
-    # Calculate the converted size (220GB as mentioned in the template)
-    converted_size_gib = 220
-    converted_size_gb = converted_size_gib * 1024**3 / 1_000_000_000
-    
     return f"""<!DOCTYPE html>
 <html lang="en">
 
@@ -198,6 +188,10 @@ def HTMLEmail(vhd_name: str, vhd_size_gib: float, sas_download_url: str, github_
             margin-left: 6px;
         }}
 
+        .timeline-step-h.download {{
+            background: #2196f3;
+        }}
+
         .timeline-step-h.download::after {{
             content: '⬇️';
             margin-left: 6px;
@@ -238,14 +232,14 @@ def HTMLEmail(vhd_name: str, vhd_size_gib: float, sas_download_url: str, github_
 
         <div class="section">
             <p>Your virtual machine snapshot has been successfully converted and resized using Hyper-V technology. The
-                original snapshot was <strong>{vhd_size_gib:.0f}GB</strong> and has been optimized to <strong>{converted_size_gib}GB</strong> for
+                original snapshot was <strong>256GB</strong> and has been optimized to <strong>220GB</strong> for
                 efficient storage and faster access.</p>
 
             <p>You can now download this VHD using the <strong>VHDUSBDownloader</strong> app — a lightweight tool that
                 safely copies large VHD files directly to your USB drive. Simply copy the link below into the app to
                 start the transfer:</p>
 
-            <p>📦 <strong>Download Note:</strong> The file is large (<strong>{converted_size_gib}GB</strong>), so the download may take
+            <p>📦 <strong>Download Note:</strong> The file is large (<strong>220GB</strong>), so the download may take
                 ~8-10 hours on a 10Mbps connection. We recommend using a stable, wired connection and keeping your
                 computer powered on.</p>
         </div>
@@ -261,24 +255,28 @@ def HTMLEmail(vhd_name: str, vhd_size_gib: float, sas_download_url: str, github_
             <div class="detail-row"><span class="detail-label">Conversion Time:</span> <span>
                     <table class="conversion-table">
                         <tr>
-                            <th>Create Snapshot</th>
+                            <th>✅ Create Snapshot</th>
                             <td>~10 minutes</td>
                         </tr>
                         <tr>
-                            <th>Create Hyper-V(Standard_D4s_v3)</th>
+                            <th>✅ Create Hyper-V (Standard_D4s_v3)</th>
                             <td>~15 minutes</td>
                         </tr>
                         <tr>
-                            <th>Download {vhd_size_gib:.0f} GB snapshot (Hyper-V conversion)</th>
+                            <th>✅ Download 256 GB snapshot (Hyper-V conversion)</th>
                             <td>~1 hour (network-dependent)</td>
                         </tr>
                         <tr>
-                            <th>Hyper-V Conversion (dynamic → compact → fixed)</th>
+                            <th>✅ Hyper-V Conversion (dynamic → compact → fixed)</th>
                             <td>~2 hours</td>
                         </tr>
                         <tr>
-                            <th>Upload to storage (AzCopy)</th>
+                            <th>✅ Upload to storage (azcopy)</th>
                             <td>~1 hour</td>
+                        </tr>
+                        <tr>
+                            <th>✅ Cleanup Hyper-V and Snapshot</th>
+                            <td>~10 minutes</td>
                         </tr>
                         <tr>
                             <th><strong>⬇️ Download VHD to USB (VHDUSBDownloader)</strong></th>
@@ -291,13 +289,13 @@ def HTMLEmail(vhd_name: str, vhd_size_gib: float, sas_download_url: str, github_
             </div>
             <div class="detail-row"><span class="detail-label">Status:</span> <span>Completed</span></div>
             <div class="detail-row"><span class="detail-label">Download URL for VHD:</span><br>
-                <span class="link">{sas_download_url}</span>
+                <span class="link">{vhd_download_url}</span>
             </div>
         </div>
 
         <div class="section">
             <h2>Recommended USB Drives for Your VHD</h2>
-            <p>To store your optimized <strong>{converted_size_gib}GB VHD</strong>, here are compatible USB drives:</p>
+            <p>To store your optimized <strong>220GB VHD</strong>, here are compatible USB drives:</p>
             <div class="flex-images">
                 <div>
                     <img src="https://i.postimg.cc/15LtWMHN/256gb-fit-plus-usb.png" alt="Samsung 256GB USB">
@@ -317,8 +315,8 @@ def HTMLEmail(vhd_name: str, vhd_size_gib: float, sas_download_url: str, github_
             <div>- <strong>USB drives:</strong> Decimal GB (1 GB = 1,000,000,000 bytes)</div>
             <div>- <strong>VHD disks:</strong> Binary GB (1 GB = 1,073,741,824 bytes)</div>
 
-            <p>For example, an exported OS disk of <strong>{vhd_size_gib:.0f} GB</strong> would not fit on a USB labeled as {vhd_size_gib:.0f} GB.
-                That's why the disk was resized during conversion, reducing it from {vhd_size_gib:.0f} GB to {converted_size_gib} GB to ensure it fits
+            <p>For example, an exported OS disk of <strong>256 GB</strong> would not fit on a USB labeled as 256 GB.
+                That's why the disk was resized during conversion, reducing it from 256 GB to 220 GB to ensure it fits
                 safely on typical USB drives.</p>
 
             <table>
@@ -331,16 +329,16 @@ def HTMLEmail(vhd_name: str, vhd_size_gib: float, sas_download_url: str, github_
                 </tr>
                 <tr>
                     <th>VHD Size (Bytes)</th>
-                    <td class="right error">{vhd_size_gib:.0f} × 1,073,741,824 = {vhd_size_gib * 1_073_741_824:,.0f}</td>
+                    <td class="right error">256 × 1,073,741,824 = 274,877,906,944</td>
                     <td class="center error">❌ Too large</td>
-                    <td class="right success">{converted_size_gib} × 1,073,741,824 = {converted_size_gib * 1_073_741_824:,.0f}</td>
+                    <td class="right success">220 × 1,073,741,824 = 236,222,120,320</td>
                     <td class="center success">✅ Fits USB</td>
                 </tr>
                 <tr>
                     <th>Equivalent USB GB</th>
-                    <td class="right error">≈ {vhd_size_gb:.2f} GB</td>
+                    <td class="right error">≈ 274.88 GB</td>
                     <td class="center error">❌ Too large</td>
-                    <td class="right success">≈ {converted_size_gb:.2f} GB</td>
+                    <td class="right success">≈ 236.22 GB</td>
                     <td class="center success">✅ Fits USB</td>
                 </tr>
             </table>
@@ -348,8 +346,8 @@ def HTMLEmail(vhd_name: str, vhd_size_gib: float, sas_download_url: str, github_
 
         <div class="section">
             <p>You can download the <strong>VHDUSBDownloader</strong> from the following links:</p>
-            <a href="{github_app_url}" class="btn btn-primary" target="_blank">VHDUSBDownloader (Windows)</a>
-            <a href="{github_app_url}" class="btn btn-secondary" target="_blank">VHDUSBDownloader (MacOSX)</a>
+            <a href="{vhdusb_app_url}" class="btn btn-primary" target="_blank">VHDUSBDownloader (Windows)</a>
+            <a href="{vhdusb_app_url}" class="btn btn-secondary" target="_blank">VHDUSBDownloader (MacOSX)</a>
         </div>
 
         <div class="section">
@@ -397,9 +395,9 @@ def HTMLEmail(vhd_name: str, vhd_size_gib: float, sas_download_url: str, github_
             <pre
                 style="background:#f9f9f9; padding:15px; border-radius:6px; font-size:0.9rem; overflow-x:auto; border:1px solid #ddd;">
 {{
-  "url": "{sas_download_url}",
-  "vm_name": "{vhd_name}",
-  "size_in_gb": "{converted_size_gib}",
+  "url": "sas_token_url_for_storage",
+  "vm_name": "ue3dhxm-117293-fixed-bootable.vhd",
+  "size_in_gb": "220",
   "image_url": "screenshot_of_desktop_url"
 }}
   </pre>

@@ -1,8 +1,4 @@
-def HTMLEmail(snapshot_vm: str):
-    """
-    snapshot_vm: The name of the snapshot VM
-    """
-    return f"""<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -10,54 +6,54 @@ def HTMLEmail(snapshot_vm: str):
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VHD Conversion Started</title>
     <style>
-        body {{
+        body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: #f4f4f4;
             margin: 0;
             padding: 20px;
             color: #333;
-        }}
+        }
 
-        .container {{
+        .container {
             max-width: 700px;
             margin: auto;
             background: white;
             border-radius: 10px;
             padding: 30px;
             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-        }}
+        }
 
-        h1 {{
+        h1 {
             color: #0158e5;
             text-align: center;
-        }}
+        }
 
-        p {{
+        p {
             font-size: 1rem;
             line-height: 1.5;
             margin-bottom: 15px;
-        }}
+        }
 
-        .section {{
+        .section {
             margin-bottom: 30px;
-        }}
+        }
 
-        .vm-details {{
+        .vm-details {
             background: #f1f8e9;
             border-left: 5px solid #4caf50;
             padding: 20px;
             border-radius: 5px;
-        }}
+        }
 
-        .detail-row {{
+        .detail-row {
             margin-bottom: 10px;
-        }}
+        }
 
-        .detail-label {{
+        .detail-label {
             font-weight: bold;
-        }}
+        }
 
-        .btn {{
+        .btn {
             display: inline-block;
             padding: 12px 25px;
             margin: 10px 5px 0 0;
@@ -65,98 +61,98 @@ def HTMLEmail(snapshot_vm: str):
             text-decoration: none;
             font-weight: bold;
             color: white;
-        }}
+        }
 
-        .btn-primary {{
+        .btn-primary {
             background-color: #3498db;
-        }}
+        }
 
-        .btn-primary:hover {{
+        .btn-primary:hover {
             background-color: #2980b9;
-        }}
+        }
 
-        .btn-secondary {{
+        .btn-secondary {
             background-color: #2ecc71;
-        }}
+        }
 
-        .btn-secondary:hover {{
+        .btn-secondary:hover {
             background-color: #27ae60;
-        }}
+        }
 
-        .footer {{
+        .footer {
             font-size: 0.85rem;
             text-align: center;
             color: #555;
             margin-top: 40px;
-        }}
+        }
 
-        .link {{
+        .link {
             word-break: break-all;
             color: #1a73e8;
             text-decoration: underline;
-        }}
+        }
 
-        table {{
+        table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 10px;
             font-size: 0.95rem;
-        }}
+        }
 
         th,
-        td {{
+        td {
             border: 1px solid #ccc;
             padding: 8px;
-        }}
+        }
 
-        th {{
+        th {
             background: #f1f8e9;
             text-align: left;
-        }}
+        }
 
-        td.center {{
+        td.center {
             text-align: center;
-        }}
+        }
 
-        td.right {{
+        td.right {
             text-align: right;
-        }}
+        }
 
-        td.success {{
+        td.success {
             background: #e0f7e9;
-        }}
+        }
 
-        td.error {{
+        td.error {
             background: #fde0e0;
-        }}
+        }
 
-        .flex-images {{
+        .flex-images {
             display: flex;
             gap: 20px;
             flex-wrap: wrap;
             justify-content: center;
-        }}
+        }
 
-        .flex-images div {{
+        .flex-images div {
             flex: 1 1 45%;
             text-align: center;
-        }}
+        }
 
-        .flex-images img {{
+        .flex-images img {
             width: 100%;
             max-width: 200px;
             border-radius: 8px;
-        }}
+        }
 
-        .timeline-horizontal {{
+        .timeline-horizontal {
             display: flex;
             align-items: center;
             justify-content: space-between;
             margin: 30px 0;
             position: relative;
-        }}
+        }
 
-        .timeline-horizontal::before {{
+        .timeline-horizontal::before {
             content: '';
             position: absolute;
             top: 50%;
@@ -165,9 +161,9 @@ def HTMLEmail(snapshot_vm: str):
             height: 3px;
             background: #ccc;
             z-index: 0;
-        }}
+        }
 
-        .timeline-step-h {{
+        .timeline-step-h {
             position: relative;
             z-index: 1;
             background: #4caf50;
@@ -177,59 +173,59 @@ def HTMLEmail(snapshot_vm: str):
             padding: 8px 14px;
             border-radius: 20px;
             font-size: 0.95rem;
-        }}
+        }
 
-        .timeline-step-h.progress {{
+        .timeline-step-h.progress {
 
             background: white;
             color: black;
-        }}
+        }
 
-        .timeline-step-h.progress::after {{
+        .timeline-step-h.progress::after {
             content: '⏳';
             margin-left: 6px;
-        }}
+        }
 
-        .timeline-step-h.done::after {{
+        .timeline-step-h.done::after {
             content: '✔️';
             margin-left: 6px;
-        }}
+        }
 
-        .timeline-step-h.download {{
+        .timeline-step-h.download {
             background: #2196f3;
-        }}
+        }
 
-        .timeline-step-h.download::after {{
+        .timeline-step-h.download::after {
             content: '⬇️';
             margin-left: 6px;
-        }}
+        }
 
-        .conversion-table {{
+        .conversion-table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 15px;
             font-size: 0.75rem;
-        }}
+        }
 
         .conversion-table th,
-        .conversion-table td {{
+        .conversion-table td {
             border: 1px solid #ccc;
             padding: 10px;
             vertical-align: top;
             background: white;
 
-        }}
+        }
 
-        .conversion-table th {{
+        .conversion-table th {
             text-align: left;
             width: 60%;
             font-weight: normal;
-        }}
+        }
 
-        .conversion-table td {{
+        .conversion-table td {
             text-align: right;
             font-weight: 500;
-        }}
+        }
     </style>
 </head>
 
@@ -292,4 +288,4 @@ def HTMLEmail(snapshot_vm: str):
     </div>
 </body>
 
-</html>"""
+</html>
