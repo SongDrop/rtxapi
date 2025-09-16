@@ -109,7 +109,6 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         WINDOWS_IMAGE_USERNAME = req_body.get('windows_image_username') or req.params.get('windows_image_username')
         WINDOWS_IMAGE_PASSWORD = req_body.get('windows_image_password') or req.params.get('windows_image_password')
         RECIPIENT_EMAILS = req_body.get('recipient_emails') or req.params.get('recipient_emails')
-        DUMBDROP_PIN = req_body.get('dumbdrop_pin') or req.params.get('dumbdrop_pin') or '1234'
         hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
 
         ###Parameter checking to handle errors 
@@ -253,7 +252,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                     credentials,
                     vm_name, snapshot_vm_name, resource_group, domain, location, vm_size,
                     storage_account_base, OS_DISK_SSD_GB, WINDOWS_IMAGE_USERNAME,
-                    WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS, DUMBDROP_PIN, hook_url
+                    WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS, hook_url
                 )
             )
 
@@ -303,7 +302,7 @@ async def provision_vm_background(
     credentials,
     vm_name,snapshot_vm_name, resource_group, domain, location, vm_size,
     storage_account_base, OS_DISK_SSD_GB,
-    WINDOWS_IMAGE_USERNAME, WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS, DUMBDROP_PIN, hook_url
+    WINDOWS_IMAGE_USERNAME, WINDOWS_IMAGE_PASSWORD, RECIPIENT_EMAILS, hook_url
 ):
     try:
         # Initial status update
@@ -433,7 +432,7 @@ async def provision_vm_background(
             )
             print(f"SAS URL ready: {AZURE_STORAGE_CONFIG['sas_token_url']}")
             VHD_EXPORT_SAS_URL = AZURE_STORAGE_CONFIG['sas_token_url']
-            VHD_SNAPSHOT_NAME = AZURE_STORAGE_CONFIG['snapshot_name']
+            VHD_SNAPSHOT_NAME = snapshot_vm_name
 
         except Exception as e:
             error_msg = f"Failed to setup VHD export: {str(e)}"
@@ -458,7 +457,7 @@ async def provision_vm_background(
         print_info("Generating PowerShell setup script...")
         ssl_email = os.environ.get('SENDER_EMAIL')
         global SNAPSHOT_URL
-
+        VHD_EXPORT_CLEANUP_URL = "https://rtxapi-f5cfbyb6fegyg0fn.uksouth-01.azurewebsites.net/list_vm_html?code={}&recipients_email=win10dev&vm_name={vm_name}"
         #SNAPSHOT_URL: Generated os-disk-snapshot download URL for Hyper-V
         #AZURE_SAS_TOKEN: Generated SAS Upload URL for az-copy uploading bootable-fixed-size.vhd
         #WEBHOOK_URL: Keep Front-End informed during auto-installation on Windows
@@ -466,7 +465,8 @@ async def provision_vm_background(
             SNAPSHOT_URL=SNAPSHOT_URL,
             WEBHOOK_URL=hook_url,
             AZURE_SAS_TOKEN=VHD_EXPORT_SAS_URL,
-            VHD_SNAPSHOT_NAME=VHD_SNAPSHOT_NAME
+            VHD_SNAPSHOT_NAME=VHD_SNAPSHOT_NAME,
+            VHD_EXPORT_CLEANUP_URL=VHD_EXPORT_CLEANUP_URL
         )
         
         blob_service_client = BlobServiceClient(account_url=AZURE_STORAGE_URL, credential=credentials)
@@ -1314,14 +1314,14 @@ async def provision_vm_background(
             hook_url=hook_url,
             status_data={
                 "vm_name": vm_name,
-                "status": "provisioning",
+                "status": "complete",
                 "resource_group": resource_group,
                 "location": location,
                 "details": {
-                    "step": "provisioning",
+                    "step": "complete",
                     "message": "Hyper-V setup completed, vhd conversion started. Hang tight.",
                     "public_ip": public_ip,
-                    "url": f"https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={public_ip}&user={WINDOWS_IMAGE_USERNAME}&vm_name={vm_name}",
+                    "url": f"https://cdn.sdappnet.cloud/rtx/disk_exported_started.html?&snapshot_vm={VHD_SNAPSHOT_NAME}",
                     "timestamp": datetime.utcnow().isoformat()
                 }
             }
