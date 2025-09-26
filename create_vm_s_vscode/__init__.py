@@ -367,6 +367,15 @@ async def provision_vm_background(
         sh_script = generate_setup.generate_setup(
             fqdn, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT
         )
+        sh_script = generate_setup.generate_setup(DOMAIN_NAME=fqdn, 
+                                                  ADMIN_EMAIL=ADMIN_EMAIL,
+                                                  ADMIN_PASSWORD=ADMIN_PASSWORD,
+                                                  PORT=FRONTEND_PORT,
+                                                  VOLUME_DIR="/opt/code-server",
+                                                  WEBHOOK_URL=hook_url,
+                                                  location=location,
+                                                  resource_group=resource_group)
+
         record_name = subdomain.rstrip('.') if subdomain else '@'
         a_records = [record_name]
         
