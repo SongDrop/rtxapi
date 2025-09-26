@@ -6,100 +6,540 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Video Game Development Environment VHD</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: sans-serif;
+            font-family: 'Roboto', sans-serif;
             line-height: 1.6;
-            margin: 2em;
-            background-color: #f4f4f4;
+            background-color: #eef2f7;
             color: #333;
         }
 
         .container {
-            max-width: 800px;
-            margin: auto;
-            background: #fff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            max-width: 1000px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        header {
+            background: #f0f4f8;
+            color: #1e3a5f;
+            text-align: center;
         }
 
         h1 {
-            text-align: center;
-            color: #4a4a4a;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .tagline {
+            font-size: 1.2rem;
+            opacity: 0.8;
+            max-width: 800px;
+            margin: 0 auto;
+            font-weight: 300;
+        }
+
+        .content {
+            padding: 40px;
         }
 
         h2 {
-            color: #5c5c5c;
-            border-bottom: 2px solid #eee;
-            padding-bottom: 5px;
+            color: #1e3a5f;
+            margin: 30px 0 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e0e6ed;
+            font-weight: 500;
         }
 
-        ul {
-            list-style-type: none;
-            padding: 0;
+        h2:first-child {
+            margin-top: 0;
         }
 
-        li {
-            background: #e9ecef;
+        .component {
+            background: #ffffff;
+            margin-bottom: 20px;
+            padding: 25px;
+            border-radius: 10px;
+            border: 1px solid #e0e6ed;
+        }
+
+
+        .component h3 {
+            color: #3b5998;
             margin-bottom: 10px;
-            padding: 10px;
-            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 500;
         }
 
-        strong {
-            color: #333;
+        .component p {
+            margin-bottom: 10px;
+            color: #555;
+            font-weight: 300;
+        }
+
+        .flex-images {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .flex-images div {
+            flex: 1 1 45%;
+            text-align: center;
+        }
+
+        .flex-images img {
+            width: 100%;
+            max-width: 200px;
+            border-radius: 8px;
+        }
+
+        .toggle-btn {
+            background: #3b5998;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 400;
+            transition: background 0.3s ease, transform 0.2s;
+        }
+
+
+        .dimensions {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+            border-left: 3px solid #6c757d;
+        }
+
+        .dimensions.show {
+            display: block;
+        }
+
+        .dimensions h4 {
+            color: #1e3a5f;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .dimensions p {
+            margin: 5px 0;
+            font-weight: 300;
+            color: #5a646c;
+        }
+
+        .dimensions p strong {
+            font-weight: 400;
+        }
+
+        footer {
+            text-align: center;
+            padding: 25px;
+            color: #7a828e;
+            font-size: 0.9rem;
+            border-top: 1px solid #e0e6ed;
+            font-weight: 300;
+        }
+
+        .imgcontainer {
+            padding: 4px;
+            width: 100%;
+        }
+
+        .imgcontainer img {
+            width: 100%;
+            height: auto;
+        }
+
+        /* Container for the app description */
+        .vhd-container {
+            display: flex;
+            /* flex */
+            align-items: center;
+            /* items-center */
+            gap: 0.5rem;
+            /* gap-2, where 1 unit is 0.25rem */
+        }
+
+        /* App icon image */
+        .vhd-icon {
+            width: 9rem;
+            /* w-36, where 1 unit is 0.25rem */
+            height: 9rem;
+            /* h-36, where 1 unit is 0.25rem */
+        }
+
+        /* Download links container */
+        .download-links {
+            margin-top: 0.75rem;
+            /* mt-3, where 1 unit is 0.25rem */
+            display: flex;
+            /* flex */
+            flex-wrap: wrap;
+            /* flex-wrap */
+            gap: 0.5rem;
+            /* gap-2, where 1 unit is 0.25rem */
+        }
+
+        /* Individual download link buttons */
+        .download-link {
+            display: flex;
+            /* flex */
+            align-items: center;
+            /* items-center */
+            gap: 0.5rem;
+            /* gap-2, where 1 unit is 0.25rem */
+            padding: 0.5rem 0.75rem;
+            /* px-3 py-2, where 1 unit is 0.25rem */
+            border-radius: 0.5rem;
+            /* rounded-lg, where a large radius is 0.5rem */
+            font-size: 0.875rem;
+            /* text-sm, where small text is 0.875rem */
+            font-weight: 500;
+            /* font-medium, corresponds to a font-weight of 500 */
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            /* shadow-sm */
+            color: white;
+            /* All links have white text, but the colors are overridden below */
+            text-decoration: none;
+            /* Removes underline from links */
+        }
+
+        /* Image icon inside each link */
+        .link-icon {
+            width: 1.25rem;
+            /* w-5, where 1 unit is 0.25rem */
+            height: 1.25rem;
+            /* h-5, where 1 unit is 0.25rem */
+        }
+
+        /* Specific styling for each OS link, including colors and hover states */
+        .windows {
+            background-color: #2563EB;
+            /* bg-blue-600 */
+        }
+
+        .windows:hover {
+            background-color: #1D4ED8;
+            /* hover:bg-blue-700 */
+        }
+
+        .macos {
+            background-color: #111827;
+            /* bg-gray-900 */
+        }
+
+        .macos:hover {
+            background-color: #000000;
+            /* hover:bg-black */
+        }
+
+        .linux {
+            background-color: #4B5563;
+            /* bg-gray-700 */
+        }
+
+        .linux:hover {
+            background-color: #374151;
+            /* hover:bg-gray-800 */
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                border-radius: 0;
+            }
+
+            header {
+                padding: 30px 20px;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            .content {
+                padding: 30px 20px;
+            }
+
+            .component h3 {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 15px;
+            }
+        }
+
+        .vhdusb {
+            padding: 4px;
+            width: 100%;
+        }
+
+        .vhdusb img {
+            width: 100%;
+            height: auto;
         }
     </style>
 </head>
 
 <body>
-
     <div class="container">
-        <h1>Project: Video Game Development Environment VHD</h1>
-        <p>A physical product package for a portable, encapsulated development environment on a USB drive.</p>
+        <header>
+            <h1>Video Game Development Environment VHD</h1>
+            <p class="tagline">A physical product package for a portable, encapsulated development environment on a USB
+                drive</p>
+        </header>
 
-        <h2>Physical Components</h2>
-        <ul>
-            <li>
-                <strong>USB Drive (256GB):</strong> The storage medium holding the VHD file. It's the modern "game
-                cartridge."
-            </li>
-            <li>
-                <strong>USB Drive Head 3D-Printed Enclosure:</strong> A custom plastic shell that encases the USB
-                drive's head to make it look like a mini cartridge.
-            </li>
-            <li>
-                <strong>3D-Printed Case:</strong> The outer box, similar to a classic game case, designed to hold all
-                the other physical parts.
-            </li>
-            <li>
-                <strong>Transparent Outer Sleeve (Folie):</strong> A clear plastic layer that covers the case and holds
-                the box art in place.
-            </li>
-            <li>
-                <strong>Insert for Case:</strong> A molded piece that fits inside the case to securely hold the USB
-                drive and leaflet.
-            </li>
-            <li>
-                <strong>Inner-Leaflet Magazine:</strong> A small booklet with instructions and project details, like a
-                game manual.
-            </li>
-            <li>
-                <strong>Box Art Print:</strong> The printed cover artwork that brands the product, which slides into the
-                transparent sleeve.
-            </li>
-        </ul>
+        <div class="content">
+            <h2>Physical Components</h2>
 
-        <h2>Digital Component</h2>
-        <ul>
-            <li>
-                <strong>Fixed 220GB Bootable VHD:</strong> The core product. This is a single file on the USB drive
-                containing a full, pre-configured development operating system.
-            </li>
-        </ul>
+            <div class="component">
+                <h3>
+                    SAMSUNG Fit Plus USB Drive (256GB / 512GB)
+                    <button class="toggle-btn" onclick="toggleDimensions(this)">Show Dimensions</button>
+                </h3>
+                <p>The storage medium holding the VHD file. It's the modern "game cartridge."</p>
+                <div class="dimensions">
+                    <h4>Dimensions & Specifications</h4>
+                    <p><strong>Size:</strong> 256GB storage capacity</p>
+                    <p><strong>Interface:</strong> USB 3.2 Gen 1</p>
+                    <p><strong>Physical Dimensions:</strong> 23.5mm X 18.59mm X 7.21mm</p>
+                    <p><strong>Weight:</strong> 2.4g</p>
+                    <p><strong>Read Speed:</strong> Up to 400MB/s</p>
+                    <p><strong>Write Speed:</strong> Up to 110MB/s</p>
+                    <p><a href="https://download.semiconductor.samsung.com/resources/data-sheet/2024_Samsung_Data_sheet_UFD_FIT_Plus_v1.2.pdf"
+                            target="_blank" rel="noreferrer">2024_Samsung_Data_sheet_UFD_FIT_Plus_v1.2.pdf</a></p>
+                    <div class="section">
+                        <p>To store your optimized <strong>fixed-bootable.vhd</strong>, here are compatible USB drives:
+                        </p>
+                        <div class="flex-images">
+                            <div>
+                                <img src="https://i.postimg.cc/15LtWMHN/256gb-fit-plus-usb.png" alt="Samsung 256GB USB">
+                                <p><a href="https://www.samsung.com/uk/memory-storage/usb-flash-drive/usb-flash-drive-fit-plus-256gb-black-muf-256ab-apc/"
+                                        target="_blank">256GB USB</a></p>
+                            </div>
+                            <div>
+                                <img src="https://i.postimg.cc/pTGVKBrr/512gb-fit-plus-usb.png" alt="Samsung 512GB USB">
+                                <p><a href="https://www.samsung.com/uk/memory-storage/usb-flash-drive/usb-flash-drive-fit-plus-512gb-black-muf-512ab-apc/"
+                                        target="_blank">512GB USB</a></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
+            <div class="component">
+                <h3>
+                    USB Drive Head 3D-Printed Enclosure
+                    <button class="toggle-btn" onclick="toggleDimensions(this)">Show Dimensions</button>
+                </h3>
+                <p>A custom plastic shell that encases the USB drive's head to make it look like a mini cartridge.</p>
+                <div class="dimensions">
+                    <h4>Dimensions & Specifications</h4>
+                    <p><strong>Dimensions:</strong> 30mm × 25mm × 12mm</p>
+                    <p><strong>Material:</strong> PLA plastic</p>
+                    <p><strong>Color Options:</strong> Gray, Black, Transparent</p>
+                    <p><strong>Print Time:</strong> Approximately 25 minutes per unit</p>
+                    <p><strong>Layer Height:</strong> 0.2mm</p>
+                    <p><strong>Infill:</strong> 20%</p>
+                </div>
+            </div>
+
+            <div class="component">
+                <h3>
+                    3D-Printed Case
+                    <button class="toggle-btn" onclick="toggleDimensions(this)">Show Dimensions</button>
+                </h3>
+                <p>The outer box, similar to a classic game case, designed to hold all the other physical parts.</p>
+                <div class="dimensions">
+                    <h4>Dimensions & Specifications</h4>
+                    <p><strong>External Dimensions:</strong> 140mm × 125mm × 20mm</p>
+                    <p><strong>Internal Dimensions:</strong> 135mm × 120mm × 18mm</p>
+                    <p><strong>Material:</strong> PETG plastic</p>
+                    <p><strong>Print Time:</strong> Approximately 4 hours per case</p>
+                    <p><strong>Weight:</strong> 85g</p>
+                    <p><strong>Hinge Type:</strong> Living hinge design</p>
+                </div>
+            </div>
+
+            <div class="component">
+                <h3>
+                    Transparent Outer Sleeve (Folie)
+                    <button class="toggle-btn" onclick="toggleDimensions(this)">Show Dimensions</button>
+                </h3>
+                <p>A clear plastic layer that covers the case and holds the box art in place.</p>
+                <div class="dimensions">
+                    <h4>Dimensions & Specifications</h4>
+                    <p><strong>Dimensions:</strong> 276.0 mm × 116.0 mm (flat size)</p>
+                    <p><strong>Thickness:</strong> 0.2mm</p>
+                    <p><strong>Material:</strong> PVC plastic</p>
+                    <p><strong>Finish:</strong> Glossy transparent</p>
+                    <p><strong>Seam:</strong> Heat-sealed on one side</p>
+                </div>
+            </div>
+
+            <div class="component">
+                <h3>
+                    Insert Art Print
+                    <button class="toggle-btn" onclick="toggleDimensions(this)">Show Dimensions</button>
+                </h3>
+                <p>The printed cover artwork that brands the product, which slides into the transparent sleeve.</p>
+                <div class="dimensions">
+                    <h4>Dimensions & Specifications</h4>
+                    <p><strong>Dimensions:</strong> 276.0 mm × 116.0 mm (full bleed)</p>
+                    <p><strong>3260px x 1370px
+                        </strong></p>
+                    <p><strong>
+                            1535px(back) | 190px(spine) | 1535px(back)</strong></p>
+                    <p><strong>Material:</strong> 250gsm cardstock</p>
+                    <p><strong>Finish:</strong> Glossy laminate on one side</p>
+                    <p><strong>Design:</strong> Full color CMYK printing</p>
+                    <div class="imgcontainer">
+                        <img src="https://i.postimg.cc/RVwz8D46/vhd-case-insert.png" />
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="component">
+                <h3>
+                    Inner-Leaflet Manual
+                    <button class="toggle-btn" onclick="toggleDimensions(this)">Show Dimensions</button>
+                </h3>
+                <p>A small booklet with instructions and project details, like a developer environment manual.</p>
+                <div class="dimensions">
+                    <h4>Dimensions & Specifications</h4>
+                    <p><strong>Dimensions:</strong> 268 mm x 103 mm (folded)</p>
+                    <p><strong>Pages:</strong> 12 pages (including covers)</p>
+                    <p><strong>Paper:</strong> 130gsm gloss paper</p>
+                    <p><strong>Binding:</strong> Saddle-stitched</p>
+                    <p><strong>Weight:</strong> 20g</p>
+                    <div class="imgcontainer">
+                        <img src="https://i.postimg.cc/xCKC9yzt/manual-wide.png" />
+                    </div>
+                </div>
+            </div>
+
+            <div class="component">
+                <h3>
+                    Box Art
+                    <button class="toggle-btn" onclick="toggleDimensions(this)">Show Dimensions</button>
+                </h3>
+                <p>An A3 hard paper print which will be glued together to form a hard box that holds the 3D case.</p>
+                <div class="dimensions">
+                    <h4>Dimensions & Specifications</h4>
+                    <p><strong>Print Size:</strong> A3 (297mm × 420mm)</p>
+                    <p><strong>Final Box Dimensions:</strong> 140mm × 125mm × 20mm</p>
+                    <p><strong>Material:</strong> 250gsm cardstock</p>
+                    <p><strong>Finish:</strong> Glossy laminate on exterior surfaces</p>
+                    <p><strong>Design:</strong> Full color CMYK printing with die-cut fold lines</p>
+                    <p><strong>Assembly:</strong> Requires gluing along specified edges</p>
+                    <div class="flex-images">
+                        <div>
+                            <img src="https://i.postimg.cc/ZnH5dbjN/box-back-a4.png" alt="Box Back A4">
+
+                        </div>
+                        <div>
+                            <img src="https://i.postimg.cc/rsMps0Gc/box-front-a4.png" alt="Box Front A4">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <h2>Digital Component</h2>
+
+            <div class="component">
+                <h3>
+                    Fixed 220GB Bootable VHD
+                    <button class="toggle-btn" onclick="toggleDimensions(this)">Show Specifications</button>
+                </h3>
+                <p>The core product. This is a single file on the USB drive containing a full, pre-configured
+                    development operating system.</p>
+                <div class="dimensions">
+                    <h4>Technical Specifications</h4>
+                    <p><strong>Virtual Disk:</strong> 220GB (Fixed Size, Bootable)</p>
+                    <p><strong>File System:</strong> NTFS (for host compatibility)</p>
+                    <p><strong>Format:</strong> Virtual Hard Disk (VHD) compatible with Hyper-V and VirtualBox</p>
+                    <p><strong>OS:</strong> Windows 10 Development Environment</p>
+                    <p><strong>Development Tools:</strong> Visual Studio, Video Game Engine, Source Code</p>
+                    <p><strong>Graphics Tools</strong></p>
+                    <p><strong>Audio Tools</strong></p>
+                    <p><strong>Boot Method:</strong> UEFI and Legacy BIOS compatible</p>
+                    <div class="vhd-container">
+                        <img src="https://i.postimg.cc/9MNYQbWF/vhdusbdownloader.png" alt="vhdusbdownloader icon"
+                            class="vhd-icon" />
+                        <span class="vhd-text">
+                            Use <strong>vhdusbdownloader</strong> (Electron app) to download the VHD from a URL directly
+                            to a USB
+                            drive and
+                            make it bootable. Large files (e.g., 256GB or more) can take many hours — for example, at
+                            10MB/s a 256GB
+                            image
+                            takes roughly 7 hours to complete. The app includes built-in <strong>resume
+                                support</strong>, so if the
+                            transfer
+                            is interrupted you don’t need to start over.
+                        </span>
+                    </div>
+                    <div class="download-links">
+                        <a target="_blank" rel="noreferrer" href="https://example.com/download/windows"
+                            class="download-link windows">
+                            <img src="https://img.icons8.com/color/24/000000/windows-10.png" alt="Windows logo"
+                                class="link-icon" />
+                            Windows
+                        </a>
+                        <a target="_blank" rel="noreferrer" href="https://example.com/download/macos"
+                            class="download-link macos">
+                            <img src="https://img.icons8.com/ios-filled/24/ffffff/mac-os.png" alt="Mac logo"
+                                class="link-icon" />
+                            macOS
+                        </a>
+                        <a target="_blank" rel="noreferrer" href="https://example.com/download/linux"
+                            class="download-link linux">
+                            <img src="https://img.icons8.com/color/24/000000/linux.png" alt="Linux logo"
+                                class="link-icon" />
+                            Linux
+                        </a>
+                    </div>
+                    <div><img class="vhdusb" src="https://i.postimg.cc/bJNTzQHQ/vhdusbdownloader.png" /></div>
+
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Video Game Development Environment VHD | Project Specification Document</p>
+            <p>© 2023 | All dimensions and specifications subject to change</p>
+        </footer>
     </div>
 
+    <script>
+        function toggleDimensions(btn) {
+            const dimensions = btn.parentElement.nextElementSibling.nextElementSibling;
+            dimensions.classList.toggle('show');
+
+            if (dimensions.classList.contains('show')) {
+                btn.textContent = 'Hide Specifications';
+            } else {
+                btn.textContent = 'Show Specifications';
+            }
+        }
+    </script>
 </body>
 
 </html>
