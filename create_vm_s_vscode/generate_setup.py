@@ -14,9 +14,6 @@ def generate_setup(
     letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
     ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
     
-    # Escape variables for JSON to prevent injection
-    location_escaped = json.dumps(location)
-    resource_group_escaped = json.dumps(resource_group)
     
     # Webhook helper
     if WEBHOOK_URL:
@@ -37,8 +34,8 @@ notify_webhook() {{
   "vm_name": "$(hostname)",
   "status": "$status",
   "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-  "location": {location_escaped},
-  "resource_group": {resource_group_escaped},
+  "location": {location},
+  "resource_group": {resource_group},
   "details": {{
     "step": "$step",
     "message": "$message"
@@ -332,7 +329,6 @@ extensions=(
     "WallabyJs.console-ninja"
     "Monish.regexsnippets"
     "GitHub.copilot"
-    "JayBarnes.chatgpt-vscode-plugin"
     "pnp.polacode"
     "Codeium.codeium"
     "oouo-diogo-perdigao.docthis"
@@ -347,12 +343,16 @@ mkdir -p "$EXT_DIR"
 mkdir -p "$USER_DATA_DIR"
 chown -R {SERVICE_USER}:{SERVICE_USER} "$USER_DATA_DIR"
 
-# Install extensions one by one with error handling
+# Install extensions
 for extension in "${{extensions[@]}}"; do
-    echo "Installing extension: $extension"
-    if ! su - {SERVICE_USER} -c "code-server --install-extension $extension --extensions-dir=$EXT_DIR --user-data-dir=$USER_DATA_DIR 2>&1"; then
-        echo "WARNING: Failed to install extension $extension"
-        notify_webhook "warning" "extension_install" "Failed to install extension $extension"
+    echo "🔧 Installing extension: $extension"
+    if ! sudo -u "$SERVICE_USER" code-server \
+        --install-extension "$extension" \
+        --extensions-dir="$EXT_DIR" \
+        --user-data-dir="$USER_DATA_DIR" 2>&1; then
+        echo "⚠️ WARNING: Failed to install $extension"
+        # Optional: notify webhook here
+        # notify_webhook "warning" "extension_install" "Failed to install $extension"
     fi
 done
 
@@ -397,7 +397,53 @@ notify_webhook "provisioning" "nginx" "Configuring Nginx"
 rm -f /etc/nginx/sites-enabled/default
 rm -f /etc/nginx/sites-available/default
 
-# Create vscode nginx config 
+# Temporary HTTP-only config for certbot validation
+cat > /etc/nginx/sites-available/vscode <<EOF
+server {{
+    listen 80;
+    server_name {DOMAIN_NAME};
+    root /var/www/html;
+
+    location / {{
+        return 200 'Certbot validation ready';
+        add_header Content-Type text/plain;
+    }}
+}}
+EOF
+
+ln -sf /etc/nginx/sites-available/vscode /etc/nginx/sites-enabled/vscode
+nginx -t && systemctl restart nginx
+
+# ========== SSL ==========
+echo "[17/20] Setting up SSL..."
+notify_webhook "provisioning" "ssl" "Setting up SSL with Let's Encrypt"
+mkdir -p /etc/letsencrypt
+curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
+curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
+
+# Stop nginx temporarily for certbot standalone verification
+systemctl stop nginx
+
+# Obtain SSL certificate
+if certbot certonly --standalone -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL}; then
+    echo "SSL certificate obtained successfully"
+else
+    echo "WARNING: Failed to obtain SSL certificate with standalone method, trying webroot method"
+    systemctl start nginx
+    certbot certonly --webroot -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL} -w /var/www/html
+fi
+
+# Verify certificate exists
+if [ -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
+    echo "SSL certificate verified: /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem"
+else
+    echo "ERROR: SSL certificate not found at /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem"
+    notify_webhook "failed" "ssl" "SSL certificate not found"
+    exit 1
+fi
+
+
+# Replace nginx config with HTTPS proxy version
 cat > /etc/nginx/sites-available/vscode <<EOF
 server {{
     listen 80;
@@ -433,39 +479,7 @@ server {{
 }}
 EOF
 
-ln -sf /etc/nginx/sites-available/vscode /etc/nginx/sites-enabled/vscode
-nginx -t && systemctl restart nginx
-
-# ========== SSL ==========
-echo "[17/20] Setting up SSL..."
-notify_webhook "provisioning" "ssl" "Setting up SSL with Let's Encrypt"
-mkdir -p /etc/letsencrypt
-curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
-curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
-
-# Stop nginx temporarily for certbot standalone verification
-systemctl stop nginx
-
-# Obtain SSL certificate
-if certbot certonly --standalone -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL}; then
-    echo "SSL certificate obtained successfully"
-else
-    echo "WARNING: Failed to obtain SSL certificate with standalone method, trying webroot method"
-    systemctl start nginx
-    certbot certonly --webroot -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL} -w /var/www/html
-fi
-
-# Restart nginx
-systemctl start nginx
-
-# Verify certificate exists
-if [ -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
-    echo "SSL certificate verified: /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem"
-else
-    echo "ERROR: SSL certificate not found at /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem"
-    notify_webhook "failed" "ssl" "SSL certificate not found"
-    exit 1
-fi
+nginx -t && systemctl reload nginx
 
 # ========== RENEWAL ==========
 echo "[18/20] Setting certbot auto-renewal..."
