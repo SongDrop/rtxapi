@@ -421,6 +421,8 @@ mkdir -p /etc/letsencrypt
 curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
 curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
 
+# Stop nginx temporarily for certbot standalone verification
+systemctl stop nginx
 
 # Obtain SSL certificate
 if certbot certonly --standalone -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL}; then
