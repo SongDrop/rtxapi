@@ -88,5 +88,3 @@ Enter disk size in GB [128]:
 > You might also need to request Azure quota increase for the specific virtual machine size you plan to use.
 
 ---
-
-Happy mailing with your new Mailcow setup on Azure! 🚀

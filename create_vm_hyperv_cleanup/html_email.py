@@ -358,23 +358,47 @@ def HTMLEmail(snapshot_vm: str, vhd_download_url: str, vhdusb_app_url: str, desi
         <div class="section">
             <h2>Create Box Art & 3D Case</h2>
             <p>Take your virtual machine projects to the next level by designing custom
-                <strong>box art</strong> and a <strong>3D-printed case</strong> for your team's
+                <strong>box art</strong> and a <strong>3D-printed case</strong> for your team’s
                 portable development environment. Perfect for showcasing your work, building
                 team identity, or preparing demo-ready kits.
             </p>
 
             <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; margin-top: 20px;">
                 <div style="flex: 1 1 45%; text-align: center;">
-                    <img src="https://i.postimg.cc/6QvX50nm/box-art-sample.png" alt="Box Art Example"
+                    <img src="https://i.postimg.cc/4xGB0m5T/INSERT-A4.png" alt="Box Art Example"
                         style="width:100%; max-width:250px; border-radius: 8px; box-shadow:0 4px 10px rgba(0,0,0,0.1);">
-                    <p><strong>Custom Box Art</strong><br>
-                        Create striking artwork for your dev box.</p>
+                    <p><strong>Insert</strong><br>
+                        Create insert artwork for your 3d case.</p>
                 </div>
                 <div style="flex: 1 1 45%; text-align: center;">
-                    <img src="https://i.postimg.cc/zG5cwz8y/3d-case-sample.png" alt="3D Case Example"
+                    <img src="https://i.postimg.cc/wjFcbFMP/MANUAL-A4.png" alt="Box Art Example"
                         style="width:100%; max-width:250px; border-radius: 8px; box-shadow:0 4px 10px rgba(0,0,0,0.1);">
-                    <p><strong>3D Printed Case</strong><br>
-                        Design & print cases for team-ready setups.</p>
+                    <p><strong>Manual</strong><br>
+                        Create manual for your 3d case</p>
+                </div>
+                <div style="flex: 1 1 45%; text-align: center;">
+                    <img src="https://i.postimg.cc/6p6CRRc5/BOXART-A4-BACK.png" alt="3D Case Example"
+                        style="width:100%; max-width:250px; border-radius: 8px; box-shadow:0 4px 10px rgba(0,0,0,0.1);">
+                    <p><strong>Box Art Hard Paper Back</strong><br>
+                        Create box art from hard paper for your 3d case</p>
+                </div>
+                <div style="flex: 1 1 45%; text-align: center;">
+                    <img src="https://i.postimg.cc/jdbHxBJP/BOXART-A4-FRONT.png" alt="3D Case Example"
+                        style="width:100%; max-width:250px; border-radius: 8px; box-shadow:0 4px 10px rgba(0,0,0,0.1);">
+                    <p><strong>Box Art Hard Paper Front</strong><br>
+                        Create box art from hard paper for your 3d case</p>
+                </div>
+                <div style="flex: 1 1 45%; text-align: center;">
+                    <img src="https://i.postimg.cc/44FDjb7Y/hyperv-usb.png" alt="3D Case Example"
+                        style="width:100%; max-width:250px; border-radius: 8px; box-shadow:0 4px 10px rgba(0,0,0,0.1);">
+                    <p><strong>3d printed USB HEAD</strong><br>
+                        Print 3d head for SAMSUNG Fit-Plus usb</p>
+                </div>
+                <div style="flex: 1 1 45%; text-align: center;">
+                    <img src="https://i.postimg.cc/kXJ2hCS7/3-DCASE-CLOSED.png" alt="3D Case Example"
+                        style="width:100%; max-width:250px; border-radius: 8px; box-shadow:0 4px 10px rgba(0,0,0,0.1);">
+                    <p><strong>3d printed USB CASE</strong><br>
+                        Print 3d case for SAMSUNG Fit-Plus usb</p>
                 </div>
             </div>
 

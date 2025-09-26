@@ -345,16 +345,22 @@ chown -R {SERVICE_USER}:{SERVICE_USER} "$USER_DATA_DIR"
 
 # Install extensions
 for extension in "${{extensions[@]}}"; do
-    echo "🔧 Installing extension: $extension"
-    if ! sudo -u "$SERVICE_USER" code-server \
-        --install-extension "$extension" \
-        --extensions-dir="$EXT_DIR" \
-        --user-data-dir="$USER_DATA_DIR" 2>&1; then
-        echo "⚠️ WARNING: Failed to install $extension"
-        # Optional: notify webhook here
-        # notify_webhook "warning" "extension_install" "Failed to install $extension"
-    fi
+    retries=3
+    for i in $(seq 1 $retries); do
+        echo "🔧 Installing extension: $extension (attempt $i)"
+        if sudo -u "$SERVICE_USER" code-server \
+            --install-extension "$extension" \
+            --extensions-dir="$EXT_DIR" \
+            --user-data-dir="$USER_DATA_DIR"; then
+            echo "✅ Installed $extension"
+            break
+        else
+            echo "⚠️ Attempt $i failed for $extension"
+            sleep 5
+        fi
+    done
 done
+
 
 # ========== SYSTEMD ==========
 echo "[14/20] Configuring systemd service..."
