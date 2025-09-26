@@ -1112,10 +1112,14 @@ async def provision_vm_background(
             recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
             
             html_content = html_email.HTMLEmail(
+                logo_url="https://i.postimg.cc/4yyGBqFs/microsoft-azure.png",
                 ip_address=public_ip,
+                created_at=datetime.utcnow().isoformat(),
                 link1=f"https://{fqdn}",
                 link2=f"https://{fqdn}/admin",
-                link3=f"https://{fqdn}/status"
+                link3=f"https://{fqdn}/status",
+                new_vm_url=f"https://rtxdevstation.xyz/requestvm",
+                dash_url="https://rtxdevstation.xyz"
             )
 
             await html_email_send.send_html_email_smtp(

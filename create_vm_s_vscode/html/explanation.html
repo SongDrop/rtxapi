@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code-Server Setup Overview</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+            background-color: #f5f5f5;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        ul {
+            background: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+        }
+
+        li {
+            margin-bottom: 10px;
+        }
+
+        code {
+            background: #eee;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <img src="https://i.postimg.cc/G2sb57LD/vscode-logo.png" style="width: 300px;" />
+    <h1>Code-Server Automated Setup Script</h1>
+    <p>This script automates provisioning a development server with <strong>code-server</strong> and related tools.
+        Here’s what it does:</p>
+    <ul>
+        <li>Validates <code>DOMAIN_NAME</code> and <code>PORT</code> inputs to prevent misconfiguration.</li>
+        <li>Checks and resolves port conflicts before starting code-server.</li>
+        <li>Updates the system and installs dependencies (NGINX, certbot, Docker, Node.js, Python, etc.).</li>
+        <li>Installs development tools like Azure CLI, Netlify CLI, Yarn, and Python via <code>pyenv</code>.</li>
+        <li>Installs code-server and creates a dedicated service user (<code>coder</code>).</li>
+        <li>Configures code-server with admin password and binds it to the specified port.</li>
+        <li>Installs common VSCode extensions, retrying if needed to avoid provisioning failures.</li>
+        <li>Configures systemd service for code-server to auto-start and auto-restart on failure.</li>
+        <li>Sets up firewall rules to allow SSH, HTTP, HTTPS, and code-server port.</li>
+        <li>Configures NGINX as a reverse proxy with SSL using Let's Encrypt.</li>
+        <li>Sets up automatic SSL certificate renewal via cron.</li>
+        <li>Verifies the installation by checking code-server and HTTPS access, reporting errors to an optional webhook.
+        </li>
+        <li>Outputs a summary with access URL, admin password, and useful commands.</li>
+        <li>Installs these vscode-extensions</li>
+    </ul>
+    <pre>
+"ms-azuretools.vscode-azureterraform"
+"ms-azuretools.vscode-azureappservice"
+"ms-azuretools.vscode-azurefunctions"
+"ms-azuretools.vscode-azurestaticwebapps"
+"ms-azuretools.vscode-azurestorage"
+"ms-azuretools.vscode-cosmosdb"
+"ms-azuretools.vscode-docker"
+"ms-kubernetes-tools.vscode-kubernetes-tools"
+"netlify.netlify-vscode"
+"dbaeumer.vscode-eslint"
+"esbenp.prettier-vscode"
+"ms-vscode.vscode-typescript-next"
+"eamodio.gitlens"
+"ms-vscode-remote.remote-containers"
+"ms-vscode-remote.remote-ssh"
+"ms-vscode.powershell"
+"ms-python.python"
+"ms-toolsai.jupyter"
+"hashicorp.terraform"
+"redhat.vscode-yaml"
+"EliotVU.uc"
+"stefan-h-at.source-engine-support"
+"LionDoge.vscript-debug"
+"NilsSoderman.ue-python"
+"mjxcode.vscode-q3shader"
+"shd101wyy.markdown-preview-enhanced"
+"formulahendry.code-runner"
+"donjayamanne.githistory"
+"humao.rest-client"
+"streetsidesoftware.code-spell-checker"
+"Cardinal90.multi-cursor-case-preserve"
+"alefragnani.Bookmarks"
+"WallabyJs.quokka-vscode"
+"ritwickdey.LiveServer"
+"WallabyJs.console-ninja"
+"Monish.regexsnippets"
+"GitHub.copilot"
+"pnp.polacode"
+"Codeium.codeium"
+"oouo-diogo-perdigao.docthis"
+"johnpapa.vscode-peacock"
+"Postman.postman-for-vscode"
+    </pre>
+</body>
+
+</html>

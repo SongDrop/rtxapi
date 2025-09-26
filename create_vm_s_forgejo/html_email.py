@@ -1,4 +1,4 @@
-def HTMLEmail(ip_address: str, created_at: str, link1: str, link2: str, link3: str, new_vm_url, dash_url) -> str:
+def HTMLEmail(logo_url:str, ip_address: str, created_at: str, link1: str, link2: str, link3: str, new_vm_url, dash_url) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 
@@ -230,6 +230,7 @@ def HTMLEmail(ip_address: str, created_at: str, link1: str, link2: str, link3: s
 <body>
     <div class="container">
         <div class="header">
+            <img src={logo_url} style="width: 200px"/>
             <h1><i class="fas fa-server"></i> Virtual Machine Management</h1>
             <p>Your cloud resources are ready</p>
         </div>
