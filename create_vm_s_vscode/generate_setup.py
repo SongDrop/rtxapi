@@ -442,6 +442,7 @@ else
     exit 1
 fi
 
+systemctl start nginx
 
 # Replace nginx config with HTTPS proxy version
 cat > /etc/nginx/sites-available/vscode <<EOF
