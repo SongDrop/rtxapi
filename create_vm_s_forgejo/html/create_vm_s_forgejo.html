@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forgejo Team Setup & Clone Script Generator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+
+        h1,
+        h2 {
+            color: #2c3e50;
+        }
+
+        input,
+        button,
+        textarea {
+            width: 100%;
+            margin-top: 10px;
+            padding: 8px;
+        }
+
+        label {
+            font-weight: bold;
+            margin-top: 15px;
+            display: block;
+        }
+
+        .script-box {
+            height: 150px;
+            font-family: monospace;
+        }
+
+        .section {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+
+        pre {
+            background: #eee;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <h1><img src="https://i.postimg.cc/CKng8yk4/forgejo.png" style="width: 30px; margin-right: 6px;" /> Team Setup &
+        Clone Script Generator</h1>
+    <div class="section">
+        <h2>Step 1 — Setup Forgejo on Azure</h2>
+        <p>We use an automated script <code>create_vm_s_forgejo</code> to provision a 1TB Ubuntu VM, install Forgejo,
+            Git LFS, and make it accessible on a public URL:</p>
+        <pre>
+# create_vm_s_forgejo
+# - Creates 1TB Ubuntu VM on Azure
+# - Installs Git, Git LFS
+# - Downloads & installs Forgejo
+# - Makes Forgejo accessible at https://forgejo.example.com
+</pre>
+        <p><img src="https://i.postimg.cc/wvKdcWQf/gitlfs.png" style="width: 60px; margin-right: 6px;" />Git-LFS
+            allows you to
+            upload and store
+            files more than 50mb, with extra filetype-specific monitoring</p>
+        <p>After the VM is running, launch Forgejo:</p>
+        <pre>
+# Forgejo installation takes ~10m to complete 
+# Open https://forgejo.example.com in a browser
+</pre>
+
+        <p>The first time you start the app, you need to:</p>
+        <ol>
+            <li>Create an <strong>admin username & password</strong></li>
+            <li>Log in to the web UI</li>
+            <li>Create your first user profile (e.g., <strong>your-username</strong>)</li>
+            <li>Create your first repository (e.g., <strong>your-reponame</strong>)</li>
+            <li>Generate your first personal access token (e.g., <strong>azure-cli</strong>) via <em>Settings →
+                    Applications → Generate New Token</em></li>
+            <li>Set token permissions to <strong>repository read/write</strong> and copy the token (e.g.,
+                <code>1c9ca278c04f1713f3ff29ac03f81179a11acf85</code>)
+            </li>
+        </ol>
+    </div>
+
+    <div class="section">
+        <h2>Step 2 — Adding Collaborators</h2>
+        <ol>
+            <li>New team members create their own Forgejo accounts at <strong>https://forgejo.example.com</strong></li>
+            <li>As project manager, go to your repo → <strong>Settings → Collaboration</strong></li>
+            <li>Search for their username and add them as <strong>collaborators</strong> with Write access</li>
+            <li>Each collaborator generates their own personal access token for Git operations</li>
+        </ol>
+    </div>
+
+    <div class="section">
+        <h2>Step 3 — Setup Team Access</h2>
+        <p>Forgejo supports multiple users on a repo without sharing accounts:</p>
+        <ol>
+            <li>Each team member creates their own Forgejo account.</li>
+            <li>The repo owner/admin adds them as a collaborator on the <strong>your-reponame</strong> repo:
+                <ul>
+                    <li>Go to repo → <strong>Settings → Collaborators & Teams → Add Collaborator</strong></li>
+                    <li>Set permission level:
+                        <ul>
+                            <li><strong>Read</strong> → pull only</li>
+                            <li><strong>Write</strong> → pull & push</li>
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+            <li>Each user generates their own personal access token.</li>
+            <li>Each dev clones using their own token:
+                <pre>git clone https://USERNAME:TOKEN@forgejo.win10dev.xyz/igiteam/prince-of-persia-3d.git</pre>
+            </li>
+        </ol>
+        <p>✅ <strong>Pros:</strong></p>
+        <ul>
+            <li>Audit trail preserved (each commit shows the correct author).</li>
+            <li>Tokens are separate, so revoking one token doesn’t affect the team.</li>
+            <li>Works well with branch/PR workflows.</li>
+        </ul>
+        <p>✅ <strong>Best practice for a game dev team:</strong></p>
+        <ul>
+            <li>Create separate accounts for each dev.</li>
+            <li>Use <strong>Write access</strong> for everyone who needs to push.</li>
+            <li>Use feature branches + PRs to avoid conflicts.</li>
+            <li>Use tokens for authentication — no passwords shared.</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Step 4 — Setup VSCode and Visual Studio 2022</h2>
+        <p>Your project enables you to utilize two powerful text editors:</p>
+        <ul>
+            <li><strong>VSCode Online</strong> — accessible via <a
+                    href="https://vscode.example.com">https://vscode.example.com</a>. You need to set this up for
+                cloud-based coding.</li>
+            <li><strong>Visual Studio 2022</strong> — installed on Windows 10 for game development and compilation.
+            </li>
+        </ul>
+        <p>Both editors can be used simultaneously for writing code. However, the game compilation happens in
+            <strong>Visual
+                Studio 2022</strong>.
+        </p>
+    </div>
+
+
+    <div class="section">
+        <h2>Step 5 — Clone Scripts Generator</h2>
+        <label for="forgejoUrl">Forgejo URL</label>
+        <input type="text" id="forgejoUrl" placeholder="https://forgejo.example.com">
+
+        <label for="username">Username</label>
+        <input type="text" id="username" placeholder="username">
+
+        <label for="token">Personal Access Token</label>
+        <input type="text" id="token" placeholder="1c9ca278c04f1713f3ff29ac03f81179a11acf85">
+
+        <label for="vscodeScript">VSCode Online (bash) Script</label>
+        <textarea id="vscodeScript" class="script-box" readonly></textarea>
+        <button onclick="downloadScript('vscode')">Download VSCode Script (.sh)</button>
+
+        <label for="vsScript">Visual Studio 2022 (PowerShell) Script</label>
+        <textarea id="vsScript" class="script-box" readonly></textarea>
+        <button onclick="downloadScript('vs')">Download PowerShell Script (.ps1)</button>
+    </div>
+    <div class="section">
+        <h2>Step 6 — Enable Git LFS on Developer Machines</h2>
+        <p>To manage large binary files in video game projects (like UE3 assets), Git LFS should be initialized on every
+            developer machine:</p>
+        <pre>
+    # Initialize Git LFS
+    git lfs install
+    
+    # Create .gitattributes file with common UE3 patterns
+    cat << 'EOF' > .gitattributes
+    # Track common UE3 file types
+    *.uasset filter=lfs diff=lfs merge=lfs -text
+    *.umap   filter=lfs diff=lfs merge=lfs -text
+    *.upk    filter=lfs diff=lfs merge=lfs -text
+    *.psa    filter=lfs diff=lfs merge=lfs -text
+    *.psk    filter=lfs diff=lfs merge=lfs -text
+    *.fbx    filter=lfs diff=lfs merge=lfs -text
+    *.png    filter=lfs diff=lfs merge=lfs -text
+    *.tga    filter=lfs diff=lfs merge=lfs -text
+    *.dds    filter=lfs diff=lfs merge=lfs -text
+    *.wav    filter=lfs diff=lfs merge=lfs -text
+    *.bik    filter=lfs diff=lfs merge=lfs -text
+    *.swf    filter=lfs diff=lfs merge=lfs -text
+    *.dll    filter=lfs diff=lfs merge=lfs -text
+    *.exe    filter=lfs diff=lfs merge=lfs -text
+    *.pak    filter=lfs diff=lfs merge=lfs -text
+    EOF
+    
+    # Commit and push the Git LFS configuration
+    git add .gitattributes
+    git commit -m "Enable Git LFS tracking for UE3 assets"
+    git push origin main
+      </pre>
+        <p>✅ This ensures all large game assets (textures, models, sounds, binaries) are tracked efficiently with Git
+            LFS,
+            reducing repository size and improving collaboration.</p>
+    </div>
+    <section class="section">
+        <h2>Step 7 — Setting up Webhooks</h2>
+        <p>Forgejo supports <strong>webhooks</strong>, which let your repository send real-time updates to external
+            services (e.g., Discord, project management tools, or CI/CD pipelines). Configure them here:</p>
+        <p><a href="https://forgejo.example.com/username/repo/settings/hooks" target="_blank">
+                https://forgejo.example.com/username/repo/settings/hooks</a></p>
+
+        <h3>🔔 Discord Notifications</h3>
+        <ol>
+            <li>Go to your Discord server → <strong>Server Settings → Integrations → Webhooks</strong>.</li>
+            <li>Create a new webhook, copy the <code>https://discord.com/api/webhooks/.../...</code> URL.</li>
+            <li>In Forgejo repo settings → <strong>Webhooks</strong>, add this Discord webhook URL.</li>
+            <li>Select which events to trigger (push, pull request, release, etc.).</li>
+        </ol>
+        <p>Now every commit, PR, or release will post directly to your Discord channel.</p>
+
+        <h3>📋 Team Management Webhooks</h3>
+        <p>You can connect Forgejo to open-source or self-hosted tools by creating webhook endpoints.
+            Each endpoint can process repository events (like pushes, pull requests, or issue updates) and update your
+            project boards, chat systems, or other services.</p>
+        <ul>
+            <li><strong>Matrix / Element:</strong> Create an HTTP webhook to post updates to your team chat.</li>
+            <li><strong>OpenProject / Kanboard / Wekan:</strong> Use a simple Python, Node.js, or Bash script to
+                translate
+                Forgejo webhook payloads into tasks or comments.</li>
+            <li><strong>Custom scripts:</strong> You can run a small server (Python Flask, FastAPI, or Node.js) that
+                receives
+                Forgejo webhooks and triggers build scripts, notifications, or any automation you need.</li>
+        </ul>
+        <p>✅ This keeps your workflow fully open-source and self-hosted, without relying on paid cloud services.</p>
+
+        <h3>🐍 Python Webhook Receiver Example</h3>
+        <p>If you want to process Forgejo events yourself (e.g., trigger a build, auto-tag, or custom bot),
+            here’s a simple Python Flask app to catch webhook payloads:</p>
+
+        <pre><code class="language-python">
+  from flask import Flask, request, jsonify
+
+  app = Flask(__name__)
+
+  @app.route("/webhook", methods=["POST"])
+  def forgejo_webhook():
+      event = request.headers.get("X-Gitea-Event")  # Forgejo is Gitea-compatible
+      payload = request.json
+      print(f"Received {event}: {payload}")
+      
+      # Example: push event
+      if event == "push":
+          commits = payload.get("commits", [])
+          for commit in commits:
+              print(f"New commit: {commit['message']} by {commit['author']['name']}")
+      
+      return jsonify({"status": "ok"})
+
+  if __name__ == "__main__":
+      app.run(host="0.0.0.0", port=5000)
+  </code></pre>
+
+        <h3>⚙️ Posting Back to Discord with Python</h3>
+        <pre><code class="language-python">
+  import requests
+
+  discord_webhook = "https://discord.com/api/webhooks/XXXX/YYYY"
+
+  def post_to_discord(message):
+      data = {"content": message}
+      response = requests.post(discord_webhook, json=data)
+      print("Discord response:", response.status_code)
+
+  # Example usage
+  post_to_discord("New build completed! 🚀")
+  </code></pre>
+
+        <p>✅ With this, you can integrate Forgejo with both Discord for alerts
+            and any custom project management system.</p>
+    </section>
+
+    <script>
+        function generateScripts() {
+            const url = document.getElementById('forgejoUrl').value.trim();
+            const user = document.getElementById('username').value.trim();
+            const token = document.getElementById('token').value.trim();
+
+            if (!url || !user || !token) {
+                document.getElementById('vscodeScript').value = "";
+                document.getElementById('vsScript').value = "";
+                return;
+            }
+
+            // Remove protocol (https://) if present
+            const cleanUrl = url.replace(/^https?:\/\//, '');
+
+            // Extract repo name (last part of path)
+            const repoName = cleanUrl.split('/').pop().replace(/\.git$/, '');
+
+            // Build full repo URL (normalize to prevent duplication)
+            const fullRepoUrl = `https://${token}@${cleanUrl}.git`;
+
+            const vscodeScript =
+                `
+#!/bin/bash
+
+# VSCode Online / Cloud Terminal
+# Navigate to your projects folder
+cd ~/projects
+    
+# Clone your repository
+git clone ${fullRepoUrl}
+    
+# Move into the repo
+cd ${repoName}
+echo "Repository cloned into ~/projects/${repoName}"
+    
+# Store credentials
+git config --global credential.helper store`;
+
+            const vsScript = `
+# PowerShell / Visual Studio 2022
+# clone from https://${user}:${token}@${cleanUrl}.git 
+# Navigate to D:\\
+D:
+    
+# Clone your repository
+git clone https://${user}:${token}@${cleanUrl}.git D:\\${repoName}
+    
+# Move into the repo
+cd D:\\${repoName}
+Write-Host "Repository cloned into D:\\${repoName}"
+    
+# Store credentials
+git config --global credential.helper manager-core`;
+
+            document.getElementById('vscodeScript').value = vscodeScript;
+            document.getElementById('vsScript').value = vsScript;
+        }
+
+        function downloadScript(type) {
+            let scriptContent, filename;
+            if (type === 'vscode') {
+                scriptContent = document.getElementById('vscodeScript').value;
+                filename = 'clone_vscode.sh';
+            } else {
+                scriptContent = document.getElementById('vsScript').value;
+                filename = 'clone_vs.ps1';
+            }
+            const blob = new Blob([scriptContent], { type: 'text/plain' });
+            const link = document.createElement('a');
+            link.download = filename;
+            link.href = window.URL.createObjectURL(blob);
+            link.click();
+        }
+
+        document.getElementById('forgejoUrl').addEventListener('input', generateScripts);
+        document.getElementById('username').addEventListener('input', generateScripts);
+        document.getElementById('token').addEventListener('input', generateScripts);
+
+        // Generate initial empty scripts
+        generateScripts();
+    </script>
+
+
+
+</body>
+
+</html>

@@ -343,22 +343,29 @@ mkdir -p "$EXT_DIR"
 mkdir -p "$USER_DATA_DIR"
 chown -R {SERVICE_USER}:{SERVICE_USER} "$USER_DATA_DIR"
 
-# Install extensions
+# Install extensions with retries, but don’t fail the whole script
 for extension in "${{extensions[@]}}"; do
     retries=3
+    success=false
     for i in $(seq 1 $retries); do
         echo "🔧 Installing extension: $extension (attempt $i)"
-        if sudo -u "$SERVICE_USER" code-server \
-            --install-extension "$extension" \
-            --extensions-dir="$EXT_DIR" \
-            --user-data-dir="$USER_DATA_DIR"; then
+        if runuser -l "$SERVICE_USER" -c "code-server \
+            --install-extension '$extension' \
+            --extensions-dir='$EXT_DIR' \
+            --user-data-dir='$USER_DATA_DIR'"; then
             echo "✅ Installed $extension"
+            success=true
             break
         else
             echo "⚠️ Attempt $i failed for $extension"
             sleep 5
         fi
     done
+
+    if [ "$success" = false ]; then
+        echo "❌ Giving up on $extension after $retries attempts (continuing setup)"
+        notify_webhook "warning" "extensions" "Failed to install $extension after $retries attempts"
+    fi
 done
 
 
