@@ -368,6 +368,24 @@ for extension in "${{extensions[@]}}"; do
     fi
 done
 
+# ========== CODE CLI ==========
+echo "[13a/20] Installing 'code' command globally..."
+notify_webhook "provisioning" "code_cli" "Installing 'code' command in PATH"
+
+CODE_SERVER_BIN=$(which code-server)
+CODE_SYMLINK="/usr/local/bin/code"
+
+if [ -f "$CODE_SYMLINK" ]; then
+    if [ "$(readlink -f $CODE_SYMLINK)" = "$CODE_SERVER_BIN" ]; then
+        echo "'code' command already correctly points to code-server"
+    else
+        echo "WARNING: $CODE_SYMLINK exists and points elsewhere, skipping symlink"
+    fi
+else
+    echo "Creating symlink: $CODE_SYMLINK -> $CODE_SERVER_BIN"
+    ln -s "$CODE_SERVER_BIN" "$CODE_SYMLINK"
+fi
+
 
 # ========== SYSTEMD ==========
 echo "[14/20] Configuring systemd service..."

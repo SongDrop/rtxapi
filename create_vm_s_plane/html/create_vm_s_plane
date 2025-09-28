@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plane Project Manager Setup & Clone Script Generator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+
+        h1,
+        h2 {
+            color: #2c3e50;
+        }
+
+        input,
+        button,
+        textarea {
+            width: 100%;
+            margin-top: 10px;
+            padding: 8px;
+        }
+
+        label {
+            font-weight: bold;
+            margin-top: 15px;
+            display: block;
+        }
+
+        .script-box {
+            height: 150px;
+            font-family: monospace;
+        }
+
+        .section {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+
+        pre {
+            background: #eee;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <h1><img src="https://avatars.githubusercontent.com/u/120427432?s=200&v=4"
+            style="width: 30px; margin-right: 6px;" /> Plane Team Setup & Clone Script Generator</h1>
+
+    <div class="section">
+        <h2>Step 1 — Setup Plane on Azure</h2>
+        <p>We use an automated script <code>create_vm_s_plane</code> to provision an Ubuntu VM, install Docker & Plane,
+            and make it accessible on a public URL:</p>
+        <pre>
+# create_vm_s_plane
+# - Creates 1TB Ubuntu VM on Azure
+# - Installs Docker & Docker Compose
+# - Downloads & installs Plane
+# - Makes Plane accessible at https://plane.example.com
+</pre>
+
+        <p>After the VM is running, Plane will be available at:</p>
+        <pre>
+https://plane.example.com
+</pre>
+
+        <p>The first time you start Plane:</p>
+        <ol>
+            <li>Create an <strong>admin account</strong> via the signup page.</li>
+            <li>Login as admin and create your first <strong>Workspace</strong>.</li>
+            <li>Create a <strong>Project</strong> inside the workspace (e.g., <em>game-dev-board</em>).</li>
+            <li>Invite team members via email or username.</li>
+        </ol>
+    </div>
+
+    <div class="section">
+        <h2>Step 2 — Adding Collaborators</h2>
+        <ol>
+            <li>New team members visit <strong>https://plane.example.com</strong> and sign up.</li>
+            <li>Admin invites them to the workspace and project.</li>
+            <li>Assign roles: <strong>Viewer</strong>, <strong>Member</strong>, or <strong>Admin</strong>.</li>
+            <li>Each collaborator can now create and update tasks, sprints, or issues.</li>
+        </ol>
+    </div>
+
+    <div class="section">
+        <h2>Step 3 — Team Workflow in Plane</h2>
+        <p>Plane supports agile workflows with:</p>
+        <ul>
+            <li>📝 <strong>Issues</strong> (track bugs, features, tasks)</li>
+            <li>📅 <strong>Sprints</strong> (time-boxed iterations)</li>
+            <li>📊 <strong>Roadmaps</strong> (visual planning)</li>
+            <li>✅ <strong>Tasks & Subtasks</strong></li>
+        </ul>
+        <p>Recommended setup for a game dev team:</p>
+        <ul>
+            <li>Each feature = Epic</li>
+            <li>Each bug/asset = Issue</li>
+            <li>Use <strong>Sprints</strong> for milestone planning</li>
+            <li>Use <strong>Labels</strong> for task categories (UI, Gameplay, Audio, etc.)</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Step 4 — VSCode & Dev Scripts</h2>
+        <p>Developers still need Git access to code repos (Forgejo/GitHub/GitLab). Below is a script generator for easy
+            cloning with tokens.</p>
+
+        <label for="repoUrl">Repository URL</label>
+        <input type="text" id="repoUrl" placeholder="https://git.example.com/org/project.git">
+
+        <label for="username">Username</label>
+        <input type="text" id="username" placeholder="username">
+
+        <label for="token">Personal Access Token</label>
+        <input type="text" id="token" placeholder="ghp_xxxxx">
+
+        <label for="vscodeScript">VSCode Online (bash) Script</label>
+        <textarea id="vscodeScript" class="script-box" readonly></textarea>
+        <button onclick="downloadScript('vscode')">Download VSCode Script (.sh)</button>
+
+        <label for="vsScript">Visual Studio 2022 (PowerShell) Script</label>
+        <textarea id="vsScript" class="script-box" readonly></textarea>
+        <button onclick="downloadScript('vs')">Download PowerShell Script (.ps1)</button>
+    </div>
+
+    <div class="section">
+        <h2>Step 5 — Webhooks & Integrations</h2>
+        <p>Plane supports webhooks to connect with tools like Discord, Slack, or custom bots.</p>
+
+        <h3>🔔 Discord Notifications</h3>
+        <ol>
+            <li>Create a Discord webhook URL from your server.</li>
+            <li>In Plane → Workspace Settings → Webhooks, paste the Discord webhook URL.</li>
+            <li>Choose events (issue created, task updated, sprint started).</li>
+        </ol>
+
+        <h3>⚙️ Custom Integrations</h3>
+        <p>Run a webhook receiver with Python/Node.js to connect Plane events to your CI/CD or custom tools.</p>
+
+        <pre><code class="language-python">
+from flask import Flask, request
+
+app = Flask(__name__)
+
+@app.route("/plane-webhook", methods=["POST"])
+def plane_webhook():
+    event = request.json
+    print("Received event:", event)
+    return {"status": "ok"}
+
+if __name__ == "__main__":
+    app.run(port=5000)
+</code></pre>
+    </div>
+
+    <script>
+        function generateScripts() {
+            const url = document.getElementById('repoUrl').value.trim();
+            const user = document.getElementById('username').value.trim();
+            const token = document.getElementById('token').value.trim();
+
+            if (!url || !user || !token) {
+                document.getElementById('vscodeScript').value = "";
+                document.getElementById('vsScript').value = "";
+                return;
+            }
+
+            const cleanUrl = url.replace(/^https?:\/\//, '');
+            const repoName = cleanUrl.split('/').pop().replace(/\.git$/, '');
+
+            const vscodeScript = `
+#!/bin/bash
+# VSCode Online / Cloud Terminal
+mkdir -p ~/projects && cd ~/projects
+git clone https://${user}:${token}@${cleanUrl}
+cd ${repoName}
+echo "Cloned into ~/projects/${repoName}"
+git config --global credential.helper store`;
+
+            const vsScript = `
+# PowerShell / Visual Studio
+D:
+git clone https://${user}:${token}@${cleanUrl} D:\\${repoName}
+cd D:\\${repoName}
+Write-Host "Cloned into D:\\${repoName}"
+git config --global credential.helper manager-core`;
+
+            document.getElementById('vscodeScript').value = vscodeScript;
+            document.getElementById('vsScript').value = vsScript;
+        }
+
+        function downloadScript(type) {
+            let scriptContent, filename;
+            if (type === 'vscode') {
+                scriptContent = document.getElementById('vscodeScript').value;
+                filename = 'clone_vscode.sh';
+            } else {
+                scriptContent = document.getElementById('vsScript').value;
+                filename = 'clone_vs.ps1';
+            }
+            const blob = new Blob([scriptContent], { type: 'text/plain' });
+            const link = document.createElement('a');
+            link.download = filename;
+            link.href = window.URL.createObjectURL(blob);
+            link.click();
+        }
+
+        document.getElementById('repoUrl').addEventListener('input', generateScripts);
+        document.getElementById('username').addEventListener('input', generateScripts);
+        document.getElementById('token').addEventListener('input', generateScripts);
+    </script>
+
+</body>
+
+</html>
