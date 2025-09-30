@@ -386,6 +386,7 @@ EOF
     echo "✅ code-server is running"
     notify_webhook "provisioning" "service_start" "code-server is running"
 
+    sleep 5
     # Install extensions
     echo "[16/20] Installing VSCode extensions..."
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
