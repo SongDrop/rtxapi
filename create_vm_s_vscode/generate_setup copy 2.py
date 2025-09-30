@@ -195,21 +195,7 @@ def generate_setup(
     # ========== INSTALL CODE-SERVER ==========
     echo "[12/20] Installing code-server..."
     notify_webhook "provisioning" "code_server" "Installing code-server"
-
-    # Save the install script for debugging
-    curl -fsSL https://code-server.dev/install.sh -o /tmp/install-code-server.sh
-    chmod +x /tmp/install-code-server.sh
-
-    export HOME=/root
-    sh /tmp/install-code-server.sh
-
-    # Check if installed properly
-    if ! /usr/bin/code-server --version >/dev/null 2>&1; then
-        echo "ERROR: code-server not found after install"
-        notify_webhook "failed" "code_server" "code-server install failed"
-        exit 1
-    fi
-
+    curl -fsSL https://code-server.dev/install.sh | HOME=/root sh
 
     if ! command -v code-server >/dev/null 2>&1; then
         echo "ERROR: code-server not found after install"
