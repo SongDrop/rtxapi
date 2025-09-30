@@ -74,26 +74,54 @@ def generate_setup(
     # Check running port and attempt to free it
     echo "[2/20] Checking for port conflicts..."
     notify_webhook "provisioning" "port_check" "Checking port $PORT"
-    if ss -tulnp 2>/dev/null | grep -q ":$PORT\b"; then
-        echo "WARNING: Port $PORT is in use; attempting to free"
-        ss -tulnp | grep ":$PORT\b" || true
-        systemctl stop code-server@"$SERVICE_USER" || true
-        pkill -f "code-server" || true
-        sleep 2
-        if ss -tulnp 2>/dev/null | grep -q ":$PORT\b"; then
-            PID=$(ss -tulnp 2>/dev/null | grep ":$PORT\b" | awk '{print $6}' | cut -d, -f2 | cut -d= -f2 | head -1 || true)
-            if [ -n "$PID" ]; then
-                PROCESS_NAME=$(ps -p "$PID" -o comm= 2>/dev/null || echo "unknown")
-                echo "ERROR: Could not free port $PORT; process $PID ($PROCESS_NAME) still using it"
-                notify_webhook "failed" "port_conflict" "Port $PORT in use by $PID ($PROCESS_NAME)"
-                exit 1
-            else
-                echo "ERROR: Port $PORT in use, but could not determine PID"
-                notify_webhook "failed" "port_conflict" "Port $PORT in use"
-                exit 1
-            fi
+    
+    # Improved port conflict resolution
+    PORT_IN_USE=false
+    if command -v ss >/dev/null 2>&1; then
+        if ss -tuln 2>/dev/null | awk '{print $4}' | grep -q ":$PORT$"; then
+            PORT_IN_USE=true
+        fi
+    elif command -v netstat >/dev/null 2>&1; then
+        if netstat -tuln 2>/dev/null | awk '{print $4}' | grep -q ":$PORT$"; then
+            PORT_IN_USE=true
+        fi
+    fi
+
+    if [ "$PORT_IN_USE" = true ]; then
+        echo "WARNING: Port $PORT is in use; attempting to free..."
+        
+        # More aggressive process termination
+        echo "Stopping code-server service if running..."
+        systemctl stop "code-server@$SERVICE_USER" 2>/dev/null || true
+        systemctl disable "code-server@$SERVICE_USER" 2>/dev/null || true
+        
+        echo "Killing any processes using port $PORT..."
+        # Find and kill processes using the port
+        if command -v lsof >/dev/null 2>&1; then
+            lsof -ti:"$PORT" | xargs -r kill -9 2>/dev/null || true
+        elif command -v fuser >/dev/null 2>&1; then
+            fuser -k "$PORT"/tcp 2>/dev/null || true
         else
-            echo "Freed port $PORT"
+            # Fallback method
+            pkill -f "code-server" 2>/dev/null || true
+            pkill -f "node.*$PORT" 2>/dev/null || true
+        fi
+        
+        sleep 3
+        
+        # Verify port is free
+        PORT_STILL_IN_USE=false
+        if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | awk '{print $4}' | grep -q ":$PORT$"; then
+            PORT_STILL_IN_USE=true
+        elif command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | awk '{print $4}' | grep -q ":$PORT$"; then
+            PORT_STILL_IN_USE=true
+        fi
+        
+        if [ "$PORT_STILL_IN_USE" = true ]; then
+            echo "WARNING: Port $PORT still in use, but continuing anyway..."
+            notify_webhook "warning" "port_conflict" "Port $PORT still in use, continuing"
+        else
+            echo "Successfully freed port $PORT"
         fi
     fi
 
