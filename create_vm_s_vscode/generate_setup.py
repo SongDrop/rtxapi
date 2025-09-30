@@ -220,24 +220,51 @@ def generate_setup(
     echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list || true
     apt-get update -q && apt-get install -y -q terraform || true
 
-   # ========== INSTALL & CONFIGURE CODE-SERVER ==========
+    # ========== INSTALL & CONFIGURE CODE-SERVER ==========
     echo "[12/20] Installing code-server..."
     notify_webhook "provisioning" "code_server" "Installing code-server"
 
-    # Run official installer
-    if ! curl -fsSL https://code-server.dev/install.sh | bash; then
+    # Run official installer (saved to /tmp for logs/debugging)
+    curl -fsSL https://code-server.dev/install.sh -o /tmp/install-code-server.sh
+    chmod +x /tmp/install-code-server.sh
+    if ! bash /tmp/install-code-server.sh; then
         echo "ERROR: code-server installer failed"
         notify_webhook "failed" "code_server" "Installer failed"
         exit 1
     fi
 
     # Verify installation
-    CODE_BIN=$(command -v code-server || echo "/usr/local/bin/code-server")
-    if ! "$CODE_BIN" --version >/dev/null 2>&1; then
-        echo "ERROR: code-server not found after install"
-        notify_webhook "failed" "code_server" "code-server install failed"
+    echo "[12.1/20] Verifying code-server binary..."
+    notify_webhook "provisioning" "code_server" "Verifying installation"
+
+    CODE_BIN=$(command -v code-server || true)
+
+    if [ -z "$CODE_BIN" ]; then
+        # Fallback to common install locations
+        for path in /usr/local/bin/code-server /usr/bin/code-server /home/$SERVICE_USER/.local/bin/code-server; do
+            if [ -x "$path" ]; then
+                CODE_BIN="$path"
+                echo "Found code-server binary at $CODE_BIN"
+                notify_webhook "provisioning" "code_server" "Found binary at $CODE_BIN"
+                break
+            fi
+        done
+    fi
+
+    if [ -z "$CODE_BIN" ]; then
+        echo "ERROR: code-server binary not found after install"
+        notify_webhook "failed" "code_server" "Binary not found after install"
         exit 1
     fi
+
+    if ! "$CODE_BIN" --version >/dev/null 2>&1; then
+        echo "ERROR: code-server binary is invalid"
+        notify_webhook "failed" "code_server" "Binary check failed"
+        exit 1
+    fi
+
+    echo "✅ code-server installed at $CODE_BIN"
+    notify_webhook "provisioning" "code_server" "Verified binary at $CODE_BIN"
 
     # Configure directories
     echo "[13/20] Setting up directories..."
@@ -252,6 +279,9 @@ def generate_setup(
     chmod 700 "$CONFIG_DIR"
 
     # Write code-server config
+    echo "[13.1/20] Writing config.yaml..."
+    notify_webhook "provisioning" "config_write" "Writing config.yaml"
+
     cat > "$CONFIG_DIR/config.yaml" <<EOF
     bind-addr: 127.0.0.1:__PORT__
     auth: password
@@ -262,7 +292,7 @@ def generate_setup(
     chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
     chmod 600 "$CONFIG_DIR/config.yaml"
 
-    # Create systemd service first
+    # Create systemd service
     echo "[14/20] Creating systemd service for code-server..."
     notify_webhook "provisioning" "systemd" "Creating systemd unit"
 
@@ -297,20 +327,25 @@ def generate_setup(
             READY=true
             break
         fi
+        echo "⏳ code-server not up yet (try $i/12)..."
+        notify_webhook "provisioning" "debug" "code-server not ready (try $i/12)"
         sleep 5
     done
 
     if [ "$READY" = false ]; then
         echo "ERROR: code-server did not start properly"
-        systemctl status code-server@"$SERVICE_USER" --no-pager
-        journalctl -u code-server@"$SERVICE_USER" -n 50 --no-pager
+        systemctl status code-server@"$SERVICE_USER" --no-pager || true
+        journalctl -u code-server@"$SERVICE_USER" -n 50 --no-pager || true
         notify_webhook "failed" "service_start" "code-server failed to start"
         exit 1
     fi
 
     echo "✅ code-server is running"
+    notify_webhook "provisioning" "service_start" "code-server is running"
 
     # Ensure directories are writable
+    echo "[15.1/20] Fixing permissions..."
+    notify_webhook "provisioning" "permissions" "Ensuring writable directories"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$EXT_DIR"
     chmod -R 755 "$DATA_DIR" "$EXT_DIR"
 
@@ -348,15 +383,18 @@ def generate_setup(
     )
 
     for ext in "${extensions[@]}"; do
+        notify_webhook "provisioning" "extension_install" "Installing $ext"
         for i in {1..3}; do
-            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" code-server \
+            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
                 --install-extension "$ext" \
                 --extensions-dir="$EXT_DIR" \
                 --user-data-dir="$DATA_DIR" --force; then
                 echo "✅ Installed $ext"
+                notify_webhook "provisioning" "extension_installed" "$ext installed"
                 break
             fi
             echo "Retry $i for $ext failed, waiting 10s..."
+            notify_webhook "provisioning" "extension_retry" "Retry $i for $ext failed"
             sleep 10
         done
     done
@@ -367,7 +405,7 @@ def generate_setup(
     [ -L /usr/local/bin/code ] || ln -s "$CODE_BIN" /usr/local/bin/code
 
     echo "✅ code-server setup complete"
-    notify_webhook "success" "complete" "code-server installed and ready"
+    notify_webhook "privisioning" "privisioning" "✅code-server installed and ready"
 
     # ========== FIREWALL ==========
     echo "[17/20] Configuring UFW firewall (opens SSH/HTTP/HTTPS and code-server port)"
