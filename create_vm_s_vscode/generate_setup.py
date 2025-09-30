@@ -29,6 +29,37 @@ def generate_setup(
         "__WEBHOOK_URL__": WEBHOOK_URL,
     }
 
+    # Extensions array
+    extensions = [
+        "ms-azuretools.vscode-azureterraform",
+        "ms-azuretools.vscode-azureappservice",
+        "ms-azuretools.vscode-azurefunctions",
+        "ms-azuretools.vscode-azurestaticwebapps",
+        "ms-azuretools.vscode-azurestorage",
+        "ms-azuretools.vscode-cosmosdb",
+        "ms-azuretools.vscode-docker",
+        "ms-kubernetes-tools.vscode-kubernetes-tools",
+        "netlify.netlify-vscode",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "eamodio.gitlens",
+        "ms-vscode-remote.remote-containers",
+        "ms-vscode-remote.remote-ssh",
+        "ms-vscode.powershell",
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "hashicorp.terraform",
+        "redhat.vscode-yaml",
+        "GitHub.copilot",
+        "donjayamanne.githistory",
+        "humao.rest-client",
+        "streetsidesoftware.code-spell-checker",
+        "WallabyJs.quokka-vscode",
+        "ritwickdey.LiveServer",
+        "formulahendry.code-runner"
+    ]
+
+    ext_block = "\n".join([f'    "{ext}"' for ext in extensions])
     # Bash template using tokens; tokens will be replaced below to avoid f-string brace problems.
     script_template = textwrap.dedent(r"""
     #!/bin/bash
@@ -239,7 +270,7 @@ def generate_setup(
 
     CODE_BIN=$(command -v code-server || true)
     if [ -z "$CODE_BIN" ]; then
-        for path in /usr/local/bin/code-server /usr/bin/code-server /home/$SERVICE_USER/.local/bin/code-server; do
+        for path in /usr/local/bin/code-server /usr/bin/code-server /opt/code-server/bin/code-server /home/$SERVICE_USER/.local/bin/code-server; do
             if [ -x "$path" ]; then
                 CODE_BIN="$path"
                 echo "Found code-server binary at $CODE_BIN"
@@ -273,20 +304,19 @@ def generate_setup(
     EXT_DIR="$DATA_DIR/extensions"
 
     mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR" "$DATA_DIR"
-    chmod 700 "$CONFIG_DIR"
-    chmod 755 "$DATA_DIR" "$EXT_DIR"
+    chown -R "$SERVICE_USER:$SERVICE_USER" "/home/$SERVICE_USER/.config" "/home/$SERVICE_USER/.local"
+    chmod 755 "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
 
     # Write code-server config
     echo "[13.1/20] Writing config.yaml..."
     notify_webhook "provisioning" "config_write" "Writing config.yaml"
 
-    cat > "$CONFIG_DIR/config.yaml" <<EOF
-    bind-addr: 127.0.0.1:__PORT__
-    auth: password
-    password: __ADMIN_PASSWORD__
-    cert: false
-    EOF
+    cat > "$CONFIG_DIR/config.yaml" << EOF
+bind-addr: 127.0.0.1:__PORT__
+auth: password
+password: __ADMIN_PASSWORD__
+cert: false
+EOF
 
     chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
     chmod 600 "$CONFIG_DIR/config.yaml"
@@ -295,29 +325,43 @@ def generate_setup(
     echo "[14/20] Creating systemd service for code-server..."
     notify_webhook "provisioning" "systemd" "Creating systemd unit"
 
-    cat > /etc/systemd/system/code-server@"$SERVICE_USER".service <<EOT
-    [Unit]
-    Description=code-server service for user %i
-    After=network.target
+    cat > /etc/systemd/system/code-server.service << EOF
+[Unit]
+Description=code-server
+After=network.target
 
-    [Service]
-    User=$SERVICE_USER
-    Environment=HOME=/home/$SERVICE_USER
-    ExecStart=$CODE_BIN --config $CONFIG_DIR/config.yaml --user-data-dir $DATA_DIR --extensions-dir $EXT_DIR
-    Restart=on-failure
-    RestartSec=5s
-    LimitNOFILE=65536
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=/home/$SERVICE_USER
+Environment=HOME=/home/$SERVICE_USER
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=$CODE_BIN --config $CONFIG_DIR/config.yaml --user-data-dir $DATA_DIR --extensions-dir $EXT_DIR
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
 
-    [Install]
-    WantedBy=multi-user.target
-    EOT
+[Install]
+WantedBy=multi-user.target
+EOF
 
-    systemctl daemon-reexec
     systemctl daemon-reload
-    systemctl enable --now code-server@"$SERVICE_USER"
+    systemctl enable code-server.service
+
+    # Start code-server service
+    echo "[15/20] Starting code-server service..."
+    notify_webhook "provisioning" "service_start" "Starting code-server service"
+
+    if ! systemctl start code-server.service; then
+        echo "ERROR: Failed to start code-server service"
+        systemctl status code-server.service --no-pager || true
+        journalctl -u code-server.service -n 50 --no-pager || true
+        notify_webhook "failed" "service_start" "Failed to start code-server service"
+        exit 1
+    fi
 
     # Wait for code-server to start
-    echo "[15/20] Waiting for code-server to respond on port __PORT__..."
+    echo "[15.1/20] Waiting for code-server to respond on port __PORT__..."
     notify_webhook "provisioning" "debug" "Waiting for code-server readiness"
 
     READY=false
@@ -327,14 +371,14 @@ def generate_setup(
             break
         fi
         echo "⏳ code-server not up yet (try $i/12)..."
-        notify_webhook "provisioning" "debug" "code-server not ready (try $i/12)"
+        systemctl status code-server.service --no-pager | head -10 || true
         sleep 5
     done
 
     if [ "$READY" = false ]; then
         echo "ERROR: code-server did not start properly"
-        systemctl status code-server@"$SERVICE_USER" --no-pager || true
-        journalctl -u code-server@"$SERVICE_USER" -n 50 --no-pager || true
+        systemctl status code-server.service --no-pager || true
+        journalctl -u code-server.service -n 50 --no-pager || true
         notify_webhook "failed" "service_start" "code-server failed to start"
         exit 1
     fi
@@ -347,51 +391,29 @@ def generate_setup(
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
 
     extensions=(
-        "ms-azuretools.vscode-azureterraform"
-        "ms-azuretools.vscode-azureappservice"
-        "ms-azuretools.vscode-azurefunctions"
-        "ms-azuretools.vscode-azurestaticwebapps"
-        "ms-azuretools.vscode-azurestorage"
-        "ms-azuretools.vscode-cosmosdb"
-        "ms-azuretools.vscode-docker"
-        "ms-kubernetes-tools.vscode-kubernetes-tools"
-        "netlify.netlify-vscode"
-        "dbaeumer.vscode-eslint"
-        "esbenp.prettier-vscode"
-        "eamodio.gitlens"
-        "ms-vscode-remote.remote-containers"
-        "ms-vscode-remote.remote-ssh"
-        "ms-vscode.powershell"
-        "ms-python.python"
-        "ms-toolsai.jupyter"
-        "hashicorp.terraform"
-        "redhat.vscode-yaml"
-        "GitHub.copilot"
-        "donjayamanne.githistory"
-        "humao.rest-client"
-        "streetsidesoftware.code-spell-checker"
-        "WallabyJs.quokka-vscode"
-        "ritwickdey.LiveServer"
-        "formulahendry.code-runner"
+        {ext_block}
     )
 
     for ext in "${extensions[@]}"; do
+        echo "Installing extension: $ext"
         notify_webhook "provisioning" "extension_install" "Installing $ext"
         SUCCESS=false
         for i in {1..3}; do
-            sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
+            # Run as the service user with proper environment
+            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
                 --install-extension "$ext" \
                 --extensions-dir="$EXT_DIR" \
-                --user-data-dir="$DATA_DIR" --force
-            if [ $? -eq 0 ]; then
+                --user-data-dir="$DATA_DIR" \
+                --force; then
                 SUCCESS=true
                 echo "✅ Installed $ext"
                 notify_webhook "provisioning" "extension_installed" "$ext installed"
                 break
+            else
+                echo "Retry $i for $ext failed, waiting 10s..."
+                notify_webhook "provisioning" "extension_retry" "Retry $i for $ext failed"
+                sleep 10
             fi
-            echo "Retry $i for $ext failed, waiting 10s..."
-            notify_webhook "provisioning" "extension_retry" "Retry $i for $ext failed"
-            sleep 10
         done
         if [ "$SUCCESS" = false ]; then
             echo "⚠️ Failed to install $ext after 3 attempts"
@@ -402,11 +424,12 @@ def generate_setup(
     # Create 'code' CLI symlink
     echo "[17/20] Ensuring 'code' symlink"
     notify_webhook "provisioning" "code_cli" "Configuring 'code' binary"
-    [ -L /usr/local/bin/code ] || ln -s "$CODE_BIN" /usr/local/bin/code
+    if [ ! -L /usr/local/bin/code ] && [ ! -f /usr/local/bin/code ]; then
+        ln -s "$CODE_BIN" /usr/local/bin/code
+    fi
 
     echo "✅ code-server setup complete"
     notify_webhook "provisioning" "provisioning" "✅ code-server installed and ready"
-
     # ========== FIREWALL ==========
     echo "[17/20] Configuring UFW firewall (opens SSH/HTTP/HTTPS and code-server port)"
     notify_webhook "provisioning" "firewall" "Configuring UFW"
