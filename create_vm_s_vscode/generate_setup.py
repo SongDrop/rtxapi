@@ -534,6 +534,16 @@ def generate_setup(
         fi
     fi
 
+    # Test and apply the new config
+    if nginx -t; then
+        systemctl reload nginx
+        echo "✅ Nginx configuration test passed"
+    else
+        echo "❌ Nginx configuration test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
+        exit 1
+    fi
+                                      
     cat <<EOF_FINAL
     =============================================
     ✅ Code Server Setup Complete!
