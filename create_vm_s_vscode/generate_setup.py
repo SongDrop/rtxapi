@@ -220,12 +220,16 @@ def generate_setup(
     echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list || true
     apt-get update -q && apt-get install -y -q terraform || true
 
-    # ========== INSTALL & CONFIGURE CODE-SERVER ==========
+   # ========== INSTALL & CONFIGURE CODE-SERVER ==========
     echo "[12/20] Installing code-server..."
     notify_webhook "provisioning" "code_server" "Installing code-server"
 
     # Run official installer
-    curl -fsSL https://code-server.dev/install.sh | bash
+    if ! curl -fsSL https://code-server.dev/install.sh | bash; then
+        echo "ERROR: code-server installer failed"
+        notify_webhook "failed" "code_server" "Installer failed"
+        exit 1
+    fi
 
     # Verify installation
     CODE_BIN=$(command -v code-server || echo "/usr/local/bin/code-server")
@@ -258,26 +262,60 @@ def generate_setup(
     chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
     chmod 600 "$CONFIG_DIR/config.yaml"
 
-    # Check if code-server is running and start if needed
-    echo "[14/20] Checking code-server readiness..."
-    notify_webhook "provisioning" "debug" "Checking code-server status"
+    # Create systemd service first
+    echo "[14/20] Creating systemd service for code-server..."
+    notify_webhook "provisioning" "systemd" "Creating systemd unit"
 
-    if ! pgrep -f "code-server" >/dev/null; then
-        echo "❌ code-server process not found, starting..."
-        systemctl start code-server@"$SERVICE_USER" || true
-        sleep 10
+    cat > /etc/systemd/system/code-server@"$SERVICE_USER".service <<EOT
+    [Unit]
+    Description=code-server service for user %i
+    After=network.target
+
+    [Service]
+    User=$SERVICE_USER
+    Environment=HOME=/home/$SERVICE_USER
+    ExecStart=$CODE_BIN --config $CONFIG_DIR/config.yaml --user-data-dir=$DATA_DIR --extensions-dir=$EXT_DIR
+    Restart=on-failure
+    RestartSec=5s
+    LimitNOFILE=65536
+
+    [Install]
+    WantedBy=multi-user.target
+    EOT
+
+    systemctl daemon-reexec
+    systemctl daemon-reload
+    systemctl enable --now code-server@"$SERVICE_USER"
+
+    # Wait for code-server to be fully up
+    echo "[15/20] Waiting for code-server to respond on port __PORT__..."
+    notify_webhook "provisioning" "debug" "Waiting for code-server readiness"
+
+    READY=false
+    for i in {1..12}; do
+        if curl -fsS http://127.0.0.1:__PORT__ >/dev/null 2>&1; then
+            READY=true
+            break
+        fi
+        sleep 5
+    done
+
+    if [ "$READY" = false ]; then
+        echo "ERROR: code-server did not start properly"
+        systemctl status code-server@"$SERVICE_USER" --no-pager
+        journalctl -u code-server@"$SERVICE_USER" -n 50 --no-pager
+        notify_webhook "failed" "service_start" "code-server failed to start"
+        exit 1
     fi
 
-    timeout 30 bash -c 'until curl -s http://127.0.0.1:__PORT__ >/dev/null; do sleep 2; done' \
-        && echo "✅ code-server responding on port __PORT__" \
-        || { echo "❌ code-server not responding"; systemctl status code-server@"$SERVICE_USER" --no-pager; journalctl -u code-server@"$SERVICE_USER" -n 20 --no-pager; }
+    echo "✅ code-server is running"
 
     # Ensure directories are writable
     chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$EXT_DIR"
     chmod -R 755 "$DATA_DIR" "$EXT_DIR"
 
     # Install extensions
-    echo "[14.1/20] Installing VSCode extensions..."
+    echo "[16/20] Installing VSCode extensions..."
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
 
     extensions=(
@@ -311,51 +349,25 @@ def generate_setup(
 
     for ext in "${extensions[@]}"; do
         for i in {1..3}; do
-            sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" code-server \
+            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" code-server \
                 --install-extension "$ext" \
                 --extensions-dir="$EXT_DIR" \
-                --user-data-dir="$DATA_DIR" --force && break
+                --user-data-dir="$DATA_DIR" --force; then
+                echo "✅ Installed $ext"
+                break
+            fi
             echo "Retry $i for $ext failed, waiting 10s..."
             sleep 10
         done
     done
 
     # Create 'code' CLI symlink
-    echo "[15/20] Ensuring 'code' symlink"
+    echo "[17/20] Ensuring 'code' symlink"
     notify_webhook "provisioning" "code_cli" "Configuring 'code' binary"
     [ -L /usr/local/bin/code ] || ln -s "$CODE_BIN" /usr/local/bin/code
 
-    # Create systemd service
-    echo "[16/20] Creating systemd unit for code-server"
-    notify_webhook "provisioning" "systemd" "Creating systemd unit"
-
-    cat > /etc/systemd/system/code-server@"$SERVICE_USER".service <<EOT
-    [Unit]
-    Description=code-server service for user %i
-    After=network.target
-
-    [Service]
-    User=$SERVICE_USER
-    Environment=HOME=/home/$SERVICE_USER
-    ExecStart=$CODE_BIN --config $CONFIG_DIR/config.yaml --user-data-dir=$DATA_DIR --extensions-dir=$EXT_DIR
-    Restart=on-failure
-    RestartSec=5s
-    LimitNOFILE=65536
-
-    [Install]
-    WantedBy=multi-user.target
-    EOT
-
-    systemctl daemon-reexec
-    systemctl daemon-reload
-    systemctl enable --now code-server@"$SERVICE_USER" || true
-
-    sleep 5
-    if ! systemctl is-active --quiet code-server@"$SERVICE_USER"; then
-        echo "ERROR: code-server failed to start"
-        journalctl -u code-server@"$SERVICE_USER" -n 50 --no-pager
-        notify_webhook "failed" "service_start" "code-server service failed to start"
-    fi
+    echo "✅ code-server setup complete"
+    notify_webhook "success" "complete" "code-server installed and ready"
 
     # ========== FIREWALL ==========
     echo "[17/20] Configuring UFW firewall (opens SSH/HTTP/HTTPS and code-server port)"
