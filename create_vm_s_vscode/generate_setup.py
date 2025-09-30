@@ -224,7 +224,7 @@ def generate_setup(
     echo "[12/20] Installing code-server..."
     notify_webhook "provisioning" "code_server" "Installing code-server"
 
-    # Run official installer (saved to /tmp for logs/debugging)
+    # Run official installer (save for debugging)
     curl -fsSL https://code-server.dev/install.sh -o /tmp/install-code-server.sh
     chmod +x /tmp/install-code-server.sh
     if ! bash /tmp/install-code-server.sh; then
@@ -238,9 +238,7 @@ def generate_setup(
     notify_webhook "provisioning" "code_server" "Verifying installation"
 
     CODE_BIN=$(command -v code-server || true)
-
     if [ -z "$CODE_BIN" ]; then
-        # Fallback to common install locations
         for path in /usr/local/bin/code-server /usr/bin/code-server /home/$SERVICE_USER/.local/bin/code-server; do
             if [ -x "$path" ]; then
                 CODE_BIN="$path"
@@ -271,12 +269,13 @@ def generate_setup(
     notify_webhook "provisioning" "config_dirs" "Preparing directories"
 
     CONFIG_DIR="/home/$SERVICE_USER/.config/code-server"
-    DATA_DIR="__VOLUME_DIR__/data"
+    DATA_DIR="/home/$SERVICE_USER/.local/share/code-server"
     EXT_DIR="$DATA_DIR/extensions"
 
     mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR" "$DATA_DIR"
     chmod 700 "$CONFIG_DIR"
+    chmod 755 "$DATA_DIR" "$EXT_DIR"
 
     # Write code-server config
     echo "[13.1/20] Writing config.yaml..."
@@ -304,7 +303,7 @@ def generate_setup(
     [Service]
     User=$SERVICE_USER
     Environment=HOME=/home/$SERVICE_USER
-    ExecStart="$CODE_BIN" --config "$CONFIG_DIR/config.yaml" --user-data-dir="$DATA_DIR" --extensions-dir="$EXT_DIR"
+    ExecStart=$CODE_BIN --config $CONFIG_DIR/config.yaml --user-data-dir $DATA_DIR --extensions-dir $EXT_DIR
     Restart=on-failure
     RestartSec=5s
     LimitNOFILE=65536
@@ -317,7 +316,7 @@ def generate_setup(
     systemctl daemon-reload
     systemctl enable --now code-server@"$SERVICE_USER"
 
-    # Wait for code-server to be fully up
+    # Wait for code-server to start
     echo "[15/20] Waiting for code-server to respond on port __PORT__..."
     notify_webhook "provisioning" "debug" "Waiting for code-server readiness"
 
@@ -342,12 +341,6 @@ def generate_setup(
 
     echo "✅ code-server is running"
     notify_webhook "provisioning" "service_start" "code-server is running"
-
-    # Ensure directories are writable
-    echo "[15.1/20] Fixing permissions..."
-    notify_webhook "provisioning" "permissions" "Ensuring writable directories"
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$EXT_DIR"
-    chmod -R 755 "$DATA_DIR" "$EXT_DIR"
 
     # Install extensions
     echo "[16/20] Installing VSCode extensions..."
@@ -384,11 +377,14 @@ def generate_setup(
 
     for ext in "${extensions[@]}"; do
         notify_webhook "provisioning" "extension_install" "Installing $ext"
+        SUCCESS=false
         for i in {1..3}; do
-            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
+            sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
                 --install-extension "$ext" \
                 --extensions-dir="$EXT_DIR" \
-                --user-data-dir="$DATA_DIR" --force; then
+                --user-data-dir="$DATA_DIR" --force
+            if [ $? -eq 0 ]; then
+                SUCCESS=true
                 echo "✅ Installed $ext"
                 notify_webhook "provisioning" "extension_installed" "$ext installed"
                 break
@@ -397,6 +393,10 @@ def generate_setup(
             notify_webhook "provisioning" "extension_retry" "Retry $i for $ext failed"
             sleep 10
         done
+        if [ "$SUCCESS" = false ]; then
+            echo "⚠️ Failed to install $ext after 3 attempts"
+            notify_webhook "warning" "extensions" "Failed to install $ext"
+        fi
     done
 
     # Create 'code' CLI symlink
@@ -405,7 +405,7 @@ def generate_setup(
     [ -L /usr/local/bin/code ] || ln -s "$CODE_BIN" /usr/local/bin/code
 
     echo "✅ code-server setup complete"
-    notify_webhook "provisioning" "provisioning" "✅code-server installed and ready"
+    notify_webhook "provisioning" "provisioning" "✅ code-server installed and ready"
 
     # ========== FIREWALL ==========
     echo "[17/20] Configuring UFW firewall (opens SSH/HTTP/HTTPS and code-server port)"
