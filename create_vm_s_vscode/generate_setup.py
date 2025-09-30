@@ -218,9 +218,11 @@ def generate_setup(
     echo "[14/20] Installing VSCode extensions (may take time)..."
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
 
+    # Ensure extension and user data directories are correctly set
     EXT_DIR="__VOLUME_DIR__/data/extensions"
     USER_DATA_DIR="__VOLUME_DIR__/data"
-    mkdir -p "$EXT_DIR" "$USER_DATA_DIR"
+    mkdir -p "$EXT_DIR" 
+    mkdir -p "$USER_DATA_DIR"
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$USER_DATA_DIR" || true
 
     extensions=(
@@ -258,7 +260,7 @@ def generate_setup(
         for i in $(seq 1 $retries); do
             echo "Installing extension: $ext (attempt $i)"
             if runuser -l "$SERVICE_USER" -c "code-server --install-extension $ext --extensions-dir='$EXT_DIR' --user-data-dir='$USER_DATA_DIR'"; then
-                echo "Installed $ext"
+                echo "✅ Installed $ext"
                 success=true
                 break
             else
@@ -267,7 +269,7 @@ def generate_setup(
             fi
         done
         if [ "$success" = false ]; then
-            echo "Failed to install $ext after $retries attempts; continuing"
+            echo "⚠️ Failed to install $ext after $retries attempts; continuing"
             notify_webhook "warning" "extensions" "Failed to install $ext"
         fi
     done
@@ -275,15 +277,18 @@ def generate_setup(
     # ========== SYMLINK 'code' CLI ==========
     echo "[15/20] Ensuring 'code' command symlink"
     notify_webhook "provisioning" "code_cli" "Configuring 'code' binary in PATH"
+    
     CODE_SERVER_BIN=$(which code-server || echo "/usr/bin/code-server")
     CODE_SYMLINK="/usr/local/bin/code"
+   
     if [ -f "$CODE_SYMLINK" ]; then
         if [ "$(readlink -f $CODE_SYMLINK 2>/dev/null)" = "$CODE_SERVER_BIN" ]; then
             echo "'code' already points to code-server"
         else
-            echo "Existing $CODE_SYMLINK points elsewhere; skipping"
+            echo "WARNING: Existing $CODE_SYMLINK points elsewhere; skipping"
         fi
     else
+        echo "Creating symlink: $CODE_SYMLINK -> $CODE_SERVER_BIN"
         ln -s "$CODE_SERVER_BIN" "$CODE_SYMLINK" || true
     fi
 
@@ -308,14 +313,17 @@ def generate_setup(
     WantedBy=multi-user.target
     EOT
 
+    systemctl daemon-reexec                            
     systemctl daemon-reload
     systemctl enable --now code-server@"$SERVICE_USER" || true
 
-    sleep 3
+    # Wait for code-server to start
+    sleep 5
     if ! systemctl is-active --quiet code-server@"$SERVICE_USER"; then
         echo "ERROR: code-server failed to start; showing journal last 50 lines:"
         journalctl -u code-server@"$SERVICE_USER" -n 50 --no-pager || true
         notify_webhook "failed" "service_start" "code-server service failed to start"
+        exit 1
         # Not exiting here to allow further debug steps; remove '|| true' above if you want to exit
     fi
 
@@ -325,47 +333,48 @@ def generate_setup(
     if ! ufw status | grep -q inactive; then
         echo "UFW already active; adding rules"
     fi
-    ufw allow 22/tcp || true
-    ufw allow 80/tcp || true
-    ufw allow 443/tcp || true
-    ufw allow "$PORT"/tcp || true
-    ufw --force enable || true
+    ufw allow 22/tcp 
+    ufw allow 80/tcp 
+    ufw allow 443/tcp
+    ufw allow "$PORT"/tcp
+    ufw --force enable
 
     # ========== NGINX: reverse proxy (HTTP first) ==========
     echo "[18/20] Configuring nginx reverse proxy"
     notify_webhook "provisioning" "nginx" "Configuring nginx server block"
-    rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default || true
+    # Remove default nginx config if exists
+    rm -f /etc/nginx/sites-enabled/default
+    rm -f /etc/nginx/sites-available/default
 
+    # Temporary HTTP-only config for certbot validation                      
     cat > /etc/nginx/sites-available/code-server <<'NGINX_EOF'
     server {
         listen 80;
         server_name __DOMAIN__;
-
+        root /var/www/html;
+        
         location / {
-            proxy_pass http://127.0.0.1:__PORT__/;
-            proxy_set_header Host $host;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "upgrade";
-            proxy_set_header Accept-Encoding gzip;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_read_timeout 3600s;
+            return 200 'Certbot validation ready';
+            add_header Content-Type text/plain;
         }
     }
     NGINX_EOF
 
     ln -sf /etc/nginx/sites-available/code-server /etc/nginx/sites-enabled/code-server
-    nginx -t && systemctl restart nginx || true
+    nginx -t && systemctl restart nginx
 
     # ========== LET'S ENCRYPT SSL ==========
     echo "[19/20] Obtaining/renewing SSL certificate with certbot"
     notify_webhook "provisioning" "ssl" "Requesting Let's Encrypt certificate"
     # Download recommended SSL config files
-    mkdir -p /etc/letsencrypt || true
+    mkdir -p /etc/letsencrypt                      
     curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf || true
     curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem || true
 
+    # Stop nginx temporarily for certbot standalone verification
+    systemctl stop nginx
+    
+    # Obtain SSL certificate
     # Attempt certbot via nginx plugin (non-interactive)
     if certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
         echo "certbot obtained certificate using nginx plugin"
@@ -385,6 +394,42 @@ def generate_setup(
     # Ensure nginx is reloaded
     nginx -t && systemctl reload nginx || true
 
+    # Replace nginx config with HTTPS proxy version
+    cat > /etc/nginx/sites-available/code-server <<'NGINX_EOF'
+    server {
+        listen 80;
+        server_name __DOMAIN__;
+        return 301 https://$host/request_uri;
+    }
+                                      
+    server {
+        listen 80;
+        server_name __DOMAIN__;
+        ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+        
+        # SSL configuration
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384;
+        ssl_prefer_server_ciphers off;
+
+        location / {
+            proxy_pass http://localhost:__PORT__/;
+            proxy_set_header Host $host;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Accept-Encoding gzip;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 3600s;
+                                      
+            # WebSocket support
+            proxy_set_header Connection "Upgrade";
+            proxy_read_timeout 86400;
+        }
+    }
+    NGINX_EOF
     # Setup cron for renewal (runs daily and reloads nginx on change)
     ( crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "__CERTBOT_CRON__" ) | crontab - || true
 

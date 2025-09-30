@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimal Game Dev Pipeline</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e2f;
+            color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+        }
+
+        header {
+            background: #0d1117;
+            padding: 20px;
+            text-align: center;
+            border-bottom: 2px solid #005a9c;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 1.8em;
+            color: #00bfff;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        .step {
+            background: #2c2c3e;
+            margin-bottom: 25px;
+            padding: 20px;
+            border-left: 6px solid #00bfff;
+            border-radius: 8px;
+            transition: transform 0.2s;
+        }
+
+        .step:hover {
+            transform: translateY(-3px);
+        }
+
+        .step h2 {
+            margin-top: 0;
+            color: #00bfff;
+        }
+
+        .step p {
+            margin: 10px 0;
+            line-height: 1.5;
+        }
+
+        .code {
+            background: #111;
+            color: #0f0;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            overflow-x: auto;
+        }
+
+        footer {
+            text-align: center;
+            padding: 20px;
+            background: #0d1117;
+            color: #888;
+            border-top: 2px solid #005a9c;
+            margin-top: 40px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>Minimal Game Dev Pipeline</h1>
+    </header>
+
+    <div class="container">
+
+        <div class="step">
+            <h2>Step 1 — Forgejo Repo + Git LFS</h2>
+            <p>Store your code and large assets (>50MB) using Git LFS. Every push will be ready for distributed
+                compilation.</p>
+            <div class="code">#Create Project REPO -> <br>#Create Username Token -> <br><br>git clone
+                https://USERNAME:TOKEN@forgejo.example.com/your-repo.git
+            </div>
+        </div>
+
+        <div class="step">
+            <h2>Step 2 — Code in VSCode Browser</h2>
+            <p>Use VSCode in the browser with AI coding assistance.</p>
+            <div class="code">#Clone Project REPO -><br>git clone
+                https://USERNAME:TOKEN@forgejo.example.com/your-repo.git<br><br>#Write/modify code -> <br>git add
+                .<br>git
+                commit
+                -m 'my-code-commit'<br>git push
+            </div>
+        </div>
+
+        <div class="step">
+            <h2>Step 3 — Windows 10 Azure Instance</h2>
+            <p>Use a Windows 10 machine with <strong>NVIDIA eGPU</strong> for compilation:</p>
+            <ul>
+                <li>Visual Studio 2022 → clone your .sln game project
+                    <div class="code">
+                        #!/bin/bash
+
+                        # VSCode Online / Cloud Terminal
+                        # Navigate to your projects folder
+                        cd ~/projects
+
+                        # Clone your repository
+                        git clone https://asd312323123k92asdl021@forgejo.win10dev.xyz/igiteam/prince-of-persia-3d.git
+
+                        # Move into the repo
+                        cd prince-of-persia-3d
+                        echo "Repository cloned into ~/projects/prince-of-persia-3d"
+
+                        # Store credentials
+                        git config --global credential.helper store
+                    </div>
+                </li>
+
+                <li>Install Git-FLS on Windows too
+
+                    <div class="code">
+                        # Initialize Git LFS
+                        git lfs install
+
+                        # Create .gitattributes file with common UE3 patterns
+                        cat << 'EOF'> .gitattributes
+                            # Track common UE3 file types
+                            *.uasset filter=lfs diff=lfs merge=lfs -text
+                            *.umap filter=lfs diff=lfs merge=lfs -text
+                            *.upk filter=lfs diff=lfs merge=lfs -text
+                            *.psa filter=lfs diff=lfs merge=lfs -text
+                            *.psk filter=lfs diff=lfs merge=lfs -text
+                            *.fbx filter=lfs diff=lfs merge=lfs -text
+                            *.png filter=lfs diff=lfs merge=lfs -text
+                            *.tga filter=lfs diff=lfs merge=lfs -text
+                            *.dds filter=lfs diff=lfs merge=lfs -text
+                            *.wav filter=lfs diff=lfs merge=lfs -text
+                            *.bik filter=lfs diff=lfs merge=lfs -text
+                            *.swf filter=lfs diff=lfs merge=lfs -text
+                            *.dll filter=lfs diff=lfs merge=lfs -text
+                            *.exe filter=lfs diff=lfs merge=lfs -text
+                            *.pak filter=lfs diff=lfs merge=lfs -text
+                            EOF
+
+                            # Commit and push the Git LFS configuration
+                            git add .gitattributes
+                            git commit -m "Enable Git LFS tracking for UE3 assets"
+                            git push origin main
+                    </div>
+                </li>
+                <li>Setup IncrediBuild → LAN compilation only
+                </li>
+                <li>Connect IncrediBuild to OpenVPN → INTERNET compilation using multiple computers
+                </li>
+                <li>Forgejo Runner → auto detect push → pull → compile → run test map
+                    <div class="code">
+                        cd C:\path\to\repo<br>
+                        git pull origin main<br>
+                        "C:\Program Files\Xoreax\IncrediBuild\BuildConsole.exe" /Project:"YourProject.sln" /Rebuild
+                        /Config:Release<br>
+                        pop3d.exe -game pop3d -console -map testmap.bsp
+                    </div>
+                </li>
+                <li>Invite others to OpenVPN → more computers in OpenVPN faster compilation time
+                </li>
+            </ul>
+
+        </div>
+
+        <div class="step">
+            <h2>Step 4 — OpenVPN for Distributed Compilation</h2>
+            <p>IncrediBuild is LAN-only. Use OpenVPN to connect team members or testers to accelerate builds across
+                multiple machines as if they were local.</p>
+        </div>
+
+        <div class="step">
+            <h2>Step 5 — Webhooks & Notifications</h2>
+            <p>Forgejo push events trigger notifications in Discord or Plane (project management tool), keeping the
+                team updated in real-time.</p>
+        </div>
+
+    </div>
+
+    <footer>
+        Minimal, high-speed, collaborative Windows game dev pipeline
+    </footer>
+
+</body>
+
+</html>
