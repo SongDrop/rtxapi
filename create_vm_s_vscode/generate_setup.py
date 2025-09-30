@@ -196,77 +196,74 @@ def generate_setup(
     echo "[12/20] Installing code-server..."
     notify_webhook "provisioning" "code_server" "Installing code-server"
 
-    # Save the install script for debugging
+    # Download and run the official install script
     curl -fsSL https://code-server.dev/install.sh -o /tmp/install-code-server.sh
     chmod +x /tmp/install-code-server.sh
-
     export HOME=/root
     bash /tmp/install-code-server.sh
 
-    # Check if installed properly
+    # Verify installation
     CODE_BIN=$(command -v code-server || echo "/usr/local/bin/code-server")
     if ! "$CODE_BIN" --version >/dev/null 2>&1; then
         echo "ERROR: code-server not found after install"
         notify_webhook "failed" "code_server" "code-server install failed"
         exit 1
     fi
-                                      
-    # Ensure volume directories and config
+
+    # ========== CONFIGURE DIRECTORIES ==========
     echo "[13/20] Configuring code-server directories..."
     notify_webhook "provisioning" "config_dirs" "Preparing data and config directories"
-    mkdir -p /home/$SERVICE_USER/.config/code-server
-    chown -R $SERVICE_USER:$SERVICE_USER /home/$SERVICE_USER/.config
-    chmod 700 /home/$SERVICE_USER/.config/code-server
 
+    CONFIG_DIR="/home/$SERVICE_USER/.config/code-server"
+    DATA_DIR="__VOLUME_DIR__/data"
+    EXT_DIR="$DATA_DIR/extensions"
 
-    # write config for service user
-    cat > /home/"$SERVICE_USER"/.config/code-server/config.yaml <<'EOF'
+    mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR" "$DATA_DIR"
+    chmod 700 "$CONFIG_DIR"
+
+    # Write code-server config
+    cat > "$CONFIG_DIR/config.yaml" <<'EOF'
     bind-addr: 127.0.0.1:__PORT__
     auth: password
     password: __ADMIN_PASSWORD__
     cert: false
     EOF
-    chown -R "$SERVICE_USER":"$SERVICE_USER" /home/"$SERVICE_USER"/.config || true
-    chmod 600 /home/"$SERVICE_USER"/.config/code-server/config.yaml || true
 
-    # ========== INSTALL EXTENSIONS (attempt, non-fatal) ==========
-    echo "[14/20] Installing VSCode extensions (may take time)..."
+    chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
+    chmod 600 "$CONFIG_DIR/config.yaml"
+
+    # ========== INSTALL EXTENSIONS (non-fatal) ==========
+    echo "[14/20] Installing VSCode extensions..."
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
 
-    # Ensure extension and user data directories are correctly set
-    EXT_DIR="__VOLUME_DIR__/data/extensions"
-    USER_DATA_DIR="__VOLUME_DIR__/data"
-    mkdir -p "$EXT_DIR" 
-    mkdir -p "$USER_DATA_DIR"
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$USER_DATA_DIR" || true
-
     extensions=(
-      "ms-azuretools.vscode-azureterraform"
-      "ms-azuretools.vscode-azureappservice"
-      "ms-azuretools.vscode-azurefunctions"
-      "ms-azuretools.vscode-azurestaticwebapps"
-      "ms-azuretools.vscode-azurestorage"
-      "ms-azuretools.vscode-cosmosdb"
-      "ms-azuretools.vscode-docker"
-      "ms-kubernetes-tools.vscode-kubernetes-tools"
-      "netlify.netlify-vscode"
-      "dbaeumer.vscode-eslint"
-      "esbenp.prettier-vscode"
-      "eamodio.gitlens"
-      "ms-vscode-remote.remote-containers"
-      "ms-vscode-remote.remote-ssh"
-      "ms-vscode.powershell"
-      "ms-python.python"
-      "ms-toolsai.jupyter"
-      "hashicorp.terraform"
-      "redhat.vscode-yaml"
-      "GitHub.copilot"
-      "donjayamanne.githistory"
-      "humao.rest-client"
-      "streetsidesoftware.code-spell-checker"
-      "WallabyJs.quokka-vscode"
-      "ritwickdey.LiveServer"
-      "formulahendry.code-runner"
+    "ms-azuretools.vscode-azureterraform"
+    "ms-azuretools.vscode-azureappservice"
+    "ms-azuretools.vscode-azurefunctions"
+    "ms-azuretools.vscode-azurestaticwebapps"
+    "ms-azuretools.vscode-azurestorage"
+    "ms-azuretools.vscode-cosmosdb"
+    "ms-azuretools.vscode-docker"
+    "ms-kubernetes-tools.vscode-kubernetes-tools"
+    "netlify.netlify-vscode"
+    "dbaeumer.vscode-eslint"
+    "esbenp.prettier-vscode"
+    "eamodio.gitlens"
+    "ms-vscode-remote.remote-containers"
+    "ms-vscode-remote.remote-ssh"
+    "ms-vscode.powershell"
+    "ms-python.python"
+    "ms-toolsai.jupyter"
+    "hashicorp.terraform"
+    "redhat.vscode-yaml"
+    "GitHub.copilot"
+    "donjayamanne.githistory"
+    "humao.rest-client"
+    "streetsidesoftware.code-spell-checker"
+    "WallabyJs.quokka-vscode"
+    "ritwickdey.LiveServer"
+    "formulahendry.code-runner"
     )
 
     for ext in "${extensions[@]}"; do
@@ -274,7 +271,8 @@ def generate_setup(
         success=false
         for i in $(seq 1 $retries); do
             echo "Installing extension: $ext (attempt $i)"
-            if runuser -l "$SERVICE_USER" -c "code-server --install-extension $ext --extensions-dir='$EXT_DIR' --user-data-dir='$USER_DATA_DIR'"; then
+            if runuser -l "$SERVICE_USER" -c \
+            "code-server --install-extension $ext --extensions-dir='$EXT_DIR' --user-data-dir='$DATA_DIR'"; then
                 echo "✅ Installed $ext"
                 success=true
                 break
@@ -289,37 +287,32 @@ def generate_setup(
         fi
     done
 
-    # ========== SYMLINK 'code' CLI ==========
+    # ========== CREATE 'code' CLI SYMLINK ==========
     echo "[15/20] Ensuring 'code' command symlink"
     notify_webhook "provisioning" "code_cli" "Configuring 'code' binary in PATH"
-    
-    CODE_SERVER_BIN=$(which code-server || echo "/usr/bin/code-server")
+
     CODE_SYMLINK="/usr/local/bin/code"
-   
-    if [ -f "$CODE_SYMLINK" ]; then
-        if [ "$(readlink -f $CODE_SYMLINK 2>/dev/null)" = "$CODE_SERVER_BIN" ]; then
-            echo "'code' already points to code-server"
-        else
-            echo "WARNING: Existing $CODE_SYMLINK points elsewhere; skipping"
-        fi
+    if [ -L "$CODE_SYMLINK" ]; then
+        echo "'code' symlink already exists"
     else
-        echo "Creating symlink: $CODE_SYMLINK -> $CODE_SERVER_BIN"
-        ln -s "$CODE_SERVER_BIN" "$CODE_SYMLINK" || true
+        ln -s "$CODE_BIN" "$CODE_SYMLINK" || true
     fi
 
     # ========== SYSTEMD SERVICE ==========
     echo "[16/20] Creating systemd unit for code-server"
     notify_webhook "provisioning" "systemd" "Creating systemd unit"
-    cat > /etc/systemd/system/code-server@"$SERVICE_USER".service <<'EOT'
+
+    cat > /etc/systemd/system/code-server@"$SERVICE_USER".service <<EOT
     [Unit]
     Description=code-server service for user %i
     After=network.target
 
     [Service]
-    User=coder
-    Environment=HOME=/home/coder
-    Environment=PASSWORD=yourpassword
-    ExecStart=/usr/local/bin/code-server --config /home/coder/.config/code-server/config.yaml
+    User=$SERVICE_USER
+    Environment=HOME=/home/$SERVICE_USER
+    ExecStart=$CODE_BIN --config $CONFIG_DIR/config.yaml \
+        --user-data-dir=$DATA_DIR \
+        --extensions-dir=$EXT_DIR
     Restart=on-failure
     RestartSec=5s
     LimitNOFILE=65536
@@ -328,19 +321,18 @@ def generate_setup(
     WantedBy=multi-user.target
     EOT
 
-    systemctl daemon-reexec                            
+    systemctl daemon-reexec
     systemctl daemon-reload
     systemctl enable --now code-server@"$SERVICE_USER" || true
 
-    # Wait for code-server to start
+    # Wait for service to start
     sleep 5
     if ! systemctl is-active --quiet code-server@"$SERVICE_USER"; then
         echo "ERROR: code-server failed to start; showing journal last 50 lines:"
         journalctl -u code-server@"$SERVICE_USER" -n 50 --no-pager || true
         notify_webhook "failed" "service_start" "code-server service failed to start"
-        exit 1
-        # Not exiting here to allow further debug steps; remove '|| true' above if you want to exit
     fi
+
 
     # ========== FIREWALL ==========
     echo "[17/20] Configuring UFW firewall (opens SSH/HTTP/HTTPS and code-server port)"
