@@ -219,44 +219,45 @@ def generate_setup(
     chown -R "$SERVICE_USER":"$SERVICE_USER" /home/"$SERVICE_USER"/.config || true
     chmod 600 /home/"$SERVICE_USER"/.config/code-server/config.yaml || true
 
-    # ========== INSTALL EXTENSIONS (attempt, non-fatal) ==========
-    echo "[14/20] Installing VSCode extensions (may take time)..."
+    # ========== INSTALL EXTENSIONS ==========
+    echo "[16/20] Installing VSCode extensions..."
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
 
-    # Ensure extension and user data directories are correctly set
-    EXT_DIR="__VOLUME_DIR__/data/extensions"
-    USER_DATA_DIR="__VOLUME_DIR__/data"
-    mkdir -p "$EXT_DIR" 
-    mkdir -p "$USER_DATA_DIR"
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$USER_DATA_DIR" || true
+    # Set correct directories for code-server
+    EXT_DIR="/home/$SERVICE_USER/.local/share/code-server/extensions"
+    USER_DATA_DIR="/home/$SERVICE_USER/.local/share/code-server"
+
+    mkdir -p "$EXT_DIR" "$USER_DATA_DIR"
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR" "$USER_DATA_DIR"
+    chmod -R 755 "$EXT_DIR" "$USER_DATA_DIR"
 
     extensions=(
-      "ms-azuretools.vscode-azureterraform"
-      "ms-azuretools.vscode-azureappservice"
-      "ms-azuretools.vscode-azurefunctions"
-      "ms-azuretools.vscode-azurestaticwebapps"
-      "ms-azuretools.vscode-azurestorage"
-      "ms-azuretools.vscode-cosmosdb"
-      "ms-azuretools.vscode-docker"
-      "ms-kubernetes-tools.vscode-kubernetes-tools"
-      "netlify.netlify-vscode"
-      "dbaeumer.vscode-eslint"
-      "esbenp.prettier-vscode"
-      "eamodio.gitlens"
-      "ms-vscode-remote.remote-containers"
-      "ms-vscode-remote.remote-ssh"
-      "ms-vscode.powershell"
-      "ms-python.python"
-      "ms-toolsai.jupyter"
-      "hashicorp.terraform"
-      "redhat.vscode-yaml"
-      "GitHub.copilot"
-      "donjayamanne.githistory"
-      "humao.rest-client"
-      "streetsidesoftware.code-spell-checker"
-      "WallabyJs.quokka-vscode"
-      "ritwickdey.LiveServer"
-      "formulahendry.code-runner"
+    "ms-azuretools.vscode-azureterraform"
+    "ms-azuretools.vscode-azureappservice"
+    "ms-azuretools.vscode-azurefunctions"
+    "ms-azuretools.vscode-azurestaticwebapps"
+    "ms-azuretools.vscode-azurestorage"
+    "ms-azuretools.vscode-cosmosdb"
+    "ms-azuretools.vscode-docker"
+    "ms-kubernetes-tools.vscode-kubernetes-tools"
+    "netlify.netlify-vscode"
+    "dbaeumer.vscode-eslint"
+    "esbenp.prettier-vscode"
+    "eamodio.gitlens"
+    "ms-vscode-remote.remote-containers"
+    "ms-vscode-remote.remote-ssh"
+    "ms-vscode.powershell"
+    "ms-python.python"
+    "ms-toolsai.jupyter"
+    "hashicorp.terraform"
+    "redhat.vscode-yaml"
+    "GitHub.copilot"
+    "donjayamanne.githistory"
+    "humao.rest-client"
+    "streetsidesoftware.code-spell-checker"
+    "WallabyJs.quokka-vscode"
+    "ritwickdey.LiveServer"
+    "formulahendry.code-runner"
     )
 
     for ext in "${extensions[@]}"; do
@@ -264,13 +265,17 @@ def generate_setup(
         success=false
         for i in $(seq 1 $retries); do
             echo "Installing extension: $ext (attempt $i)"
-            if runuser -l "$SERVICE_USER" -c "code-server --install-extension $ext --extensions-dir='$EXT_DIR' --user-data-dir='$USER_DATA_DIR'"; then
+            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" code-server \
+                --install-extension "$ext" \
+                --force 2>&1 | tee /tmp/code-server-ext-install.log; then
                 echo "✅ Installed $ext"
+                notify_webhook "provisioning" "extension_installed" "$ext installed"
                 success=true
                 break
             else
-                echo "Attempt $i failed for $ext; retrying..."
-                sleep 5
+                echo "Attempt $i failed for $ext; retrying in 10s..."
+                notify_webhook "warning" "extension_retry" "Attempt $i failed for $ext"
+                sleep 10
             fi
         done
         if [ "$success" = false ]; then
@@ -278,6 +283,7 @@ def generate_setup(
             notify_webhook "warning" "extensions" "Failed to install $ext"
         fi
     done
+
 
     # ========== SYMLINK 'code' CLI ==========
     echo "[15/20] Ensuring 'code' command symlink"
