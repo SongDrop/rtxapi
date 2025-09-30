@@ -13,6 +13,28 @@
 
 This is an **automatic installation** on Azure to set up a VSCode self-hosted server.
 
+## Steps in the bash script:
+
+-Sets up error handling and logging.
+-Validates inputs (domain, port).
+-Checks for port conflicts and attempts to free the port.
+-Updates the system and installs dependencies.
+-Creates a service user.
+-Installs Node.js, npm, and global tools.
+-Installs pyenv and Python 3.9.7 for root and the service user.
+-Installs Electron dependencies (optional).
+-Installs Docker, kubectl, Terraform.
+-Installs code-server.
+-Configures code-server directories and config file.
+-Installs VSCode extensions with retries.
+-Sets up a symlink for the 'code' command.
+-Creates a systemd service for code-server.
+-Configures the firewall (UFW).
+-Sets up nginx as a reverse proxy.
+-Obtains SSL certificate with certbot.
+-Sets up cron for SSL renewal.
+-Performs final checks.
+
 ---
 
 ## Step 1: Create a Microsoft Azure account on https://portal.azure.com

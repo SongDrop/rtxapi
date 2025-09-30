@@ -1,4 +1,4 @@
-import json
+import textwrap
 
 def generate_setup(
     DOMAIN_NAME,
@@ -10,569 +10,501 @@ def generate_setup(
     location="",
     resource_group=""
 ):
-    SERVICE_USER = "coder"
-    letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
-    ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
-    
-    
-    # Webhook helper
-    if WEBHOOK_URL:
-        webhook_notification = f'''
-notify_webhook() {{
-  local status=$1
-  local step=$2
-  local message=$3
+    """
+    Returns a full bash provisioning script as a string.
+    Usage: script = generate_setup("example.com", "admin@example.com", "P@ssw0rd", "8080", ...)
+    """
+    # Tokens used inside the template (won't conflict with normal bash syntax)
+    tokens = {
+        "__DOMAIN__": DOMAIN_NAME,
+        "__ADMIN_EMAIL__": ADMIN_EMAIL,
+        "__ADMIN_PASSWORD__": ADMIN_PASSWORD,
+        "__PORT__": str(PORT),
+        "__VOLUME_DIR__": VOLUME_DIR,
+        "__SERVICE_USER__": "coder",
+        "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
+        "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
+        "__LOCATION__": location,
+        "__RESOURCE_GROUP__": resource_group,
+        "__WEBHOOK_URL__": WEBHOOK_URL,
+    }
 
-  if [ -z "${{WEBHOOK_URL}}" ]; then
-    return 0
-  fi
+    # Bash template using tokens; tokens will be replaced below to avoid f-string brace problems.
+    script_template = textwrap.dedent(r"""
+    #!/bin/bash
+    set -euo pipefail
 
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Notifying webhook: status=$status step=$step"
+    # ----------------------------------------------------------------------
+    # Code Server Provisioning Script (generated)
+    # ----------------------------------------------------------------------
 
-  JSON_PAYLOAD=$(cat <<EOF
-{{
-  "vm_name": "$(hostname)",
-  "status": "$status",
-  "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-  "location": {location},
-  "resource_group": {resource_group},
-  "details": {{
-    "step": "$step",
-    "message": "$message"
-  }}
-}}
-EOF
-  )
+    # --- helper: webhook notification (inlined if provided) ---
+    __WEBHOOK_FUNCTION__
 
-  curl -s -X POST \\
-    "${{WEBHOOK_URL}}" \\
-    -H "Content-Type: application/json" \\
-    -d "$JSON_PAYLOAD" \\
-    --connect-timeout 10 \\
-    --max-time 30 \\
-    --retry 2 \\
-    --retry-delay 5 \\
-    --output /dev/null \\
-    --write-out "Webhook result: %{{http_code}}"
+    # If any command later fails we will report it
+    trap 'notify_webhook "failed" "unexpected_error" "Script exited on line $LINENO with code $?"' ERR
 
-  return $?
-}}
-'''
-    else:
-        webhook_notification = '''
-notify_webhook() {
-  # No webhook configured - silently ignore
-  return 0
-}
-'''
+    # Logging
+    LOG_FILE="/var/log/code-server-install.log"
+    exec > >(tee -a "$LOG_FILE") 2>&1
 
-    script_template = f"""#!/bin/bash
-set -e
-set -o pipefail
+    echo "[1/20] Validating inputs..."
+    notify_webhook "provisioning" "validation" "Validating inputs"
 
-# ----------------------------------------------------------------------
-#  Helper: webhook notification
-# ----------------------------------------------------------------------
-{webhook_notification}
+    # Basic validation
+    DOMAIN="__DOMAIN__"
+    PORT="__PORT__"
+    ADMIN_EMAIL="__ADMIN_EMAIL__"
+    ADMIN_PASSWORD="__ADMIN_PASSWORD__"
+    VOLUME_DIR="__VOLUME_DIR__"
+    SERVICE_USER="__SERVICE_USER__"
 
-# If any command later fails we will report it
-trap 'notify_webhook "failed" "unexpected_error" "Script exited on line ${{LINENO}} with code ${{?}}."' ERR
-
-# ========== VALIDATION ==========
-echo "[1/20] Validating inputs..."
-notify_webhook "provisioning" "validation" "Validating inputs"
-LOG_FILE="/var/log/code-server-install.log"
-exec > >(tee -a "$LOG_FILE") 2>&1
-
-# Validate domain
-if [[ ! "{DOMAIN_NAME}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
-    echo "ERROR: Invalid domain format '{DOMAIN_NAME}'"
-    notify_webhook "failed" "validation" "Invalid domain format"
-    exit 1
-fi
-
-# Validate port
-if [[ ! "{PORT}" =~ ^[0-9]+$ ]] || [ "{PORT}" -lt 1024 ] || [ "{PORT}" -gt 65535 ]; then
-    echo "ERROR: Invalid port number '{PORT}' (must be 1024-65535)"
-    notify_webhook "failed" "validation" "Invalid port number"
-    exit 1
-fi
-
-# Port conflict resolution
-notify_webhook "provisioning" "port_check" "Checking for port conflicts"
-if ss -tulnp | grep -q ":{PORT}"; then
-    echo "WARNING: Port {PORT} is in use, attempting to resolve..."
-    PROCESS_INFO=$(ss -tulnp | grep ":{PORT}")
-    echo "Conflict details: $PROCESS_INFO"
-    systemctl stop code-server@{SERVICE_USER} || true
-    pkill -f "code-server" || true
-    sleep 2
-    if ss -tulnp | grep -q ":{PORT}"; then
-        PID=$(ss -tulnp | grep ":{PORT}" | awk '{{print $7}}' | cut -d= -f2 | cut -d, -f1 | head -1)
-        PROCESS_NAME=$(ps -p "$PID" -o comm= 2>/dev/null || echo "unknown")
-        echo "ERROR: Could not free port {PORT}, process $PID ($PROCESS_NAME) still using it"
-        notify_webhook "failed" "port_conflict" "Could not free port {PORT}"
+    if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        echo "ERROR: Invalid domain format: $DOMAIN"
+        notify_webhook "failed" "validation" "Invalid domain format: $DOMAIN"
         exit 1
-    else
-        echo "Successfully freed port {PORT}"
     fi
-fi
 
-# ========== SYSTEM SETUP ==========
-echo "[2/20] Updating system and installing dependencies..."
-notify_webhook "provisioning" "system_update" "Updating system packages"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
-apt-get upgrade -y -q
-apt-get install -y -q \\
-    curl \\
-    nginx \\
-    certbot \\
-    python3-certbot-nginx \\
-    ufw \\
-    git \\
-    build-essential \\
-    sudo \\
-    cron \\
-    python3 \\
-    python3-pip \\
-    gnupg \\
-    software-properties-common \\
-    libssl-dev \\
-    zlib1g-dev \\
-    libbz2-dev \\
-    libreadline-dev \\
-    libsqlite3-dev \\
-    libffi-dev
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
+        echo "ERROR: Invalid port number: $PORT (must be 1024-65535)"
+        notify_webhook "failed" "validation" "Invalid port: $PORT"
+        exit 1
+    fi
 
-# ========== NODE.JS INSTALLATION ==========
-echo "[3/20] Installing Node.js LTS..."
-notify_webhook "provisioning" "nodejs" "Installing Node.js"
-apt-get remove -y nodejs npm || true
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y -q nodejs
-
-NODE_VERSION=$(node --version)
-echo "Node.js version: $NODE_VERSION"
-
-npm install -g npm@latest
-
-# ========== DEVELOPMENT TOOLS ==========
-echo "[4/20] Installing development tools..."
-notify_webhook "provisioning" "dev_tools" "Installing development tools"
-
-echo "Installing Azure CLI..."
-curl -sL https://aka.ms/InstallAzureCLIDeb | bash
-
-echo "Installing Netlify CLI..."
-npm install -g netlify-cli --force 2>&1 | while read line; do echo "[npm] $line"; done
-
-echo "Installing Yarn..."
-npm install -g yarn
-
-# ========== PYTHON ==========
-echo "[5/20] Installing pyenv and Python..."
-notify_webhook "provisioning" "python" "Installing Python with pyenv"
-export HOME=/root
-if [ -d "$HOME/.pyenv" ]; then
-    echo "Found existing pyenv installation, updating..."
-    cd "$HOME/.pyenv" && git pull
-else
-    echo "Installing fresh pyenv..."
-    curl -fsSL https://pyenv.run | bash
-fi
-
-# Setup pyenv environment for root
-cat >> ~/.bashrc <<'EOF'
-
-export PYENV_ROOT="$HOME/.pyenv"
-export PATH="$PYENV_ROOT/bin:$PATH"
-if command -v pyenv 1>/dev/null 2>&1; then
-    eval "$(pyenv init --path)"
-    eval "$(pyenv init -)"
-fi
-EOF
-
-# Source bashrc to get pyenv available in this shell session
-export PYENV_ROOT="$HOME/.pyenv"
-export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init --path)"
-eval "$(pyenv init -)"
-
-apt-get install -y -q make build-essential libssl-dev zlib1g-dev \\
-    libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm \\
-    libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev
-
-if ! pyenv versions | grep -q 3.9.7; then
-    pyenv install 3.9.7 --verbose
-fi
-pyenv global 3.9.7
-
-PYTHON_VERSION=$(python --version)
-echo "Python version: $PYTHON_VERSION"
-
-# ========== ELECTRON ==========
-echo "[6/20] Installing Electron dependencies..."
-notify_webhook "provisioning" "electron" "Installing Electron dependencies"
-add-apt-repository universe || true
-apt-get update -q
-apt-get install -y -q \\
-    libgtk-3-0 \\
-    libnotify4 \\
-    libnss3 \\
-    libxss1 \\
-    libasound2-data \\
-    libasound2-plugins \\
-    libxtst6 \\
-    xauth \\
-    xvfb
-npm install electron --save-dev
-
-# ========== DOCKER ==========
-echo "[7/20] Installing Docker..."
-notify_webhook "provisioning" "docker" "Installing Docker"
-curl -fsSL https://get.docker.com | sh
-usermod -aG docker {SERVICE_USER} || true
-
-# ========== KUBERNETES ==========
-echo "[8/20] Installing kubectl..."
-notify_webhook "provisioning" "kubectl" "Installing Kubernetes CLI"
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-rm kubectl
-
-# ========== TERRAFORM ==========
-echo "[9/20] Installing Terraform..."
-notify_webhook "provisioning" "terraform" "Installing Terraform"
-curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor --batch --yes -o /usr/share/keyrings/hashicorp.gpg
-echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list
-apt-get update -q && apt-get install -y terraform
-
-# ========== CODE-SERVER ==========
-echo "[10/20] Installing code-server..."
-notify_webhook "provisioning" "code_server" "Installing code-server"
-curl -fsSL https://code-server.dev/install.sh | HOME=/root sh
-
-# ========== USER SETUP ==========
-echo "[11/20] Creating user '{SERVICE_USER}'..."
-notify_webhook "provisioning" "user_setup" "Creating service user"
-id -u {SERVICE_USER} &>/dev/null || useradd -m -s /bin/bash {SERVICE_USER}
-echo "{SERVICE_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/{SERVICE_USER}
-chmod 440 /etc/sudoers.d/{SERVICE_USER}
-
-# Install pyenv for the service user
-su - {SERVICE_USER} -c 'curl -fsSL https://pyenv.run | bash'
-su - {SERVICE_USER} -c 'echo '\''export PYENV_ROOT="$HOME/.pyenv"'\'' >> ~/.bashrc'
-su - {SERVICE_USER} -c 'echo '\''export PATH="$PYENV_ROOT/bin:$PATH"'\'' >> ~/.bashrc'
-su - {SERVICE_USER} -c 'echo '\''eval "$(pyenv init --path)"'\'' >> ~/.bashrc'
-su - {SERVICE_USER} -c 'echo '\''eval "$(pyenv init -)"'\'' >> ~/.bashrc'
-
-# Install Python for the service user
-su - {SERVICE_USER} -c 'export PYENV_ROOT="$HOME/.pyenv"; export PATH="$PYENV_ROOT/bin:$PATH"; eval "$(pyenv init --path)"; eval "$(pyenv init -)"; pyenv install -s 3.9.7; pyenv global 3.9.7'
-
-# ========== CONFIG ==========
-echo "[12/20] Configuring code-server..."
-notify_webhook "provisioning" "config" "Configuring code-server"
-mkdir -p {VOLUME_DIR}/config
-cat > {VOLUME_DIR}/config/config.yaml <<EOF
-bind-addr: 0.0.0.0:{PORT}
-auth: password
-password: {ADMIN_PASSWORD}
-cert: false
-EOF
-
-chown -R {SERVICE_USER}:{SERVICE_USER} {VOLUME_DIR}
-chmod 700 {VOLUME_DIR}/config
-chmod 600 {VOLUME_DIR}/config/config.yaml
-mkdir -p /home/{SERVICE_USER}/.config
-ln -sf {VOLUME_DIR}/config /home/{SERVICE_USER}/.config/code-server
-
-# ========== EXTENSIONS ==========
-echo "[13/20] Installing VSCode extensions..."
-notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
-
-extensions=(
-    "ms-azuretools.vscode-azureterraform"
-    "ms-azuretools.vscode-azureappservice"
-    "ms-azuretools.vscode-azurefunctions"
-    "ms-azuretools.vscode-azurestaticwebapps"
-    "ms-azuretools.vscode-azurestorage"
-    "ms-azuretools.vscode-cosmosdb"
-    "ms-azuretools.vscode-docker"
-    "ms-kubernetes-tools.vscode-kubernetes-tools"
-    "netlify.netlify-vscode"
-    "dbaeumer.vscode-eslint"
-    "esbenp.prettier-vscode"
-    "ms-vscode.vscode-typescript-next"
-    "eamodio.gitlens"
-    "ms-vscode-remote.remote-containers"
-    "ms-vscode-remote.remote-ssh"
-    "ms-vscode.powershell"
-    "ms-python.python"
-    "ms-toolsai.jupyter"
-    "hashicorp.terraform"
-    "redhat.vscode-yaml"
-    "EliotVU.uc"
-    "stefan-h-at.source-engine-support"
-    "LionDoge.vscript-debug"
-    "NilsSoderman.ue-python"
-    "mjxcode.vscode-q3shader"
-    "shd101wyy.markdown-preview-enhanced"
-    "formulahendry.code-runner"
-    "donjayamanne.githistory"
-    "humao.rest-client"
-    "streetsidesoftware.code-spell-checker"
-    "Cardinal90.multi-cursor-case-preserve"
-    "alefragnani.Bookmarks"
-    "WallabyJs.quokka-vscode"
-    "ritwickdey.LiveServer"
-    "WallabyJs.console-ninja"
-    "Monish.regexsnippets"
-    "GitHub.copilot"
-    "pnp.polacode"
-    "Codeium.codeium"
-    "oouo-diogo-perdigao.docthis"
-    "johnpapa.vscode-peacock"
-    "Postman.postman-for-vscode"
-)
-
-# Ensure extension and user data directories are correctly set
-EXT_DIR="{VOLUME_DIR}/data/extensions"
-USER_DATA_DIR="{VOLUME_DIR}/data"
-mkdir -p "$EXT_DIR"
-mkdir -p "$USER_DATA_DIR"
-chown -R {SERVICE_USER}:{SERVICE_USER} "$USER_DATA_DIR"
-
-# Install extensions with retries, but don’t fail the whole script
-for extension in "${{extensions[@]}}"; do
-    retries=3
-    success=false
-    for i in $(seq 1 $retries); do
-        echo "🔧 Installing extension: $extension (attempt $i)"
-        if runuser -l "$SERVICE_USER" -c "code-server \
-            --install-extension '$extension' \
-            --extensions-dir='$EXT_DIR' \
-            --user-data-dir='$USER_DATA_DIR'"; then
-            echo "✅ Installed $extension"
-            success=true
-            break
+    # Check running port and attempt to free it
+    echo "[2/20] Checking for port conflicts..."
+    notify_webhook "provisioning" "port_check" "Checking port $PORT"
+    if ss -tulnp 2>/dev/null | grep -q ":$PORT\b"; then
+        echo "WARNING: Port $PORT is in use; attempting to free"
+        ss -tulnp | grep ":$PORT\b" || true
+        systemctl stop code-server@"$SERVICE_USER" || true
+        pkill -f "code-server" || true
+        sleep 2
+        if ss -tulnp 2>/dev/null | grep -q ":$PORT\b"; then
+            PID=$(ss -tulnp 2>/dev/null | grep ":$PORT\b" | awk '{print $6}' | cut -d, -f2 | cut -d= -f2 | head -1 || true)
+            if [ -n "$PID" ]; then
+                PROCESS_NAME=$(ps -p "$PID" -o comm= 2>/dev/null || echo "unknown")
+                echo "ERROR: Could not free port $PORT; process $PID ($PROCESS_NAME) still using it"
+                notify_webhook "failed" "port_conflict" "Port $PORT in use by $PID ($PROCESS_NAME)"
+                exit 1
+            else
+                echo "ERROR: Port $PORT in use, but could not determine PID"
+                notify_webhook "failed" "port_conflict" "Port $PORT in use"
+                exit 1
+            fi
         else
-            echo "⚠️ Attempt $i failed for $extension"
-            sleep 5
+            echo "Freed port $PORT"
+        fi
+    fi
+
+    # ========== SYSTEM UPDATE & DEPENDENCIES ==========
+    echo "[3/20] Updating system and installing base dependencies..."
+    notify_webhook "provisioning" "system_update" "Updating apt and installing packages"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -q
+    apt-get upgrade -y -q
+    apt-get install -y -q \
+      curl wget gnupg2 lsb-release ca-certificates apt-transport-https \
+      nginx certbot python3-certbot-nginx ufw git build-essential sudo cron \
+      python3 python3-pip jq software-properties-common gnupg2
+
+    # Create service user if missing
+    if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+        echo "[4/20] Creating service user: $SERVICE_USER"
+        notify_webhook "provisioning" "create_user" "Creating $SERVICE_USER"
+        useradd -m -s /bin/bash "$SERVICE_USER"
+        echo "$SERVICE_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/"$SERVICE_USER"
+        chmod 440 /etc/sudoers.d/"$SERVICE_USER"
+    fi
+
+    # ========== NODE.JS (LTS) ==========
+    echo "[5/20] Installing Node.js LTS (20.x)..."
+    notify_webhook "provisioning" "nodejs" "Installing Node.js"
+    apt-get remove -y nodejs npm || true
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y -q nodejs
+    NODE_VERSION=$(node --version 2>/dev/null || echo "none")
+    echo "Node.js version: $NODE_VERSION"
+    npm install -g npm@latest --no-progress
+
+    # Install useful global npm tools (non-fatal)
+    echo "[6/20] Installing global npm tools (yarn, netlify-cli)..."
+    notify_webhook "provisioning" "npm_tools" "Installing npm CLI tools"
+    npm install -g yarn --no-progress || true
+    npm install -g netlify-cli --no-progress || true
+
+    # ========== PYENV and Python (root and service user) ==========
+    echo "[7/20] Installing pyenv for root and $SERVICE_USER..."
+    notify_webhook "provisioning" "pyenv" "Installing pyenv and Python 3.9.7"
+    # install build deps
+    apt-get install -y -q make build-essential libssl-dev zlib1g-dev \
+      libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm \
+      libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev || true
+
+    export HOME=/root
+    if [ -d "$HOME/.pyenv" ]; then
+        echo "Updating existing pyenv for root..."
+        cd "$HOME/.pyenv" && git pull || true
+    else
+        curl -fsSL https://pyenv.run | bash || true
+    fi
+
+    # add pyenv to current shell
+    export PYENV_ROOT="$HOME/.pyenv"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    if command -v pyenv >/dev/null 2>&1; then
+        eval "$(pyenv init --path)" || true
+        eval "$(pyenv init -)" || true
+    fi
+
+    if ! pyenv versions --bare 2>/dev/null | grep -q '^3.9.7$'; then
+        pyenv install -s 3.9.7 || true
+    fi
+    pyenv global 3.9.7 || true
+    echo "Python version: $(python --version 2>&1 || echo 'unknown')"
+
+    # Install pyenv for service user (non-fatal)
+    su - "$SERVICE_USER" -c 'if [ ! -d "$HOME/.pyenv" ]; then curl -fsSL https://pyenv.run | bash || true; fi'
+
+    # ========== ELECTRON dependencies (optional, non-fatal) ==========
+    echo "[8/20] Installing Electron dependencies (optional)..."
+    notify_webhook "provisioning" "electron" "Installing Electron libs"
+    apt-get install -y -q libgtk-3-0 libnotify4 libnss3 libxss1 libasound2-data \
+      libasound2-plugins libxtst6 xauth xvfb || true
+
+    # ========== DOCKER ==========
+    echo "[9/20] Installing Docker..."
+    notify_webhook "provisioning" "docker" "Installing Docker"
+    curl -fsSL https://get.docker.com | sh || true
+    usermod -aG docker "$SERVICE_USER" || true
+
+    # ========== KUBECTL ==========
+    echo "[10/20] Installing kubectl..."
+    notify_webhook "provisioning" "kubectl" "Installing kubectl"
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" || true
+    install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl || true
+    rm -f kubectl || true
+
+    # ========== TERRAFORM ==========
+    echo "[11/20] Installing Terraform..."
+    notify_webhook "provisioning" "terraform" "Installing Terraform"
+    curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor --batch --yes -o /usr/share/keyrings/hashicorp.gpg || true
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list || true
+    apt-get update -q && apt-get install -y -q terraform || true
+
+    # ========== INSTALL CODE-SERVER ==========
+    echo "[12/20] Installing code-server..."
+    notify_webhook "provisioning" "code_server" "Installing code-server"
+    curl -fsSL https://code-server.dev/install.sh | sh || true
+
+    # Ensure volume directories and config
+    echo "[13/20] Configuring code-server directories..."
+    notify_webhook "provisioning" "config_dirs" "Preparing data and config directories"
+    mkdir -p "__VOLUME_DIR__/config" "__VOLUME_DIR__/data" || true
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "__VOLUME_DIR__" || true
+    chmod 700 "__VOLUME_DIR__/config" || true
+
+    # write config for service user
+    cat > /home/"$SERVICE_USER"/.config/code-server/config.yaml <<'EOF'
+    bind-addr: 127.0.0.1:__PORT__
+    auth: password
+    password: __ADMIN_PASSWORD__
+    cert: false
+    EOF
+    chown -R "$SERVICE_USER":"$SERVICE_USER" /home/"$SERVICE_USER"/.config || true
+    chmod 600 /home/"$SERVICE_USER"/.config/code-server/config.yaml || true
+
+    # ========== INSTALL EXTENSIONS (attempt, non-fatal) ==========
+    echo "[14/20] Installing VSCode extensions (may take time)..."
+    notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
+
+    EXT_DIR="__VOLUME_DIR__/data/extensions"
+    USER_DATA_DIR="__VOLUME_DIR__/data"
+    mkdir -p "$EXT_DIR" "$USER_DATA_DIR"
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$USER_DATA_DIR" || true
+
+    extensions=(
+      "ms-azuretools.vscode-azureterraform"
+      "ms-azuretools.vscode-azureappservice"
+      "ms-azuretools.vscode-azurefunctions"
+      "ms-azuretools.vscode-azurestaticwebapps"
+      "ms-azuretools.vscode-azurestorage"
+      "ms-azuretools.vscode-cosmosdb"
+      "ms-azuretools.vscode-docker"
+      "ms-kubernetes-tools.vscode-kubernetes-tools"
+      "netlify.netlify-vscode"
+      "dbaeumer.vscode-eslint"
+      "esbenp.prettier-vscode"
+      "eamodio.gitlens"
+      "ms-vscode-remote.remote-containers"
+      "ms-vscode-remote.remote-ssh"
+      "ms-vscode.powershell"
+      "ms-python.python"
+      "ms-toolsai.jupyter"
+      "hashicorp.terraform"
+      "redhat.vscode-yaml"
+      "GitHub.copilot"
+      "donjayamanne.githistory"
+      "humao.rest-client"
+      "streetsidesoftware.code-spell-checker"
+      "WallabyJs.quokka-vscode"
+      "ritwickdey.LiveServer"
+      "formulahendry.code-runner"
+    )
+
+    for ext in "${extensions[@]}"; do
+        retries=3
+        success=false
+        for i in $(seq 1 $retries); do
+            echo "Installing extension: $ext (attempt $i)"
+            if runuser -l "$SERVICE_USER" -c "code-server --install-extension $ext --extensions-dir='$EXT_DIR' --user-data-dir='$USER_DATA_DIR'"; then
+                echo "Installed $ext"
+                success=true
+                break
+            else
+                echo "Attempt $i failed for $ext; retrying..."
+                sleep 5
+            fi
+        done
+        if [ "$success" = false ]; then
+            echo "Failed to install $ext after $retries attempts; continuing"
+            notify_webhook "warning" "extensions" "Failed to install $ext"
         fi
     done
 
-    if [ "$success" = false ]; then
-        echo "❌ Giving up on $extension after $retries attempts (continuing setup)"
-        notify_webhook "warning" "extensions" "Failed to install $extension after $retries attempts"
-    fi
-done
-
-# ========== CODE CLI ==========
-echo "[13a/20] Installing 'code' command globally..."
-notify_webhook "provisioning" "code_cli" "Installing 'code' command in PATH"
-
-CODE_SERVER_BIN=$(which code-server)
-CODE_SYMLINK="/usr/local/bin/code"
-
-if [ -f "$CODE_SYMLINK" ]; then
-    if [ "$(readlink -f $CODE_SYMLINK)" = "$CODE_SERVER_BIN" ]; then
-        echo "'code' command already correctly points to code-server"
+    # ========== SYMLINK 'code' CLI ==========
+    echo "[15/20] Ensuring 'code' command symlink"
+    notify_webhook "provisioning" "code_cli" "Configuring 'code' binary in PATH"
+    CODE_SERVER_BIN=$(which code-server || echo "/usr/bin/code-server")
+    CODE_SYMLINK="/usr/local/bin/code"
+    if [ -f "$CODE_SYMLINK" ]; then
+        if [ "$(readlink -f $CODE_SYMLINK 2>/dev/null)" = "$CODE_SERVER_BIN" ]; then
+            echo "'code' already points to code-server"
+        else
+            echo "Existing $CODE_SYMLINK points elsewhere; skipping"
+        fi
     else
-        echo "WARNING: $CODE_SYMLINK exists and points elsewhere, skipping symlink"
+        ln -s "$CODE_SERVER_BIN" "$CODE_SYMLINK" || true
     fi
-else
-    echo "Creating symlink: $CODE_SYMLINK -> $CODE_SERVER_BIN"
-    ln -s "$CODE_SERVER_BIN" "$CODE_SYMLINK"
-fi
 
+    # ========== SYSTEMD SERVICE ==========
+    echo "[16/20] Creating systemd unit for code-server"
+    notify_webhook "provisioning" "systemd" "Creating systemd unit"
+    cat > /etc/systemd/system/code-server@"$SERVICE_USER".service <<'EOT'
+    [Unit]
+    Description=code-server service for user %i
+    After=network.target
 
-# ========== SYSTEMD ==========
-echo "[14/20] Configuring systemd service..."
-notify_webhook "provisioning" "systemd" "Configuring systemd service"
-mkdir -p /etc/systemd/system/code-server@.service.d
-cat > /etc/systemd/system/code-server@.service.d/override.conf <<EOF
-[Service]
-Restart=on-failure
-RestartSec=5s
-Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/{SERVICE_USER}/.pyenv/shims:/home/{SERVICE_USER}/.pyenv/bin"
-EOF
+    [Service]
+    Type=simple
+    Environment=PASSWORD=__ADMIN_PASSWORD__
+    User=__SERVICE_USER__
+    ExecStart=/usr/bin/code-server --config /home/__SERVICE_USER__/.config/code-server/config.yaml
+    Restart=on-failure
+    RestartSec=5s
+    LimitNOFILE=65536
 
-systemctl daemon-reexec
-systemctl daemon-reload
-systemctl enable --now code-server@{SERVICE_USER}
+    [Install]
+    WantedBy=multi-user.target
+    EOT
 
-# Wait for code-server to start
-sleep 5
-if ! systemctl is-active --quiet code-server@{SERVICE_USER}; then
-    echo "ERROR: code-server service failed to start"
-    journalctl -u code-server@{SERVICE_USER} --no-pager -n 20
-    notify_webhook "failed" "service_start" "code-server service failed to start"
-    exit 1
-fi
+    systemctl daemon-reload
+    systemctl enable --now code-server@"$SERVICE_USER" || true
 
-# ========== FIREWALL ==========
-echo "[15/20] Configuring firewall..."
-notify_webhook "provisioning" "firewall" "Configuring firewall"
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow {PORT}/tcp
-ufw --force enable
+    sleep 3
+    if ! systemctl is-active --quiet code-server@"$SERVICE_USER"; then
+        echo "ERROR: code-server failed to start; showing journal last 50 lines:"
+        journalctl -u code-server@"$SERVICE_USER" -n 50 --no-pager || true
+        notify_webhook "failed" "service_start" "code-server service failed to start"
+        # Not exiting here to allow further debug steps; remove '|| true' above if you want to exit
+    fi
 
-# ========== NGINX ==========
-echo "[16/20] Configuring Nginx..."
-notify_webhook "provisioning" "nginx" "Configuring Nginx"
+    # ========== FIREWALL ==========
+    echo "[17/20] Configuring UFW firewall (opens SSH/HTTP/HTTPS and code-server port)"
+    notify_webhook "provisioning" "firewall" "Configuring UFW"
+    if ! ufw status | grep -q inactive; then
+        echo "UFW already active; adding rules"
+    fi
+    ufw allow 22/tcp || true
+    ufw allow 80/tcp || true
+    ufw allow 443/tcp || true
+    ufw allow "$PORT"/tcp || true
+    ufw --force enable || true
 
-# Remove default nginx config if exists
-rm -f /etc/nginx/sites-enabled/default
-rm -f /etc/nginx/sites-available/default
+    # ========== NGINX: reverse proxy (HTTP first) ==========
+    echo "[18/20] Configuring nginx reverse proxy"
+    notify_webhook "provisioning" "nginx" "Configuring nginx server block"
+    rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default || true
 
-# Temporary HTTP-only config for certbot validation
-cat > /etc/nginx/sites-available/vscode <<EOF
-server {{
-    listen 80;
-    server_name {DOMAIN_NAME};
-    root /var/www/html;
+    cat > /etc/nginx/sites-available/code-server <<'NGINX_EOF'
+    server {
+        listen 80;
+        server_name __DOMAIN__;
 
-    location / {{
-        return 200 'Certbot validation ready';
-        add_header Content-Type text/plain;
-    }}
-}}
-EOF
+        location / {
+            proxy_pass http://127.0.0.1:__PORT__/;
+            proxy_set_header Host $host;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Accept-Encoding gzip;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 3600s;
+        }
+    }
+    NGINX_EOF
 
-ln -sf /etc/nginx/sites-available/vscode /etc/nginx/sites-enabled/vscode
-nginx -t && systemctl restart nginx
+    ln -sf /etc/nginx/sites-available/code-server /etc/nginx/sites-enabled/code-server
+    nginx -t && systemctl restart nginx || true
 
-# ========== SSL ==========
-echo "[17/20] Setting up SSL..."
-notify_webhook "provisioning" "ssl" "Setting up SSL with Let's Encrypt"
-mkdir -p /etc/letsencrypt
-curl -s "{letsencrypt_options_url}" > /etc/letsencrypt/options-ssl-nginx.conf
-curl -s "{ssl_dhparams_url}" > /etc/letsencrypt/ssl-dhparams.pem
+    # ========== LET'S ENCRYPT SSL ==========
+    echo "[19/20] Obtaining/renewing SSL certificate with certbot"
+    notify_webhook "provisioning" "ssl" "Requesting Let's Encrypt certificate"
+    # Download recommended SSL config files
+    mkdir -p /etc/letsencrypt || true
+    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf || true
+    curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem || true
 
-# Stop nginx temporarily for certbot standalone verification
-systemctl stop nginx
+    # Attempt certbot via nginx plugin (non-interactive)
+    if certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
+        echo "certbot obtained certificate using nginx plugin"
+    else
+        echo "certbot nginx plugin failed; trying webroot fallback"
+        systemctl start nginx || true
+        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__" || true
+    fi
 
-# Obtain SSL certificate
-if certbot certonly --standalone -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL}; then
-    echo "SSL certificate obtained successfully"
-else
-    echo "WARNING: Failed to obtain SSL certificate with standalone method, trying webroot method"
-    systemctl start nginx
-    certbot certonly --webroot -d {DOMAIN_NAME} --non-interactive --agree-tos --email {ADMIN_EMAIL} -w /var/www/html
-fi
+    if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+        echo "ERROR: SSL certificate not found after certbot"
+        notify_webhook "failed" "ssl" "SSL certificate not found for __DOMAIN__"
+    else
+        echo "SSL certificate found for __DOMAIN__"
+    fi
 
-# Verify certificate exists
-if [ -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
-    echo "SSL certificate verified: /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem"
-else
-    echo "ERROR: SSL certificate not found at /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem"
-    notify_webhook "failed" "ssl" "SSL certificate not found"
-    exit 1
-fi
+    # Ensure nginx is reloaded
+    nginx -t && systemctl reload nginx || true
 
-systemctl start nginx
+    # Setup cron for renewal (runs daily and reloads nginx on change)
+    ( crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "__CERTBOT_CRON__" ) | crontab - || true
 
-# Replace nginx config with HTTPS proxy version
-cat > /etc/nginx/sites-available/vscode <<EOF
-server {{
-    listen 80;
-    server_name {DOMAIN_NAME};
-    return 301 https://\\$host\\$request_uri;
-}}
+    # ========== FINAL CHECKS ==========
+    echo "[20/20] Final verification..."
+    notify_webhook "provisioning" "verification" "Performing verification checks"
 
-server {{
-    listen 443 ssl;
-    server_name {DOMAIN_NAME};
-    ssl_certificate /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{DOMAIN_NAME}/privkey.pem;
-    
-    # SSL configuration
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384;
-    ssl_prefer_server_ciphers off;
-    
-    location / {{
-        proxy_pass http://localhost:{PORT}/;
-        proxy_set_header Host \\$host;
-        proxy_set_header Upgrade \\$http_upgrade;
-        proxy_set_header Connection upgrade;
-        proxy_set_header Accept-Encoding gzip;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
-        
-        # WebSocket support
-        proxy_set_header Connection "Upgrade";
-        proxy_read_timeout 86400;
-    }}
-}}
-EOF
+    if ! nginx -t; then
+        echo "ERROR: nginx config test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
+    fi
 
-nginx -t && systemctl reload nginx
+    if [ -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+        HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://__DOMAIN__ || echo "000")
+        echo "HTTPS check returned: $HTTPS_RESPONSE"
+        if [ "$HTTPS_RESPONSE" != "200" ]; then
+            notify_webhook "warning" "verification" "HTTPS check returned $HTTPS_RESPONSE"
+        else
+            notify_webhook "provisioning" "verification" "HTTPS OK"
+        fi
+    fi
 
-# ========== RENEWAL ==========
-echo "[18/20] Setting certbot auto-renewal..."
-notify_webhook "provisioning" "renewal" "Setting up certificate renewal"
-CRON_CMD="0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'"
-( crontab -l 2>/dev/null | grep -v -F "$CRON_CMD" ; echo "$CRON_CMD" ) | crontab -
+    cat <<EOF_FINAL
+    =============================================
+    ✅ Code Server Setup Complete!
+    ---------------------------------------------
+    🔗 Access URL     : https://{DOMAIN_NAME}
+    👤 Admin password : {ADMIN_PASSWORD}
+    ---------------------------------------------
+    ⚙️ Useful commands
+    - Check status: systemctl status code-server@{SERVICE_USER}
+    - View logs   : journalctl -u code-server@{SERVICE_USER} -f
+    - Restart     : systemctl restart code-server@{SERVICE_USER}
+    - Nginx status: systemctl status nginx
+    ---------------------------------------------
+    ⚠️ Post-install notes
+    1️⃣  First visit https://{DOMAIN_NAME} to access your code server
+    2️⃣  To renew SSL certificates: certbot renew --quiet
+    3️⃣  Extensions installed in: {VOLUME_DIR}/data/extensions
+    ---------------------------------------------
+    Enjoy your new code server!
+    =============================================
+    EOF_FINAL
+    """)
 
-# ========== FINALIZE ==========
-echo "[19/20] Verifying installation..."
-notify_webhook "provisioning" "verification" "Verifying installation"
+    # Build webhook function snippet (inlined) or a stub
+    if tokens["__WEBHOOK_URL__"]:
+        # escape double quotes for JSON heredoc safe insertion
+        webhook_fn = textwrap.dedent(r"""
+        notify_webhook() {
+          local status="$1"
+          local step="$2"
+          local message="$3"
 
-if ! nginx -t; then
-    echo "ERROR: Nginx config test failed"
-    notify_webhook "failed" "verification" "Nginx config test failed"
-    exit 1
-fi
+          # Build JSON payload
+          JSON_PAYLOAD=$(cat <<JSON_EOF
+        {
+          "vm_name": "$(hostname)",
+          "status": "$status",
+          "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+          "location": "__LOCATION__",
+          "resource_group": "__RESOURCE_GROUP__",
+          "details": {
+            "step": "$step",
+            "message": "$message"
+          }
+        }
+        JSON_EOF
+          )
 
-if [ ! -f "/etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem" ]; then
-    echo "ERROR: SSL cert not found!"
-    notify_webhook "failed" "verification" "SSL certificate not found"
-    exit 1
-fi
+          # Send POST (show HTTP code)
+          curl -s -X POST "__WEBHOOK_URL__" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD" \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --retry 2 \
+            --retry-delay 5 \
+            --write-out "Webhook result: %{http_code}\n" \
+            --output /dev/null || true
+        }
+        """)
+    else:
+        webhook_fn = textwrap.dedent(r"""
+        notify_webhook() {
+          # Webhook disabled/stub
+          return 0
+        }
+        """)
 
-# Test code-server accessibility
-if ! curl -s -o /dev/null -w "%{{http_code}}" http://localhost:{PORT} | grep -q 200; then
-    echo "WARNING: Cannot access code-server on port {PORT}, but continuing..."
-    notify_webhook "warning" "verification" "Cannot access code-server directly on port {PORT}"
-fi
+    # Now replace tokens inside script_template
+    final = script_template.replace("__WEBHOOK_FUNCTION__", webhook_fn)
 
-# Test HTTPS accessibility
-HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{{http_code}}" https://{DOMAIN_NAME} || echo "000")
-if [[ "$HTTPS_RESPONSE" != "200" ]]; then
-    echo "WARNING: HTTPS check returned $HTTPS_RESPONSE (expected 200)"
-    notify_webhook "warning" "verification" "HTTPS endpoint returned $HTTPS_RESPONSE"
-else
-    echo "✅ HTTPS access verified"
-fi
+    # Replace the rest of simple tokens
+    for tk, val in tokens.items():
+        # Skip webhook_url token here because webhook_fn included it as placeholders
+        if tk == "__WEBHOOK_URL__":
+            continue
+        final = final.replace(tk, val)
 
-echo "[20/20] Setup complete!"
-notify_webhook "completed" "finished" "Code-server setup completed successfully"
+    # Replace webhook placeholders in webhook_fn portion (location/resource_group/webhook_url)
+    final = final.replace("__LOCATION__", tokens["__LOCATION__"])
+    final = final.replace("__RESOURCE_GROUP__", tokens["__RESOURCE_GROUP__"])
+    final = final.replace("__WEBHOOK_URL__", tokens["__WEBHOOK_URL__"])
+    final = final.replace("__LET_OPTIONS_URL__", tokens["__LET_OPTIONS_URL__"])
+    final = final.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
 
-cat <<EOF_FINAL
-=============================================
-✅ Code Server Setup Complete!
----------------------------------------------
-🔗 Access URL     : https://{DOMAIN_NAME}
-👤 Admin password : {ADMIN_PASSWORD}
----------------------------------------------
-⚙️ Useful commands
-   - Check status: systemctl status code-server@{SERVICE_USER}
-   - View logs   : journalctl -u code-server@{SERVICE_USER} -f
-   - Restart     : systemctl restart code-server@{SERVICE_USER}
-   - Nginx status: systemctl status nginx
----------------------------------------------
-⚠️ Post-install notes
-1️⃣  First visit https://{DOMAIN_NAME} to access your code server
-2️⃣  To renew SSL certificates: certbot renew --quiet
-3️⃣  Extensions installed in: {VOLUME_DIR}/data/extensions
----------------------------------------------
-Enjoy your new code server!
-=============================================
-EOF_FINAL
-"""
-    return script_template
+    # Replace CERTBOT_CRON token
+    certbot_cron = "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'"
+    final = final.replace("__CERTBOT_CRON__", certbot_cron)
+
+    # Small safety: ensure files under VOLUME_DIR exist and are substituted
+    final = final.replace("__VOLUME_DIR__", tokens["__VOLUME_DIR__"])
+
+    # Replace remaining tokens for service user, password, admin email, domain, port
+    final = final.replace("__SERVICE_USER__", tokens["__SERVICE_USER__"])
+    final = final.replace("__ADMIN_PASSWORD__", tokens["__ADMIN_PASSWORD__"])
+    final = final.replace("__ADMIN_EMAIL__", tokens["__ADMIN_EMAIL__"])
+    final = final.replace("__DOMAIN__", tokens["__DOMAIN__"])
+    final = final.replace("__PORT__", tokens["__PORT__"])
+
+    # Return the final script string
+    return final

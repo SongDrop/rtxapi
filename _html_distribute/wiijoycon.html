@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Wii vs Joy-Con — Integration Plan (xash3d-fwgs)</title>
+    <style>
+        :root {
+            --bg: #ffffff;
+            --card: #f7f7f7;
+            --accent: #007ACC;
+            --muted: #555555;
+            --panel-gap: 12px;
+            --panel-padding: 18px;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+        }
+
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            color: black;
+            background-color: var(--bg);
+        }
+
+        header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 18px;
+            margin: 0;
+            color: var(--accent);
+        }
+
+        p.lead {
+            margin: 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .container {
+            display: flex;
+            gap: var(--panel-gap);
+            height: calc(100vh - 74px);
+            box-sizing: border-box;
+        }
+
+        .panel {
+            flex: 1 1 0;
+            padding: var(--panel-padding);
+            display: flex;
+            flex-direction: column;
+            min-width: 265px;
+            max-width: 100%;
+            overflow: hidden;
+            background-color: var(--card);
+            border: 1px solid #ddd;
+        }
+
+        .panel .title {
+            display: flex;
+            align-items: center;
+        }
+
+        .panel h2 {
+            font-size: 14px;
+            margin: 0;
+            color: var(--accent);
+        }
+
+        .panel .subtitle {
+            font-size: 12px;
+            color: var(--muted);
+            margin: 0;
+        }
+
+        .scroll {
+            overflow: auto;
+            /* space for scrollbar */
+        }
+
+        pre.files {
+            background: #eaeaea;
+            padding: 12px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace;
+            font-size: 13px;
+            line-height: 1.45;
+            color: black;
+            white-space: pre-wrap;
+            word-break: break-word;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+        }
+
+        .img-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin: 12px 0;
+        }
+
+        .img-row img {
+            max-width: 170px;
+            border: 1px solid #ccc;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
+            border-radius: 6px;
+        }
+
+        .note {
+            font-size: 13px;
+            color: var(--muted);
+            margin-top: 8px;
+        }
+
+        .section {
+            margin-bottom: 4px;
+        }
+
+        .card {
+            background: #f2f2f2;
+            color: black;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            border: 1px solid #ddd;
+        }
+
+        .small {
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace;
+            font-size: 13px;
+            color: #222;
+        }
+
+        @media (max-width:880px) {
+            .container {
+                flex-direction: column;
+                height: auto;
+            }
+
+            .img-row img {
+                max-width: 120px;
+            }
+        }
+    </style>
+
+</head>
+
+<body>
+    <header>
+        <div>
+            <h1>Xash3D-FWGS — Wii vs Joy-Con integration (concept)</h1>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- LEFT: Wii -->
+        <section class="panel" aria-labelledby="wii-title">
+
+
+            <div class="scroll">
+                <img src="https://i.ibb.co/S471Ptnm/wii-nunchuk.png" alt="Wii Nunchuk" style="width: 200px;" />
+
+                <div class="title">
+
+                    <h2 id="wii-title">Wii integration — xash3d-fwgs (theory & files)</h2>
+                    <div class="subtitle">original / BlueRetro & ESP32 code used as reference</div>
+                </div>
+                <div class="section">
+                    <div class="card">
+                        <strong>Start: files (what we saw / used)</strong>
+                        <div class="small">These are the main files referenced in the Wii stack you shared:</div>
+                        <pre class="files">
+/device_data/tests/*.py                (BlueRetro Python controller tests)
+device_data/wii.py                     (Wii constants / masks used by tests)
+wii_i2c.c                              (ESP32 I2C handling + register emulation)
+wii_i2c.h                              (header)
+bt_wii.c                               (Bluetooth HID <-> Wii extension init / handler)
+bt_hidp_wii.h                          (HIDP report structures & constants)
+wired_wii.c / wired_wii.h              (adapter mapping: generic -> Wii Classic/Pro/Nunchuck)
+tools: wiimote_encrypt / wiimote_gen_key (crypto for extension)
+      ...
+          </pre>
+                        <div class="note">These files show how the adapter emulates a Wii extension (I2C or BT) and
+                            converts raw HID reports into a normalized "wired output" buffer that can be consumed by an
+                            emulator/game engine.</div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="card">
+                        <strong>What the Wii side does (plain English)</strong>
+                        <ul>
+                            <li>Initialize controller transport (I2C on ESP32 or Bluetooth HID).</li>
+                            <li>Probe/handshake with extension, set reporting mode, enable speaker/IR if needed.</li>
+                            <li>Read raw buttons, accelerometer, IR or extension bytes.</li>
+                            <li>Pack and scale analog axes and buttons to a standard output layout (Classic/Pro/Nunchuck
+                                format).</li>
+                            <li>Expose that normalized buffer to the rest of the system (wired adapter) for mapping into
+                                games.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="card">
+                        <strong>Quick notes</strong>
+                        <div class="small">Useful takeaways for porting or replicating:</div>
+                        <ul>
+                            <li>The Wii code already implements multiple extension formats (8-byte/19-byte/16-byte) and
+                                bit packing — learn these for parity.</li>
+                            <li>There are explicit "init sequences" for the extension chip (writes to 0xA4/0xFE/etc.).
+                            </li>
+                            <li>Adapter logic normalizes axes (neutral=0x80 for sticks) — mimic that for consistent
+                                feel.</li>
+                        </ul>
+                    </div>
+                </div>
+
+
+
+                <div class="section">
+                    <div class="card">
+                        <strong>How Xash3D would consume this</strong>
+                        <ol>
+                            <li>Driver or platform layer provides a normalized mouse/gamepad input buffer (like the
+                                wired adapter above).</li>
+                            <li>Xash3D input layer maps that buffer -> engine input structures (mouse deltas, IN_ATTACK,
+                                movement axes).</li>
+                            <li>For Wii-style free-cursor: engine receives a virtual mouse coordinate computed from the
+                                normalized buffer (or from IR data if present).</li>
+                        </ol>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- RIGHT: Joy-Con -->
+        <section class="panel" aria-labelledby="joy-title">
+            <div class="scroll">
+                <img src="https://i.ibb.co/n5WGvkC/nintendo-switch-joycon.png" alt="Switch Joy-Con"
+                    style="width: 200px;" />
+
+                <div class="title">
+                    <h2 id="joy-title">Joy-Con integration — xash3d-fwgs (planned)</h2>
+                    <div class="subtitle">map Joy-Con -> virtual Wii -> engine (free-mouse aiming)</div>
+                </div>
+                <div class="section">
+                    <div class="card">
+                        <strong>Planned files (in theory)</strong>
+                        <div class="small">Files you would add / modify to create Joy-Con support and emulate the Wii
+                            flow:</div>
+                        <pre class="files">
+joycon_input.c        // low-level Joy-Con read + gyro calibration helper
+joycon_input.h
+joycon_mapping.c      // convert Joy-Con state -> virtual_wii struct
+joycon_mapping.h
+virtual_wii.c         // create a Wii-compatible output buffer from virtual_wii
+virtual_wii.h
+xash_input_bridge.c   // hook to Xash3D input: feed virtual mouse / button events
+xash_input_bridge.h
+config_ui.c           // in-game calibration UI (sensitivity, deadzones, recenter)
+doc/joycon_mapping.md  // design notes + tuning parameters
+          </pre>
+                        <div class="note">Goal: reuse Xash3D's existing mouse/gamepad handling by producing the same
+                            normalized buffer shape the engine already expects for mouse-style inputs.</div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="card">
+                        <strong>How it works (simple English)</strong>
+                        <ol>
+                            <li><strong>Read Joy-Con</strong> — poll gyro, accelerometer, sticks and buttons (via Switch
+                                SDK or paired BT on PC).</li>
+                            <li><strong>Calibrate</strong> — capture a neutral pose (system or in-game button) so gyro
+                                baseline is known.</li>
+                            <li><strong>Integrate gyro deltas</strong> — convert angular velocity → cursor deltas using
+                                sensitivity and smoothing.</li>
+                            <li><strong>Clamp / rectangle</strong> — keep cursor inside a central rectangle; when cursor
+                                reaches edge, optionally pan camera (infinite aiming).</li>
+                            <li><strong>Map to virtual Wii</strong> — fill a Wii-style output buffer (axes/buttons) so
+                                existing wiring/mapping code can consume it.</li>
+                            <li><strong>Feed Xash3D</strong> — set engine mouse coordinates / button flags; Xash handles
+                                the rest.</li>
+                        </ol>
+                        <div class="small">This lets you replicate the Wii free-pointer experience while using Joy-Con
+                            gyro (relative) input.</div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="card">
+                        <strong>Important tuning & features</strong>
+                        <ul>
+                            <li>System-level calibration (baseline) + in-game sensitivity sliders.</li>
+                            <li>Dead zones and smoothing filters to remove jitter.</li>
+                            <li>Optional acceleration curve: small tilt → fine aim, big tilt → fast movement.</li>
+                            <li>Center-reset button to re-center the rectangle quickly (useful to fight drift).</li>
+                            <li>Optional IR-style reload gestures (if using additional sensors) or button mapping for
+                                reload.</li>
+                        </ul>
+                    </div>
+                </div>
+
+
+                <div class="section">
+                    <div class="card">
+                        <strong>Mapping example (pseudo)</strong>
+                        <div class="mono">
+                            /* simplified idea (C-like pseudocode) */
+                            struct virtual_wii {
+                            uint16_t buttons;
+                            uint8_t axes[6]; // LX, LY, RX, RY, LT, RT
+                            int32_t cursor_x, cursor_y; // virtual mouse coords
+                            };
+
+                            void joycon_to_virtual_wii(jstate *jc, struct virtual_wii *vw) {
+                            // sticks -> axes (map + normalize)
+                            vw->axes[LX] = scale_stick(jc->left_stick.x);
+                            vw->axes[LY] = scale_stick(jc->left_stick.y);
+                            vw->axes[RX] = scale_stick(jc->right_stick.x);
+                            vw->axes[RY] = scale_stick(jc->right_stick.y);
+
+                            // buttons mapping
+                            vw->buttons = map_buttons(jc->buttons);
+
+                            // gyro -> cursor delta (integrate + sensitivity + smoothing)
+                            float d_yaw = jc->gyro.yaw - jc->calib.yaw;
+                            float d_pitch= jc->gyro.pitch- jc->calib.pitch;
+                            vw->cursor_x += (int)(d_yaw * config.sensitivity);
+                            vw->cursor_y += (int)(d_pitch * config.sensitivity);
+
+                            // clamp to free-rectangle and optionally pan camera if edge hit
+                            }
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+    </div>
+</body>
+
+</html>

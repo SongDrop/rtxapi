@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xash3D on Nintendo Switch - Guide</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+
+        h1,
+        h2,
+        h3 {
+            color: #2c3e50;
+        }
+
+        ol,
+        ul {
+            margin-left: 20px;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 15px 0;
+        }
+
+        table,
+        th,
+        td {
+            border: 1px solid #aaa;
+        }
+
+        th,
+        td {
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #ddd;
+        }
+
+        code {
+            background-color: #eee;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <img src="https://i.postimg.cc/rwz1jgCq/nintendo-switch-logo.png" style="width: 100%" />
+    <h1>Xash3D on Nintendo Switch - Legal & Technical Guide</h1>
+
+    <h2>1️⃣ Legal & Developer Requirements</h2>
+    <ul>
+        <li><strong>Nintendo Developer Account</strong> – allows you to create and deploy Switch software.</li>
+        <li><strong>Nintendo SDK / DevKit</strong> – hardware and software tools provided by Nintendo to compile for the
+            Switch.</li>
+        <li><strong>Proper licensing</strong> for any games you distribute (like Half-Life). Even if you own the game,
+            distributing it is <strong>not allowed</strong> without permission from Valve.</li>
+        <li><strong>Access to Nintendo’s toolchain</strong> – you can’t legally compile for the Switch using standard
+            GCC/Clang; you must use the Nintendo-provided toolchain (part of their SDK).</li>
+    </ul>
+
+    <h2>2️⃣ Technical Steps for Compiling Xash3D on Switch DevKit</h2>
+
+    <h3>A. Source Code</h3>
+    <ul>
+        <li>Xash3D is open source, so you can take the <code>Xash3D-FWGS</code> repo.</li>
+        <li>You would then need to adapt its build system to the Switch SDK.</li>
+        <li>Xash3D usually targets Linux, Windows, Android.</li>
+        <li>Switch uses a custom ARM64 architecture and libraries.</li>
+    </ul>
+
+    <h3>B. Switch Compilation</h3>
+    <ul>
+        <li><strong>Set up Switch SDK toolchain:</strong>
+            <ul>
+                <li>Switch SDK provides compiler, linker, headers, libraries.</li>
+                <li>Typically based on a specialized version of GCC/Clang for Switch ARM64.</li>
+            </ul>
+        </li>
+        <li><strong>Port Xash3D dependencies:</strong>
+            <ul>
+                <li>SDL2 → Switch has its own graphics/input libraries.</li>
+                <li>OpenAL/ALSA (audio) → must map to Switch’s audio API.</li>
+                <li>Filesystem access → map Xash3D’s file handling to Switch storage API.</li>
+            </ul>
+        </li>
+        <li><strong>Integrate Switch UI and Joy-Con support:</strong>
+            <ul>
+                <li>Adapt the engine to render Switch-native menus and UI elements.</li>
+                <li>Use Nintendo SDK APIs to handle Joy-Con input, including motion controls, analog sticks, and button
+                    mapping.
+                </li>
+                <li>Map in-game actions to native Switch input events rather than keyboard/mouse events.</li>
+            </ul>
+        </li>
+        <li><strong>Compile engine:</strong>
+            <ul>
+                <li>Modify the makefiles / CMake to use Switch SDK compiler.</li>
+                <li>Build as NX application (<code>NRO</code> file) instead of Linux binary.</li>
+            </ul>
+        </li>
+        <li><strong>Package game data:</strong>
+            <ul>
+                <li>Half-Life’s Valve folder must be included legally.</li>
+                <li>Data paths must match Xash3D expectations.</li>
+            </ul>
+        </li>
+    </ul>
+
+    <h3>C. Deployment</h3>
+    <ul>
+        <li>Deploy the <code>NRO</code> to your dev Switch using Nintendo’s deployment tools, not SD card copying like
+            homebrew.</li>
+        <li>The dev Switch runs apps signed with your dev account credentials.</li>
+    </ul>
+
+    <h2>3️⃣ Major Technical Differences vs Homebrew</h2>
+    <table>
+        <tr>
+            <th>Aspect</th>
+            <th>Homebrew</th>
+            <th>DevKit Legal Version</th>
+        </tr>
+        <tr>
+            <td>Compiler</td>
+            <td>GCC/Clang on PC</td>
+            <td>Nintendo SDK compiler</td>
+        </tr>
+        <tr>
+            <td>Libraries</td>
+            <td>SDL2, OpenAL</td>
+            <td>Switch-provided graphics/audio APIs</td>
+        </tr>
+        <tr>
+            <td>Distribution</td>
+            <td>SD card, no signing</td>
+            <td>Signed NRO via dev account</td>
+        </tr>
+        <tr>
+            <td>Controls</td>
+            <td>Mapped manually</td>
+            <td>Native Nintendo input APIs</td>
+        </tr>
+        <tr>
+            <td>Stability</td>
+            <td>Varies</td>
+            <td>Fully supported by Switch hardware</td>
+        </tr>
+        <tr>
+            <td>Legal</td>
+            <td>Grey/illegal</td>
+            <td>Fully licensed</td>
+        </tr>
+    </table>
+
+    <h2>4️⃣ TL;DR</h2>
+    <ul>
+        <li>Legally, you need Nintendo SDK, a dev account, and Valve’s permission to distribute Half-Life.</li>
+        <li>Technically, compiling Xash3D involves:
+            <ul>
+                <li>Porting the engine to Switch APIs.</li>
+                <li>Using Nintendo’s ARM64 toolchain to create an NRO.</li>
+                <li>Packaging the game data legally.</li>
+            </ul>
+        </li>
+        <li>Once that’s done, your game runs like a native Switch title—no emulation, just like homebrew but fully
+            supported.</li>
+    </ul>
+
+</body>
+
+</html>
