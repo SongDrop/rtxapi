@@ -233,59 +233,134 @@ def generate_setup(
     chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
     chmod 600 "$CONFIG_DIR/config.yaml"
 
+    # ========== DEBUG: CHECK CODE-SERVER READINESS ==========
+    echo "[14.1/20] Checking code-server readiness..."
+    notify_webhook "provisioning" "debug" "Checking code-server status"
+
+    # Check if code-server process is running
+    if ! pgrep -f "code-server" > /dev/null; then
+        echo "❌ code-server process not found, starting it..."
+        systemctl start code-server@"$SERVICE_USER" || true
+        sleep 10
+    fi
+
+    # Check if code-server is responding
+    if timeout 30 bash -c 'until curl -s http://127.0.0.1:__PORT__ > /dev/null; do sleep 2; done'; then
+        echo "✅ code-server is responding on port __PORT__"
+    else
+        echo "❌ code-server not responding on port __PORT__"
+        # Show service status
+        systemctl status code-server@"$SERVICE_USER" --no-pager || true
+        # Show recent logs
+        journalctl -u code-server@"$SERVICE_USER" -n 20 --no-pager || true
+    fi
+
+    # Check network connectivity to marketplace
+    echo "Testing connectivity to marketplace..."
+    if curl -s -I https://marketplace.visualstudio.com/ | head -n 1 | grep -q "200\|301\|302"; then
+        echo "✅ Can reach Visual Studio Code marketplace"
+    else
+        echo "❌ Cannot reach Visual Studio Code marketplace"
+        notify_webhook "warning" "network" "Cannot reach VS Code marketplace"
+    fi
+
+    # Check directory permissions
+    echo "Checking directory permissions..."
+    ls -la "$EXT_DIR" || echo "Extensions directory not accessible"
+    ls -la "$DATA_DIR" || echo "Data directory not accessible"
+
+    # Check available disk space
+    echo "Disk space available:"
+    df -h "$VOLUME_DIR" || df -h /home
     # ========== INSTALL EXTENSIONS (non-fatal) ==========
     echo "[14/20] Installing VSCode extensions..."
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
 
+    # Ensure code-server is running and ready
+    echo "Waiting for code-server to be ready..."
+    timeout 60 bash -c 'until curl -s http://127.0.0.1:__PORT__ > /dev/null; do sleep 5; done' || echo "code-server may not be fully ready"
+
+    # Set proper permissions
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$EXT_DIR"
+    chmod -R 755 "$DATA_DIR" "$EXT_DIR"
+
     extensions=(
-    "ms-azuretools.vscode-azureterraform"
-    "ms-azuretools.vscode-azureappservice"
-    "ms-azuretools.vscode-azurefunctions"
-    "ms-azuretools.vscode-azurestaticwebapps"
-    "ms-azuretools.vscode-azurestorage"
-    "ms-azuretools.vscode-cosmosdb"
-    "ms-azuretools.vscode-docker"
-    "ms-kubernetes-tools.vscode-kubernetes-tools"
-    "netlify.netlify-vscode"
-    "dbaeumer.vscode-eslint"
-    "esbenp.prettier-vscode"
-    "eamodio.gitlens"
-    "ms-vscode-remote.remote-containers"
-    "ms-vscode-remote.remote-ssh"
-    "ms-vscode.powershell"
-    "ms-python.python"
-    "ms-toolsai.jupyter"
-    "hashicorp.terraform"
-    "redhat.vscode-yaml"
-    "GitHub.copilot"
-    "donjayamanne.githistory"
-    "humao.rest-client"
-    "streetsidesoftware.code-spell-checker"
-    "WallabyJs.quokka-vscode"
-    "ritwickdey.LiveServer"
-    "formulahendry.code-runner"
+        "ms-azuretools.vscode-azureterraform"
+        "ms-azuretools.vscode-azureappservice" 
+        "ms-azuretools.vscode-azurefunctions"
+        "ms-azuretools.vscode-azurestaticwebapps"
+        "ms-azuretools.vscode-azurestorage"
+        "ms-azuretools.vscode-cosmosdb"
+        "ms-azuretools.vscode-docker"
+        "ms-kubernetes-tools.vscode-kubernetes-tools"
+        "netlify.netlify-vscode"
+        "dbaeumer.vscode-eslint"
+        "esbenp.prettier-vscode"
+        "eamodio.gitlens"
+        "ms-vscode-remote.remote-containers"
+        "ms-vscode-remote.remote-ssh"
+        "ms-vscode.powershell"
+        "ms-python.python"
+        "ms-toolsai.jupyter"
+        "hashicorp.terraform"
+        "redhat.vscode-yaml"
+        "GitHub.copilot"
+        "donjayamanne.githistory"
+        "humao.rest-client"
+        "streetsidesoftware.code-spell-checker"
+        "WallabyJs.quokka-vscode"
+        "ritwickdey.LiveServer"
+        "formulahendry.code-runner"
     )
 
+    # Install extensions as service user with proper environment
     for ext in "${extensions[@]}"; do
         retries=3
         success=false
+        
         for i in $(seq 1 $retries); do
             echo "Installing extension: $ext (attempt $i)"
-            if runuser -l "$SERVICE_USER" -c \
-            "code-server --install-extension $ext --extensions-dir='$EXT_DIR' --user-data-dir='$DATA_DIR'"; then
+            
+            # Try multiple methods to install the extension
+            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" code-server \
+                --install-extension "$ext" \
+                --extensions-dir="$EXT_DIR" \
+                --user-data-dir="$DATA_DIR" \
+                --force; then
                 echo "✅ Installed $ext"
                 success=true
                 break
             else
-                echo "Attempt $i failed for $ext; retrying..."
-                sleep 5
+                echo "Attempt $i failed for $ext"
+                
+                # Additional debug info on last attempt
+                if [ $i -eq $retries ]; then
+                    echo "Debug info for $ext:"
+                    echo "Extensions dir: $EXT_DIR"
+                    ls -la "$EXT_DIR" 2>/dev/null | head -10 || echo "Cannot list extensions dir"
+                    echo "Data dir: $DATA_DIR" 
+                    ls -la "$DATA_DIR" 2>/dev/null | head -10 || echo "Cannot list data dir"
+                fi
+                
+                if [ $i -lt $retries ]; then
+                    echo "Retrying in 10 seconds..."
+                    sleep 10
+                fi
             fi
         done
+        
         if [ "$success" = false ]; then
             echo "⚠️ Failed to install $ext after $retries attempts; continuing"
             notify_webhook "warning" "extensions" "Failed to install $ext"
         fi
     done
+
+    # Verify installed extensions
+    echo "Installed extensions:"
+    sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" code-server \
+        --list-extensions \
+        --extensions-dir="$EXT_DIR" \
+        --user-data-dir="$DATA_DIR" || echo "Could not list extensions"
 
     # ========== CREATE 'code' CLI SYMLINK ==========
     echo "[15/20] Ensuring 'code' command symlink"
@@ -399,29 +474,29 @@ def generate_setup(
     fi
 
     # Ensure nginx is reloaded
-    nginx -t && systemctl reload nginx || true
+    nginx -t && systemctl reload nginx
 
-    # Replace nginx config with HTTPS proxy version
+    # Replace nginx config with HTTPS proxy version (FIXED CONFIG)
     cat > /etc/nginx/sites-available/code-server <<'NGINX_EOF'
     server {
         listen 80;
         server_name __DOMAIN__;
         return 301 https://\$host/\$request_uri;
     }
-                                      
+
     server {
-        listen 80;
+        listen 443 ssl;
         server_name __DOMAIN__;
+
         ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
         ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
-        
+
         # SSL configuration
-        ssl_protocols TLSv1.2 TLSv1.3;
-        ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384;
-        ssl_prefer_server_ciphers off;
+        include /etc/letsencrypt/options-ssl-nginx.conf;
+        ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
         location / {
-            proxy_pass http://localhost:__PORT__/;
+            proxy_pass http://localhost:__PORT__;
             proxy_set_header Host \$host;
             proxy_set_header Upgrade \$http_upgrade;
             proxy_set_header Connection "upgrade";
@@ -430,13 +505,13 @@ def generate_setup(
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto \$scheme;
             proxy_read_timeout 3600s;
-                                      
             # WebSocket support
             proxy_set_header Connection "Upgrade";
             proxy_read_timeout 86400;
         }
     }
     NGINX_EOF
+                                      
     # Setup cron for renewal (runs daily and reloads nginx on change)
     ( crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "__CERTBOT_CRON__" ) | crontab - || true
 
