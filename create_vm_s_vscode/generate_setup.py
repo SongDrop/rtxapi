@@ -391,9 +391,9 @@ EOF
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
 
     extensions=(
-        {ext_block}
+        __EXTENSIONS__
     )
-
+                                      
     for ext in "${extensions[@]}"; do
         echo "Installing extension: $ext"
         notify_webhook "provisioning" "extension_install" "Installing $ext"
@@ -658,6 +658,8 @@ EOF
     # Small safety: ensure files under VOLUME_DIR exist and are substituted
     final = final.replace("__VOLUME_DIR__", tokens["__VOLUME_DIR__"])
 
+    # Replace extensions
+    final = final.replace("__EXTENSIONS__", ext_block)
     # Replace remaining tokens for service user, password, admin email, domain, port
     final = final.replace("__SERVICE_USER__", tokens["__SERVICE_USER__"])
     final = final.replace("__ADMIN_PASSWORD__", tokens["__ADMIN_PASSWORD__"])
