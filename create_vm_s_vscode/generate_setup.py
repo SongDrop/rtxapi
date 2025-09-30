@@ -304,7 +304,7 @@ def generate_setup(
     [Service]
     User=$SERVICE_USER
     Environment=HOME=/home/$SERVICE_USER
-    ExecStart=$CODE_BIN --config $CONFIG_DIR/config.yaml --user-data-dir=$DATA_DIR --extensions-dir=$EXT_DIR
+    ExecStart="$CODE_BIN" --config "$CONFIG_DIR/config.yaml" --user-data-dir="$DATA_DIR" --extensions-dir="$EXT_DIR"
     Restart=on-failure
     RestartSec=5s
     LimitNOFILE=65536
@@ -405,7 +405,7 @@ def generate_setup(
     [ -L /usr/local/bin/code ] || ln -s "$CODE_BIN" /usr/local/bin/code
 
     echo "✅ code-server setup complete"
-    notify_webhook "privisioning" "privisioning" "✅code-server installed and ready"
+    notify_webhook "provisioning" "provisioning" "✅code-server installed and ready"
 
     # ========== FIREWALL ==========
     echo "[17/20] Configuring UFW firewall (opens SSH/HTTP/HTTPS and code-server port)"
@@ -536,6 +536,7 @@ def generate_setup(
     if nginx -t; then
         systemctl reload nginx
         echo "✅ Nginx configuration test passed"
+        notify_webhook "provisioning" "verification" "✅ Nginx configuration test passed"
     else
         echo "❌ Nginx configuration test failed"
         notify_webhook "failed" "verification" "Nginx config test failed"
