@@ -195,8 +195,13 @@ def generate_setup(
     # ========== INSTALL CODE-SERVER ==========
     echo "[12/20] Installing code-server..."
     notify_webhook "provisioning" "code_server" "Installing code-server"
-    curl -fsSL https://code-server.dev/install.sh | sh || true
+    curl -fsSL https://code-server.dev/install.sh | HOME=/root sh
 
+    if ! command -v code-server >/dev/null 2>&1; then
+        echo "ERROR: code-server not found after install"
+        notify_webhook "failed" "code_server" "code-server install failed"
+        exit 1
+    fi
     # Ensure volume directories and config
     echo "[13/20] Configuring code-server directories..."
     notify_webhook "provisioning" "config_dirs" "Preparing data and config directories"
