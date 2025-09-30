@@ -204,24 +204,20 @@ def generate_setup(
     bash /tmp/install-code-server.sh
 
     # Check if installed properly
-    if ! /usr/bin/code-server --version >/dev/null 2>&1; then
+    CODE_BIN=$(command -v code-server || echo "/usr/local/bin/code-server")
+    if ! "$CODE_BIN" --version >/dev/null 2>&1; then
         echo "ERROR: code-server not found after install"
         notify_webhook "failed" "code_server" "code-server install failed"
         exit 1
     fi
-
-
-    if ! command -v code-server >/dev/null 2>&1; then
-        echo "ERROR: code-server not found after install"
-        notify_webhook "failed" "code_server" "code-server install failed"
-        exit 1
-    fi
+                                      
     # Ensure volume directories and config
     echo "[13/20] Configuring code-server directories..."
     notify_webhook "provisioning" "config_dirs" "Preparing data and config directories"
-    mkdir -p "__VOLUME_DIR__/config" "__VOLUME_DIR__/data" || true
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "__VOLUME_DIR__" || true
-    chmod 700 "__VOLUME_DIR__/config" || true
+    mkdir -p /home/$SERVICE_USER/.config/code-server
+    chown -R $SERVICE_USER:$SERVICE_USER /home/$SERVICE_USER/.config
+    chmod 700 /home/$SERVICE_USER/.config/code-server
+
 
     # write config for service user
     cat > /home/"$SERVICE_USER"/.config/code-server/config.yaml <<'EOF'
