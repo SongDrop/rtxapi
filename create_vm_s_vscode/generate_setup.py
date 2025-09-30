@@ -201,7 +201,7 @@ def generate_setup(
     chmod +x /tmp/install-code-server.sh
 
     export HOME=/root
-    sh /tmp/install-code-server.sh
+    bash /tmp/install-code-server.sh
 
     # Check if installed properly
     if ! /usr/bin/code-server --version >/dev/null 2>&1; then
@@ -418,7 +418,7 @@ def generate_setup(
     server {
         listen 80;
         server_name __DOMAIN__;
-        return 301 https://$host/request_uri;
+        return 301 https://\$host/\$request_uri;
     }
                                       
     server {
@@ -434,13 +434,13 @@ def generate_setup(
 
         location / {
             proxy_pass http://localhost:__PORT__/;
-            proxy_set_header Host $host;
-            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Host \$host;
+            proxy_set_header Upgrade \$http_upgrade;
             proxy_set_header Connection "upgrade";
             proxy_set_header Accept-Encoding gzip;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
             proxy_read_timeout 3600s;
                                       
             # WebSocket support
