@@ -316,10 +316,10 @@ def generate_setup(
     After=network.target
 
     [Service]
-    Type=simple
-    Environment=PASSWORD=__ADMIN_PASSWORD__
-    User=__SERVICE_USER__
-    ExecStart=/usr/bin/code-server --config /home/__SERVICE_USER__/.config/code-server/config.yaml
+    User=coder
+    Environment=HOME=/home/coder
+    Environment=PASSWORD=yourpassword
+    ExecStart=/usr/local/bin/code-server --config /home/coder/.config/code-server/config.yaml
     Restart=on-failure
     RestartSec=5s
     LimitNOFILE=65536
