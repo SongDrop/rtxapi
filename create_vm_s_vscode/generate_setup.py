@@ -306,7 +306,6 @@ def generate_setup(
     chown -R "$SERVICE_USER:$SERVICE_USER" "/home/$SERVICE_USER/.config" "/home/$SERVICE_USER/.local"
     chmod 700 "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
 
-
     echo "[13.1/20] Writing config.yaml..."
     notify_webhook "provisioning" "config_write" "Writing config.yaml"
 
@@ -320,6 +319,11 @@ EOF
     chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
     chmod 600 "$CONFIG_DIR/config.yaml"
 
+    # Ensure stable path for code-server binary
+    if [ ! -x /usr/local/bin/code-server ]; then
+        ln -sf "$CODE_BIN" /usr/local/bin/code-server
+    fi
+    CODE_BIN="/usr/local/bin/code-server"
 
     echo "[14/20] Creating systemd service..."
     notify_webhook "provisioning" "systemd" "Creating systemd unit"
@@ -342,7 +346,7 @@ LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
-EOF
+    EOF
 
     systemctl daemon-reload
     systemctl enable code-server.service
@@ -372,8 +376,7 @@ EOF
     fi
 
     echo "✅ code-server is running"
-    notify_webhook "provisioning" "service_start" "✅code-server is running"
-
+    notify_webhook "provisioning" "service_start" "✅ code-server is running"
 
     echo "[16/20] Installing VSCode extensions..."
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
@@ -403,19 +406,6 @@ EOF
             return 0
         fi
 
-        # Marketplace fallback for MS/HashiCorp
-        if [[ "$ext" == ms-* || "$ext" == hashicorp.* ]]; then
-            local publisher=$(echo "$ext" | cut -d. -f1)
-            local extension_name=$(echo "$ext" | cut -d. -f2)
-            local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$extension_name/latest/vspackage"
-            local tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
-            curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ] && bsdtar -xf "$tmpfile" -C "$EXT_DIR" 2>/dev/null
-            [ -d "$EXT_DIR/extension" ] && mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
-            chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
-            rm -f "$tmpfile"
-            installed=true
-        fi
-
         # Try Open VSX
         while [ $attempt -le $max_attempts ] && [ "$installed" = false ]; do
             sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
@@ -425,15 +415,18 @@ EOF
             attempt=$((attempt + 1))
         done
 
-        # Final Marketplace fallback
+        # Marketplace fallback (direct VSIX)
         if [ "$installed" = false ]; then
             local publisher=$(echo "$ext" | cut -d. -f1)
             local extension_name=$(echo "$ext" | cut -d. -f2)
             local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$extension_name/latest/vspackage"
             local tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
-            curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ] && bsdtar -xf "$tmpfile" -C "$EXT_DIR" 2>/dev/null
-            [ -d "$EXT_DIR/extension" ] && mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
-            chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
+            if curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ]; then
+                sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
+                    --install-extension "$tmpfile" \
+                    --extensions-dir="$EXT_DIR" \
+                    --user-data-dir="$DATA_DIR" --force && installed=true
+            fi
             rm -f "$tmpfile"
         fi
 
@@ -464,6 +457,7 @@ EOF
 
     echo "✅ code-server setup complete"
     notify_webhook "provisioning" "provisioning" "✅ code-server installed and ready"
+
     # ========== FIREWALL ==========
     echo "[17/20] Configuring UFW firewall (opens SSH/HTTP/HTTPS and code-server port)"
     notify_webhook "provisioning" "firewall" "Configuring UFW"
