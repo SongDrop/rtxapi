@@ -108,6 +108,7 @@ def generate_setup(
     # Install git-lfs if not already installed
     if ! command -v git-lfs >/dev/null 2>&1; then
         notify_webhook "provisioning" "git_lfs_install" "git-lfs not found, installing from packagecloud"
+        
         curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash || {
             notify_webhook "failed" "git_lfs_install" "Failed to add git-lfs repository"
             exit 1
@@ -128,13 +129,17 @@ def generate_setup(
         notify_webhook "provisioning" "git_lfs_install" "git-lfs already installed"
     fi
 
-    # Initialize git-lfs globally to avoid user/home issues
+    # Initialize git-lfs globally, fallback to user-level if system-level fails
     notify_webhook "provisioning" "git_lfs_init" "Initializing git-lfs globally"
-    git lfs install --system || {
-        notify_webhook "failed" "git_lfs_init" "git lfs global initialization failed"
-        exit 1
-    }
+    if ! sudo git lfs install --system; then
+        notify_webhook "warning" "git_lfs_init" "System-level git-lfs initialization failed, falling back to user-level"
+        git lfs install --skip-repo || {
+            notify_webhook "failed" "git_lfs_init" "User-level git-lfs initialization also failed"
+            exit 1
+        }
+    fi
     notify_webhook "provisioning" "git_lfs_init" "git-lfs initialized successfully"
+
 
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
