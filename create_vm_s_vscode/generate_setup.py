@@ -384,9 +384,10 @@ EOF
     fi
 
     echo "✅ code-server is running"
-    notify_webhook "provisioning" "service_start" "code-server is running"
+    notify_webhook "provisioning" "service_start" "✅code-server is running"
 
     sleep 5
+                                      
     # Install extensions
     echo "[16/20] Installing VSCode extensions..."
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
@@ -399,107 +400,96 @@ EOF
         local ext="$1"
         local max_attempts=2
         local attempt=1
-        local success=false
+        local installed=false
+
+        # Function to check if extension is already installed
+        is_installed() {
+            sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
+                --list-extensions | grep -q "^$ext$"
+        }
 
         echo "📦 Installing $ext ..."
         notify_webhook "provisioning" "extension_install" "Installing $ext"
 
-        # Skip if already installed
-        if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
-            --list-extensions | grep -q "^$ext$"; then
+        if is_installed; then
             echo "✅ $ext already installed, skipping"
             notify_webhook "provisioning" "extension_skip" "$ext already installed"
             return 0
         fi
 
-        # For Microsoft/HashiCorp extensions, use Marketplace directly (faster)
+        # Try Marketplace directly for Microsoft/HashiCorp
         if [[ "$ext" == ms-* || "$ext" == hashicorp.* ]]; then
             echo "⚡ Using Marketplace directly for $ext"
             notify_webhook "provisioning" "extension_marketplace" "Using Marketplace for $ext"
-            
             local publisher=$(echo "$ext" | cut -d. -f1)
             local extension_name=$(echo "$ext" | cut -d. -f2)
             local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$extension_name/latest/vspackage"
             local tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
-            
             if curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ]; then
                 mkdir -p "$EXT_DIR"
                 if bsdtar -xf "$tmpfile" -C "$EXT_DIR" 2>/dev/null; then
-                    # VSIX packages typically have an 'extension' folder inside
-                    if [ -d "$EXT_DIR/extension" ]; then
-                        mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
-                    fi
+                    [ -d "$EXT_DIR/extension" ] && mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
                     chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
                     echo "✅ Installed $ext (Marketplace)"
                     notify_webhook "provisioning" "extension_installed" "$ext installed via Marketplace"
                     rm -f "$tmpfile"
-                    return 0
+                    installed=true
                 fi
+                rm -f "$tmpfile"
             fi
-            echo "❌ Failed Marketplace install for $ext"
-            rm -f "$tmpfile"
-            # Fall through to try other methods
         fi
 
-        # Try Open VSX first (faster for open-source extensions)
-        while [ $attempt -le $max_attempts ]; do
+        # Try Open VSX if not installed yet
+        while [ $attempt -le $max_attempts ] && [ "$installed" = false ]; do
             echo "Attempt $attempt: Installing $ext via Open VSX..."
-            
             if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
                 --install-extension "$ext" \
                 --extensions-dir="$EXT_DIR" \
                 --user-data-dir="$DATA_DIR" --force 2>/dev/null; then
                 echo "✅ Installed $ext (Open VSX)"
                 notify_webhook "provisioning" "extension_installed" "$ext installed via Open VSX"
-                success=true
+                installed=true
                 break
             fi
-
-            if [ $attempt -eq $max_attempts ]; then
-                # Last attempt: try Marketplace as fallback for non-MS extensions
-                if [[ "$ext" != ms-* && "$ext" != hashicorp.* ]]; then
-                    echo "🔄 Final attempt: Trying Marketplace for $ext"
-                    notify_webhook "provisioning" "extension_fallback" "Trying Marketplace for $ext"
-                    
-                    local publisher=$(echo "$ext" | cut -d. -f1)
-                    local extension_name=$(echo "$ext" | cut -d. -f2)
-                    local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$extension_name/latest/vspackage"
-                    local tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
-                    
-                    if curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ]; then
-                        mkdir -p "$EXT_DIR"
-                        if bsdtar -xf "$tmpfile" -C "$EXT_DIR" 2>/dev/null; then
-                            if [ -d "$EXT_DIR/extension" ]; then
-                                mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
-                            fi
-                            chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
-                            echo "✅ Installed $ext (Marketplace fallback)"
-                            notify_webhook "provisioning" "extension_installed" "$ext installed via Marketplace fallback"
-                            rm -f "$tmpfile"
-                            success=true
-                            break
-                        fi
-                    fi
-                    rm -f "$tmpfile"
-                fi
-            fi
-            
-            echo "⚠️ Attempt $attempt failed for $ext"
-            sleep 5
-            ((attempt++))
+            attempt=$((attempt + 1))
         done
 
-        if [ "$success" = false ]; then
-            echo "❌ Failed to install $ext after $max_attempts attempts"
-            notify_webhook "warning" "extensions" "Failed to install $ext"
-            return 1
+        # Final Marketplace fallback for non-MS extensions
+        if [ "$installed" = false ] && [[ "$ext" != ms-* && "$ext" != hashicorp.* ]]; then
+            echo "🔄 Final attempt: Trying Marketplace for $ext"
+            notify_webhook "provisioning" "extension_fallback" "Trying Marketplace for $ext"
+            local publisher=$(echo "$ext" | cut -d. -f1)
+            local extension_name=$(echo "$ext" | cut -d. -f2)
+            local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$extension_name/latest/vspackage"
+            local tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
+            if curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ]; then
+                mkdir -p "$EXT_DIR"
+                if bsdtar -xf "$tmpfile" -C "$EXT_DIR" 2>/dev/null; then
+                    [ -d "$EXT_DIR/extension" ] && mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
+                    chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
+                    echo "✅ Installed $ext (Marketplace fallback)"
+                    notify_webhook "provisioning" "extension_installed" "$ext installed via Marketplace fallback"
+                    installed=true
+                fi
+                rm -f "$tmpfile"
+            fi
+        fi
+
+        # Final check
+        if is_installed; then
+            echo "✅ Verified $ext installation"
+            notify_webhook "provisioning" "extension_verified" "$ext is installed"
+        else
+            echo "❌ Failed to install $ext"
+            notify_webhook "provisioning" "extension_failed" "$ext installation failed"
         fi
     }
 
-
+    # Loop through all extensions
     for ext in "${extensions[@]}"; do
-        install_extension "$ext" || true
+        install_extension "$ext"
     done
+
 
 
     # Create 'code' CLI symlink
@@ -523,111 +513,88 @@ EOF
     ufw allow "$PORT"/tcp
     ufw --force enable
 
-    # ========== NGINX: reverse proxy (HTTP first) ==========
-    echo "[18/20] Configuring nginx reverse proxy"
-    notify_webhook "provisioning" "nginx" "Configuring nginx server block"
-    # Remove default nginx config if exists
+   # ========== NGINX CONFIG + SSL (merged from GPT Docker script) ==========
+    echo "[18/20] Configuring nginx reverse proxy with SSL..."
     rm -f /etc/nginx/sites-enabled/default
-    rm -f /etc/nginx/sites-available/default
+    rm -f /etc/nginx/sites-available/code-server
 
-    # Temporary HTTP-only config for certbot validation                      
-    cat > /etc/nginx/sites-available/code-server <<'NGINX_EOF'
+    # Download Let's Encrypt recommended configs
+    mkdir -p /etc/letsencrypt
+    curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf" -o /etc/letsencrypt/options-ssl-nginx.conf
+    curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem" -o /etc/letsencrypt/ssl-dhparams.pem
+
+    # Initial temporary HTTP server for certbot
+    cat > /etc/nginx/sites-available/code-server <<'EOF_TEMP'
 server {
     listen 80;
     server_name __DOMAIN__;
     root /var/www/html;
-    
+
     location / {
         return 200 'Certbot validation ready';
         add_header Content-Type text/plain;
     }
 }
-NGINX_EOF
-
+EOF_TEMP
+                                      
     ln -sf /etc/nginx/sites-available/code-server /etc/nginx/sites-enabled/code-server
     nginx -t && systemctl restart nginx
 
-    # ========== LET'S ENCRYPT SSL ==========
-    echo "[19/20] Obtaining/renewing SSL certificate with certbot"
-    notify_webhook "provisioning" "ssl" "Requesting Let's Encrypt certificate"
-
-    # Ensure webroot exists
+    # Create webroot for certbot
     mkdir -p /var/www/html
     chown www-data:www-data /var/www/html
 
-    # Download recommended SSL config files
-    mkdir -p /etc/letsencrypt                      
-    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf || true
-    curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem || true
-
-    # First, attempt certbot with nginx plugin
-    if certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
-        echo "✅ Certbot obtained certificate using nginx plugin"
-    else
+    # Obtain SSL certificate using certbot
+    if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
         echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
-        # Ensure nginx is running for webroot validation
         systemctl start nginx || true
-        # Attempt webroot fallback
-        if certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
-            echo "✅ Certbot obtained certificate using webroot fallback"
-        else
-            echo "❌ Certbot failed completely; SSL certificate not obtained"
-            notify_webhook "failed" "ssl" "Certbot failed for __DOMAIN__"
-            # Continue provisioning without exiting, optional: exit 1 if you prefer strict
-        fi
+        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
     fi
 
     # Verify certificate existence
     if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
-        echo "⚠️ SSL certificate not found after certbot"
-        notify_webhook "warning" "ssl" "SSL certificate missing for __DOMAIN__"
-    else
-        echo "✅ SSL certificate found for __DOMAIN__"
+        echo "❌ SSL certificate not found!"
+        exit 1
     fi
 
-    # Reload nginx with new certs if available
-    nginx -t && systemctl reload nginx || true
-
-
-    # Replace nginx config with HTTPS proxy version (FIXED CONFIG)
-    cat > /etc/nginx/sites-available/code-server <<'NGINX_EOF'
+    # Replace Nginx config with full HTTPS proxy for code-server
+    cat > /etc/nginx/sites-available/code-server <<'EOF_SSL'
 server {
     listen 80;
     server_name __DOMAIN__;
-    return 301 https://\$host/\$request_uri;
+    return 301 https://$host$request_uri;
 }
-
 server {
-    listen 443 ssl;
+    listen 443 ssl http2;
     server_name __DOMAIN__;
 
     ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
-
-    # SSL configuration
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
     location / {
-        proxy_pass http://localhost:__PORT__;
+        proxy_pass http://127.0.0.1:__PORT__;
         proxy_set_header Host \$host;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Accept-Encoding gzip;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 3600s;
-        # WebSocket support
-        proxy_set_header Connection "Upgrade";
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400;
     }
 }
-NGINX_EOF
-                                      
-    # Setup cron for renewal (runs daily and reloads nginx on change)
-    ( crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "__CERTBOT_CRON__" ) | crontab - || true
+EOF_SSL
 
+    ln -sf /etc/nginx/sites-available/code-server /etc/nginx/sites-enabled/code-server
+    nginx -t && systemctl reload nginx
+
+    echo "[19/19] Setup Cron for renewal..."
+    notify_webhook "provisioning" "provisioning" "Setup Cron for renewal..."
+         
+    # Setup cron for renewal (runs daily and reloads nginx on change)
+    (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
+    
     # ========== FINAL CHECKS ==========
     echo "[20/20] Final verification..."
     notify_webhook "provisioning" "verification" "Performing verification checks"

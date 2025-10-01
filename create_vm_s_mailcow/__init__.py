@@ -1369,7 +1369,7 @@ async def provision_vm_background(
         smtp_port = int(smtp_port_str) if smtp_port_str else 587
         
         html_content = html_email.HTMLEmail(
-            logo_url="https://i.postimg.cc/4yyGBqFs/microsoft-azure.png",
+            logo_url="https://i.postimg.cc/3wbLCJd0/mailcow.png",
             ip_address=public_ip,
             created_at=datetime.utcnow().isoformat(),
             link1=f"https://{fqdn}",
