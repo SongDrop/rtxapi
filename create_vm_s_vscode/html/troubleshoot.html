@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code-Server Troubleshooting</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #f0f0f0;
+            padding: 2rem;
+            color: #222;
+        }
+
+        h1 {
+            color: #d00000;
+        }
+
+        h2 {
+            color: #0077b6;
+            margin-top: 1.5rem;
+        }
+
+        pre {
+            background: #fff;
+            padding: 1rem;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+
+        ul {
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Code-Server Troubleshooting</h1>
+
+    <h2>1. Check code-server service</h2>
+    <pre>
+$ systemctl status code-server.service
+● code-server.service - code-server
+    Loaded: loaded (/etc/systemd/system/code-server.service; enabled; preset: enabled)
+    Active: active (running) since Wed 2025-10-01 12:57:41 UTC; 11min ago
+    Main PID: 24910 (node)
+    Tasks: 22 (limit: 4678)
+    Memory: 58.6M (peak: 76.1M)
+</pre>
+    <p><strong>Check:</strong> Status is <code>active (running)</code>, PID exists, no crash loops.</p>
+
+    <h2>2. Check code-server port</h2>
+    <pre>
+$ ss -tuln | grep 3000
+tcp LISTEN 0 511 127.0.0.1:3000 0.0.0.0:*
+</pre>
+    <p><strong>Check:</strong> Listening on <code>127.0.0.1:3000</code>.</p>
+
+    <h2>3. Check Nginx status</h2>
+    <pre>
+$ systemctl status nginx
+nginx.service - A high performance web server and a reverse proxy server
+    Loaded: loaded (/usr/lib/systemd/system/nginx.service; enabled; preset: enabled)
+    Active: active (running) since Wed 2025-10-01 13:01:45 UTC; 8min ago
+    Main PID: 28837 (nginx)
+</pre>
+    <p><strong>Check:</strong> Status <code>active (running)</code>, master PID present.</p>
+
+    <h2>4. Nginx listening ports</h2>
+    <pre>
+$ ss -tuln | grep -E '(:80|:443)'
+tcp LISTEN 0 511 0.0.0.0:443 0.0.0.0:*
+tcp LISTEN 0 511 0.0.0.0:80 0.0.0.0:*
+</pre>
+    <p><strong>Check:</strong> Ports 80 and 443 open.</p>
+
+    <h2>5. Nginx site config</h2>
+    <pre>
+$ cat /etc/nginx/sites-enabled/code-server
+server {
+    listen 80;
+    server_name vscode2.win10dev.xyz;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl http2;
+    server_name vscode2.win10dev.xyz;
+    ssl_certificate /etc/letsencrypt/live/vscode2.win10dev.xyz/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/vscode2.win10dev.xyz/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+    }
+}
+</pre>
+    <p><strong>Check:</strong> HTTP redirects to HTTPS, HTTPS proxy points to code-server port, headers set for
+        WebSocket.</p>
+
+    <h2>6. SSL Certificate</h2>
+    <pre>
+$ sudo ls -l /etc/letsencrypt/live/vscode2.win10dev.xyz/
+$ sudo cat /etc/letsencrypt/live/vscode2.win10dev.xyz/fullchain.pem | head -n 5
+</pre>
+    <p><strong>Check:</strong> <code>fullchain.pem</code> and <code>privkey.pem</code> exist and readable by root.</p>
+
+    <h2>7. Test HTTPS connection</h2>
+    <pre>
+$ curl -k -I https://vscode2.win10dev.xyz
+$ curl -o /dev/null -s -w "%{http_code}\n" https://vscode2.win10dev.xyz/
+</pre>
+    <p><strong>Check:</strong> Response code 200 or 302, SSL no browser warnings.</p>
+
+    <h2>8. Check code-server extensions</h2>
+    <pre>
+$ sudo -u coder HOME=/home/coder code-server --list-extensions
+$ sudo -u coder HOME=/home/coder code-server --list-extensions | wc -l
+</pre>
+    <p><strong>Check:</strong> Number of installed extensions, directories exist:</p>
+    <pre>
+$ sudo ls -ld /home/coder/.local/share/code-server/extensions
+$ sudo ls -ld /home/coder/.config/code-server
+</pre>
+    <p>If directories do not exist, create and fix permissions:</p>
+    <pre>
+$ sudo mkdir -p /home/coder/.local/share/code-server/extensions
+$ sudo mkdir -p /home/coder/.config/code-server
+$ sudo chown -R coder:coder /home/coder/.local /home/coder/.config
+$ sudo chmod -R 755 /home/coder/.local
+$ sudo chmod -R 700 /home/coder/.config/code-server
+</pre>
+
+    <h2>✅ Full functional criteria</h2>
+    <ul>
+        <li>code-server running and listening on 127.0.0.1:3000</li>
+        <li>Nginx running, listening on 80/443, proxy correctly configured</li>
+        <li>SSL certificate installed and valid</li>
+        <li>Extensions directory exists and code-server can list installed extensions</li>
+        <li>Browser can access https://vscode2.win10dev.xyz without errors</li>
+    </ul>
+
+</body>
+
+</html>

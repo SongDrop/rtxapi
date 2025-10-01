@@ -295,7 +295,6 @@ def generate_setup(
     echo "✅ code-server installed at $CODE_BIN"
     notify_webhook "provisioning" "code_server" "Verified binary at $CODE_BIN"
 
-    # Configure directories
     echo "[13/20] Setting up directories..."
     notify_webhook "provisioning" "config_dirs" "Preparing directories"
 
@@ -305,9 +304,9 @@ def generate_setup(
 
     mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
     chown -R "$SERVICE_USER:$SERVICE_USER" "/home/$SERVICE_USER/.config" "/home/$SERVICE_USER/.local"
-    chmod 755 "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
+    chmod 700 "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
 
-    # Write code-server config
+
     echo "[13.1/20] Writing config.yaml..."
     notify_webhook "provisioning" "config_write" "Writing config.yaml"
 
@@ -321,8 +320,10 @@ EOF
     chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
     chmod 600 "$CONFIG_DIR/config.yaml"
 
-    # Create systemd service
-    echo "[14/20] Creating systemd service for code-server..."
+    # -------------------------------
+    # 14️⃣ Create systemd service
+    # -------------------------------
+    echo "[14/20] Creating systemd service..."
     notify_webhook "provisioning" "systemd" "Creating systemd unit"
 
     cat > /etc/systemd/system/code-server.service << EOF
@@ -348,21 +349,14 @@ EOF
     systemctl daemon-reload
     systemctl enable code-server.service
 
-    # Start code-server service
+    # -------------------------------
+    # 15️⃣ Start code-server
+    # -------------------------------
     echo "[15/20] Starting code-server service..."
     notify_webhook "provisioning" "service_start" "Starting code-server service"
 
-    if ! systemctl start code-server.service; then
-        echo "ERROR: Failed to start code-server service"
-        systemctl status code-server.service --no-pager || true
-        journalctl -u code-server.service -n 50 --no-pager || true
-        notify_webhook "failed" "service_start" "Failed to start code-server service"
-        exit 1
-    fi
-
-    # Wait for code-server to start
-    echo "[15.1/20] Waiting for code-server to respond on port __PORT__..."
-    notify_webhook "provisioning" "debug" "Waiting for code-server readiness"
+    systemctl restart code-server.service
+    sleep 5
 
     READY=false
     for i in {1..12}; do
@@ -371,14 +365,13 @@ EOF
             break
         fi
         echo "⏳ code-server not up yet (try $i/12)..."
-        systemctl status code-server.service --no-pager | head -10 || true
         sleep 5
     done
 
     if [ "$READY" = false ]; then
-        echo "ERROR: code-server did not start properly"
-        systemctl status code-server.service --no-pager || true
-        journalctl -u code-server.service -n 50 --no-pager || true
+        echo "❌ code-server failed to start!"
+        systemctl status code-server.service --no-pager
+        journalctl -u code-server.service -n 50 --no-pager
         notify_webhook "failed" "service_start" "code-server failed to start"
         exit 1
     fi
@@ -386,9 +379,7 @@ EOF
     echo "✅ code-server is running"
     notify_webhook "provisioning" "service_start" "✅code-server is running"
 
-    sleep 5
-                                      
-    # Install extensions
+
     echo "[16/20] Installing VSCode extensions..."
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
 
@@ -402,80 +393,56 @@ EOF
         local attempt=1
         local installed=false
 
-        # Function to check if extension is already installed
         is_installed() {
             sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
-                --list-extensions | grep -q "^$ext$"
+                --list-extensions | grep -q "^$ext\$"
         }
 
-        echo "📦 Installing $ext ..."
+        echo "📦 Installing $ext..."
         notify_webhook "provisioning" "extension_install" "Installing $ext"
 
+        # Skip if already installed
         if is_installed; then
             echo "✅ $ext already installed, skipping"
             notify_webhook "provisioning" "extension_skip" "$ext already installed"
             return 0
         fi
 
-        # Try Marketplace directly for Microsoft/HashiCorp
+        # Marketplace fallback for MS/HashiCorp
         if [[ "$ext" == ms-* || "$ext" == hashicorp.* ]]; then
-            echo "⚡ Using Marketplace directly for $ext"
-            notify_webhook "provisioning" "extension_marketplace" "Using Marketplace for $ext"
             local publisher=$(echo "$ext" | cut -d. -f1)
             local extension_name=$(echo "$ext" | cut -d. -f2)
             local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$extension_name/latest/vspackage"
             local tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
-            if curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ]; then
-                mkdir -p "$EXT_DIR"
-                if bsdtar -xf "$tmpfile" -C "$EXT_DIR" 2>/dev/null; then
-                    [ -d "$EXT_DIR/extension" ] && mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
-                    chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
-                    echo "✅ Installed $ext (Marketplace)"
-                    notify_webhook "provisioning" "extension_installed" "$ext installed via Marketplace"
-                    rm -f "$tmpfile"
-                    installed=true
-                fi
-                rm -f "$tmpfile"
-            fi
+            curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ] && bsdtar -xf "$tmpfile" -C "$EXT_DIR" 2>/dev/null
+            [ -d "$EXT_DIR/extension" ] && mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
+            chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
+            rm -f "$tmpfile"
+            installed=true
         fi
 
-        # Try Open VSX if not installed yet
+        # Try Open VSX
         while [ $attempt -le $max_attempts ] && [ "$installed" = false ]; do
-            echo "Attempt $attempt: Installing $ext via Open VSX..."
-            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
+            sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
                 --install-extension "$ext" \
                 --extensions-dir="$EXT_DIR" \
-                --user-data-dir="$DATA_DIR" --force 2>/dev/null; then
-                echo "✅ Installed $ext (Open VSX)"
-                notify_webhook "provisioning" "extension_installed" "$ext installed via Open VSX"
-                installed=true
-                break
-            fi
+                --user-data-dir="$DATA_DIR" --force 2>/dev/null && installed=true
             attempt=$((attempt + 1))
         done
 
-        # Final Marketplace fallback for non-MS extensions
-        if [ "$installed" = false ] && [[ "$ext" != ms-* && "$ext" != hashicorp.* ]]; then
-            echo "🔄 Final attempt: Trying Marketplace for $ext"
-            notify_webhook "provisioning" "extension_fallback" "Trying Marketplace for $ext"
+        # Final Marketplace fallback
+        if [ "$installed" = false ]; then
             local publisher=$(echo "$ext" | cut -d. -f1)
             local extension_name=$(echo "$ext" | cut -d. -f2)
             local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$extension_name/latest/vspackage"
             local tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
-            if curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ]; then
-                mkdir -p "$EXT_DIR"
-                if bsdtar -xf "$tmpfile" -C "$EXT_DIR" 2>/dev/null; then
-                    [ -d "$EXT_DIR/extension" ] && mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
-                    chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
-                    echo "✅ Installed $ext (Marketplace fallback)"
-                    notify_webhook "provisioning" "extension_installed" "$ext installed via Marketplace fallback"
-                    installed=true
-                fi
-                rm -f "$tmpfile"
-            fi
+            curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ] && bsdtar -xf "$tmpfile" -C "$EXT_DIR" 2>/dev/null
+            [ -d "$EXT_DIR/extension" ] && mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
+            chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
+            rm -f "$tmpfile"
         fi
 
-        # Final check
+        # Verify installation
         if is_installed; then
             echo "✅ Verified $ext installation"
             notify_webhook "provisioning" "extension_verified" "$ext is installed"
@@ -485,12 +452,13 @@ EOF
         fi
     }
 
-    # Loop through all extensions
     for ext in "${extensions[@]}"; do
         install_extension "$ext"
     done
 
-
+    # List installed extensions
+    echo "📂 Installed extensions:"
+    sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" --list-extensions
 
     # Create 'code' CLI symlink
     echo "[17/20] Ensuring 'code' symlink"
@@ -575,11 +543,11 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:__PORT__;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400;
     }

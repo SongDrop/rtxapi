@@ -1112,7 +1112,7 @@ async def provision_vm_background(
             recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
             
             html_content = html_email.HTMLEmail(
-                logo_url="https://i.postimg.cc/4yyGBqFs/microsoft-azure.png",
+                logo_url="https://i.postimg.cc/JhCstSNg/openspypro.png",
                 ip_address=public_ip,
                 created_at=datetime.utcnow().isoformat(),
                 link1=f"https://{fqdn}",
