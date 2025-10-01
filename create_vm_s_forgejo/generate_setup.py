@@ -102,16 +102,39 @@ def generate_setup(
     apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq \
         make net-tools python3-certbot-nginx openssl ufw || { notify_webhook "failed" "apt_install" "apt-get install failed"; exit 1; }
 
-    # Install git-lfs separately with retry if needed
+    # ========== GIT LFS INSTALLATION ==========
     notify_webhook "provisioning" "git_lfs_install" "Installing git-lfs"
+
+    # Install git-lfs if not already installed
     if ! command -v git-lfs >/dev/null 2>&1; then
-        curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash
-        apt-get update -q
-        apt-get install -y git-lfs || { notify_webhook "failed" "git_lfs_install" "git-lfs install failed"; exit 1; }
+        notify_webhook "provisioning" "git_lfs_install" "git-lfs not found, installing from packagecloud"
+        curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash || {
+            notify_webhook "failed" "git_lfs_install" "Failed to add git-lfs repository"
+            exit 1
+        }
+
+        apt-get update -q || { 
+            notify_webhook "failed" "apt_update" "apt-get update failed during git-lfs install"
+            exit 1
+        }
+
+        apt-get install -y git-lfs || { 
+            notify_webhook "failed" "git_lfs_install" "apt-get install git-lfs failed"
+            exit 1
+        }
+
+        notify_webhook "provisioning" "git_lfs_install" "git-lfs installed successfully"
+    else
+        notify_webhook "provisioning" "git_lfs_install" "git-lfs already installed"
     fi
 
-    git lfs install || { notify_webhook "failed" "git_lfs_init" "git lfs initialization failed"; exit 1; }
-
+    # Initialize git-lfs globally to avoid user/home issues
+    notify_webhook "provisioning" "git_lfs_init" "Initializing git-lfs globally"
+    git lfs install --system || {
+        notify_webhook "failed" "git_lfs_init" "git lfs global initialization failed"
+        exit 1
+    }
+    notify_webhook "provisioning" "git_lfs_init" "git-lfs initialized successfully"
 
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
