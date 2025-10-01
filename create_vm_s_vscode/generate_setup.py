@@ -606,26 +606,27 @@ EOF
     fi
                                       
     cat <<EOF_FINAL
-=============================================
-✅ Code Server Setup Complete!
----------------------------------------------
-🔗 Access URL     : https://__DOMAIN__
-👤 Admin password : __ADMIN_PASSWORD__
----------------------------------------------
-⚙️ Useful commands
-- Check status: systemctl status code-server@__SERVICE_USER__
-- View logs   : journalctl -u code-server@__SERVICE_USER__ -f
-- Restart     : systemctl restart code-server@__SERVICE_USER__
-- Nginx status: systemctl status nginx
----------------------------------------------
-⚠️ Post-install notes
-1️⃣  First visit https://__DOMAIN__ to access your code server
-2️⃣  To renew SSL certificates: certbot renew --quiet
-3️⃣  Extensions installed in: __VOLUME_DIR__/data/extensions
----------------------------------------------
-Enjoy your new code server!
-=============================================
-EOF_FINAL
+    =============================================
+    ✅ Code Server Setup Complete!
+    ---------------------------------------------
+    🔗 Access URL     : https://__DOMAIN__
+    👤 Admin password : __ADMIN_PASSWORD__
+    ---------------------------------------------
+    ⚙️ Useful commands
+    - Check status: systemctl status code-server@__SERVICE_USER__
+    - View logs   : journalctl -u code-server@__SERVICE_USER__ -f
+    - Restart     : systemctl restart code-server@__SERVICE_USER__
+    - Nginx status: systemctl status nginx
+    ---------------------------------------------
+    ⚠️ Post-install notes
+    1️⃣  First visit https://__DOMAIN__ to access your code server
+    2️⃣  To renew SSL certificates: certbot renew --quiet
+    3️⃣  Extensions installed in: __VOLUME_DIR__/data/extensions
+    ---------------------------------------------
+    Enjoy your new code server!
+    =============================================
+    EOF_FINAL
+    """)
 
     # Build webhook function snippet (inlined) or a stub
     if tokens["__WEBHOOK_URL__"]:
