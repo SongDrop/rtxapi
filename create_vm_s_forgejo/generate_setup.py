@@ -166,33 +166,34 @@ def generate_setup(
     echo "[7/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose" "Configuring Docker Compose"
 
-    cat > "$FORGEJO_DIR/docker-compose.yml" <<'DOCKER_EOF'
+    cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF
+version: "3.8"
 services:
-  forgejo:
-    image: codeberg.org/forgejo/forgejo:12.0.1
+  server:
+    image: codeberg.org/forgejo/forgejo:latest
     container_name: forgejo
     restart: unless-stopped
     environment:
-      FORGEJO__server__DOMAIN: "__DOMAIN__"
-      FORGEJO__server__ROOT_URL: "https://__DOMAIN__"
-      FORGEJO__server__HTTP_PORT: "3000"
-      FORGEJO__server__LFS_START_SERVER: "true"
-      FORGEJO__server__LFS_CONTENT_PATH: "/data/gitea/lfs"
-      FORGEJO__server__LFS_JWT_SECRET: "$LFS_JWT_SECRET"
-      FORGEJO__server__LFS_MAX_FILE_SIZE: __MAX_UPLOAD_SIZE_BYTES__
+      - FORGEJO__server__DOMAIN=$DOMAIN
+      - FORGEJO__server__ROOT_URL=https://$DOMAIN
+      - FORGEJO__server__HTTP_PORT=3000
+      - FORGEJO__server__LFS_START_SERVER=true
+      - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
+      - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
+      - FORGEJO__server__LFS_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
     volumes:
       - ./data:/data
       - ./config:/etc/gitea
       - ./ssl:/ssl
     ports:
-      - "__PORT__:3000"
+      - "$PORT:3000"
       - "222:22"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 15s
       timeout: 10s
       retries: 40
-DOCKER_EOF
+EOF
 
     # ========== FIREWALL CONFIGURATION ==========
     echo "[8/15] Configuring firewall..."
@@ -385,27 +386,27 @@ NGINX_EOF
     notify_webhook "provisioning" "provisioning" "Forgejo provisioning completed successfully"
 
     cat <<EOF_FINAL
-    =============================================
-    ✅ Forgejo Setup Complete!
-    ---------------------------------------------
-    🔗 Access URL: https://__DOMAIN__
-    👤 Admin email: __ADMIN_EMAIL__
-    🔒 Default password: __ADMIN_PASSWORD__
-    ---------------------------------------------
-    ⚙️ Useful commands:
-    - Check status: cd $FORGEJO_DIR && docker compose ps
-    - View logs: cd $FORGEJO_DIR && docker compose logs -f
-    - Restart: cd $FORGEJO_DIR && docker compose restart
-    - Update: cd $FORGEJO_DIR && docker compose pull && docker compose up -d
-    ---------------------------------------------
-    📝 Post-installation steps:
-    1. Visit https://__DOMAIN__ to complete setup
-    2. Change the default admin password immediately
-    3. Configure your repository settings
-    4. Set up backup procedures
-    ---------------------------------------------
-    Enjoy your new Forgejo instance!
-    =============================================
+=============================================
+✅ Forgejo Setup Complete!
+---------------------------------------------
+🔗 Access URL: https://__DOMAIN__
+👤 Admin email: __ADMIN_EMAIL__
+🔒 Default password: __ADMIN_PASSWORD__
+---------------------------------------------
+⚙️ Useful commands:
+- Check status: cd $FORGEJO_DIR && docker compose ps
+- View logs: cd $FORGEJO_DIR && docker compose logs -f
+- Restart: cd $FORGEJO_DIR && docker compose restart
+- Update: cd $FORGEJO_DIR && docker compose pull && docker compose up -d
+---------------------------------------------
+📝 Post-installation steps:
+1. Visit https://__DOMAIN__ to complete setup
+2. Change the default admin password immediately
+3. Configure your repository settings
+4. Set up backup procedures
+---------------------------------------------
+Enjoy your new Forgejo instance!
+=============================================
 EOF_FINAL
     """)
 
