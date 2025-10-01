@@ -31,32 +31,36 @@ def generate_setup(
 
     # Extensions array
     extensions = [
-        "ms-azuretools.vscode-azureterraform",
         "ms-azuretools.vscode-azureappservice",
         "ms-azuretools.vscode-azurefunctions",
-        "ms-azuretools.vscode-azurestaticwebapps",
-        "ms-azuretools.vscode-azurestorage",
-        "ms-azuretools.vscode-cosmosdb",
+        "ms-azuretools.vscode-azureresourcegroups",
         "ms-azuretools.vscode-docker",
+        "ms-azuretools.vscode-containers",
+        "ms-azuretools.vscode-azurestaticwebapps",
+        "ms-azuretools.vscode-azurite",
+        "ms-azuretools.vscode-cosmosdb",
         "ms-kubernetes-tools.vscode-kubernetes-tools",
-        "netlify.netlify-vscode",
+        "hashicorp.terraform",
+        "azurerm-tools.azurerm-vscode-tools",
+        "ms-python.python",
+        "ms-python.debugpy",
+        "ms-toolsai.jupyter",
+        "ms-toolsai.jupyter-keymap",
+        "ms-toolsai.vscode-jupyter-cell-tags",
+        "ms-toolsai.vscode-jupyter-slideshow",
+        "ms-toolsai.jupyter-renderers",
+        "ms-vscode.powershell",
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
         "eamodio.gitlens",
-        "ms-vscode-remote.remote-containers",
-        "ms-vscode-remote.remote-ssh",
-        "ms-vscode.powershell",
-        "ms-python.python",
-        "ms-toolsai.jupyter",
-        "hashicorp.terraform",
         "redhat.vscode-yaml",
-        "GitHub.copilot",
-        "donjayamanne.githistory",
+        "ritwickdey.liveserver",
+        "formulahendry.code-runner",
         "humao.rest-client",
         "streetsidesoftware.code-spell-checker",
-        "WallabyJs.quokka-vscode",
-        "ritwickdey.LiveServer",
-        "formulahendry.code-runner"
+        "wallabyjs.quokka-vscode",
+        "donjayamanne.githistory",
+        "github.copilot"
     ]
 
     ext_block = "\n".join([f'    "{ext}"' for ext in extensions])
@@ -305,6 +309,8 @@ bind-addr: 127.0.0.1:__PORT__
 auth: password
 password: __ADMIN_PASSWORD__
 cert: false
+marketplaceURL: "https://marketplace.visualstudio.com/_apis/public/gallery"
+marketplaceAssetUrl: "https://marketplace.visualstudio.com/_apis/public/gallery"
 EOF
                                       
     chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
