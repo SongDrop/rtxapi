@@ -320,9 +320,7 @@ EOF
     chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
     chmod 600 "$CONFIG_DIR/config.yaml"
 
-    # -------------------------------
-    # 14️⃣ Create systemd service
-    # -------------------------------
+
     echo "[14/20] Creating systemd service..."
     notify_webhook "provisioning" "systemd" "Creating systemd unit"
 
@@ -349,9 +347,6 @@ EOF
     systemctl daemon-reload
     systemctl enable code-server.service
 
-    # -------------------------------
-    # 15️⃣ Start code-server
-    # -------------------------------
     echo "[15/20] Starting code-server service..."
     notify_webhook "provisioning" "service_start" "Starting code-server service"
 
