@@ -394,33 +394,71 @@ EOF
     extensions=(
         __EXTENSIONS__
     )
-                                      
-    for ext in "${extensions[@]}"; do
-        echo "Installing extension: $ext"
+
+    install_extension() {
+        local ext="$1"
+        local success=false
+
+        echo "📦 Installing $ext ..."
         notify_webhook "provisioning" "extension_install" "Installing $ext"
-        SUCCESS=false
-        for i in {1..3}; do
-            # Run as the service user with proper environment
+
+        # Skip if already installed
+        if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
+            --list-extensions | grep -q "^$ext$"; then
+            echo "✅ $ext already installed, skipping"
+            notify_webhook "provisioning" "extension_skip" "$ext already installed"
+            return 0
+        fi
+
+        for attempt in {1..3}; do
+            # Try Open VSX
             if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
                 --install-extension "$ext" \
                 --extensions-dir="$EXT_DIR" \
-                --user-data-dir="$DATA_DIR" \
-                --force; then
-                SUCCESS=true
-                echo "✅ Installed $ext"
-                notify_webhook "provisioning" "extension_installed" "$ext installed"
+                --user-data-dir="$DATA_DIR" --force; then
+                echo "✅ Installed $ext (Open VSX)"
+                notify_webhook "provisioning" "extension_installed" "$ext installed via Open VSX"
+                success=true
+                break
+            fi
+
+            echo "⚠️ $ext not on Open VSX, trying Microsoft Marketplace (attempt $attempt)..."
+            notify_webhook "provisioning" "extension_fallback" "Trying Marketplace for $ext"
+
+            url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$(echo "$ext" | cut -d. -f1)/vsextensions/$(echo "$ext" | cut -d. -f2)/latest/vspackage"
+            tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
+            curl -sSL -o "$tmpfile" "$url"
+
+            if [ -s "$tmpfile" ]; then
+                mkdir -p "$EXT_DIR"
+                bsdtar -xvf "$tmpfile" -C "$EXT_DIR"
+                mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
+                chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
+                echo "✅ Installed $ext (Marketplace fallback)"
+                notify_webhook "provisioning" "extension_installed" "$ext installed via Marketplace"
+                success=true
+                rm -f "$tmpfile"
                 break
             else
-                echo "Retry $i for $ext failed, waiting 10s..."
-                notify_webhook "provisioning" "extension_retry" "Retry $i for $ext failed"
-                sleep 10
+                echo "❌ Failed to fetch $ext from Marketplace (attempt $attempt)"
+                notify_webhook "warning" "extension_fallback_failed" "Marketplace fetch failed for $ext"
+                rm -f "$tmpfile"
             fi
+
+            sleep 10
         done
-        if [ "$SUCCESS" = false ]; then
-            echo "⚠️ Failed to install $ext after 3 attempts"
+
+        if [ "$success" = false ]; then
+            echo "❌ Failed to install $ext after 3 attempts"
             notify_webhook "warning" "extensions" "Failed to install $ext"
+            return 1
         fi
+    }
+
+    for ext in "${extensions[@]}"; do
+        install_extension "$ext" || true
     done
+
 
     # Create 'code' CLI symlink
     echo "[17/20] Ensuring 'code' symlink"
@@ -568,27 +606,26 @@ EOF
     fi
                                       
     cat <<EOF_FINAL
-    =============================================
-    ✅ Code Server Setup Complete!
-    ---------------------------------------------
-    🔗 Access URL     : https://{DOMAIN_NAME}
-    👤 Admin password : {ADMIN_PASSWORD}
-    ---------------------------------------------
-    ⚙️ Useful commands
-    - Check status: systemctl status code-server@{SERVICE_USER}
-    - View logs   : journalctl -u code-server@{SERVICE_USER} -f
-    - Restart     : systemctl restart code-server@{SERVICE_USER}
-    - Nginx status: systemctl status nginx
-    ---------------------------------------------
-    ⚠️ Post-install notes
-    1️⃣  First visit https://{DOMAIN_NAME} to access your code server
-    2️⃣  To renew SSL certificates: certbot renew --quiet
-    3️⃣  Extensions installed in: {VOLUME_DIR}/data/extensions
-    ---------------------------------------------
-    Enjoy your new code server!
-    =============================================
-    EOF_FINAL
-    """)
+=============================================
+✅ Code Server Setup Complete!
+---------------------------------------------
+🔗 Access URL     : https://__DOMAIN__
+👤 Admin password : __ADMIN_PASSWORD__
+---------------------------------------------
+⚙️ Useful commands
+- Check status: systemctl status code-server@__SERVICE_USER__
+- View logs   : journalctl -u code-server@__SERVICE_USER__ -f
+- Restart     : systemctl restart code-server@__SERVICE_USER__
+- Nginx status: systemctl status nginx
+---------------------------------------------
+⚠️ Post-install notes
+1️⃣  First visit https://__DOMAIN__ to access your code server
+2️⃣  To renew SSL certificates: certbot renew --quiet
+3️⃣  Extensions installed in: __VOLUME_DIR__/data/extensions
+---------------------------------------------
+Enjoy your new code server!
+=============================================
+EOF_FINAL
 
     # Build webhook function snippet (inlined) or a stub
     if tokens["__WEBHOOK_URL__"]:
