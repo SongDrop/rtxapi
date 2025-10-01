@@ -410,8 +410,33 @@ EOF
             return 0
         fi
 
+        # Skip Open VSX for Microsoft extensions
+        if [[ "$ext" == ms-* || "$ext" == hashicorp.* ]]; then
+            echo "⚡ Skipping Open VSX, using Marketplace directly for $ext"
+            notify_webhook "provisioning" "extension_fallback" "Skipping Open VSX for $ext"
+            attempt=1
+            url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$(echo "$ext" | cut -d. -f1)/vsextensions/$(echo "$ext" | cut -d. -f2)/latest/vspackage"
+            tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
+            curl -sSL -o "$tmpfile" "$url"
+            if [ -s "$tmpfile" ]; then
+                mkdir -p "$EXT_DIR"
+                bsdtar -xvf "$tmpfile" -C "$EXT_DIR"
+                mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
+                chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
+                echo "✅ Installed $ext (Marketplace)"
+                notify_webhook "provisioning" "extension_installed" "$ext installed via Marketplace"
+                rm -f "$tmpfile"
+                return 0
+            else
+                echo "❌ Failed Marketplace install for $ext"
+                notify_webhook "warning" "extension_fallback_failed" "$ext Marketplace fetch failed"
+                rm -f "$tmpfile"
+                return 1
+            fi
+        fi
+
+        # Original Open VSX + fallback loop for other extensions
         for attempt in {1..3}; do
-            # Try Open VSX
             if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
                 --install-extension "$ext" \
                 --extensions-dir="$EXT_DIR" \
@@ -422,29 +447,8 @@ EOF
                 break
             fi
 
-            echo "⚠️ $ext not on Open VSX, trying Microsoft Marketplace (attempt $attempt)..."
+            echo "⚠️ $ext not on Open VSX, trying Marketplace (attempt $attempt)..."
             notify_webhook "provisioning" "extension_fallback" "Trying Marketplace for $ext"
-
-            url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$(echo "$ext" | cut -d. -f1)/vsextensions/$(echo "$ext" | cut -d. -f2)/latest/vspackage"
-            tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
-            curl -sSL -o "$tmpfile" "$url"
-
-            if [ -s "$tmpfile" ]; then
-                mkdir -p "$EXT_DIR"
-                bsdtar -xvf "$tmpfile" -C "$EXT_DIR"
-                mv "$EXT_DIR/extension" "$EXT_DIR/$ext"
-                chown -R "$SERVICE_USER:$SERVICE_USER" "$EXT_DIR/$ext"
-                echo "✅ Installed $ext (Marketplace fallback)"
-                notify_webhook "provisioning" "extension_installed" "$ext installed via Marketplace"
-                success=true
-                rm -f "$tmpfile"
-                break
-            else
-                echo "❌ Failed to fetch $ext from Marketplace (attempt $attempt)"
-                notify_webhook "warning" "extension_fallback_failed" "Marketplace fetch failed for $ext"
-                rm -f "$tmpfile"
-            fi
-
             sleep 10
         done
 
@@ -454,6 +458,7 @@ EOF
             return 1
         fi
     }
+
 
     for ext in "${extensions[@]}"; do
         install_extension "$ext" || true
@@ -490,17 +495,17 @@ EOF
 
     # Temporary HTTP-only config for certbot validation                      
     cat > /etc/nginx/sites-available/code-server <<'NGINX_EOF'
-    server {
-        listen 80;
-        server_name __DOMAIN__;
-        root /var/www/html;
-        
-        location / {
-            return 200 'Certbot validation ready';
-            add_header Content-Type text/plain;
-        }
+server {
+    listen 80;
+    server_name __DOMAIN__;
+    root /var/www/html;
+    
+    location / {
+        return 200 'Certbot validation ready';
+        add_header Content-Type text/plain;
     }
-    NGINX_EOF
+}
+NGINX_EOF
 
     ln -sf /etc/nginx/sites-available/code-server /etc/nginx/sites-enabled/code-server
     nginx -t && systemctl restart nginx
@@ -538,39 +543,39 @@ EOF
 
     # Replace nginx config with HTTPS proxy version (FIXED CONFIG)
     cat > /etc/nginx/sites-available/code-server <<'NGINX_EOF'
-    server {
-        listen 80;
-        server_name __DOMAIN__;
-        return 301 https://\$host/\$request_uri;
+server {
+    listen 80;
+    server_name __DOMAIN__;
+    return 301 https://\$host/\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name __DOMAIN__;
+
+    ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+
+    # SSL configuration
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        proxy_pass http://localhost:__PORT__;
+        proxy_set_header Host \$host;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Accept-Encoding gzip;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 3600s;
+        # WebSocket support
+        proxy_set_header Connection "Upgrade";
+        proxy_read_timeout 86400;
     }
-
-    server {
-        listen 443 ssl;
-        server_name __DOMAIN__;
-
-        ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
-
-        # SSL configuration
-        include /etc/letsencrypt/options-ssl-nginx.conf;
-        ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
-
-        location / {
-            proxy_pass http://localhost:__PORT__;
-            proxy_set_header Host \$host;
-            proxy_set_header Upgrade \$http_upgrade;
-            proxy_set_header Connection "upgrade";
-            proxy_set_header Accept-Encoding gzip;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
-            proxy_read_timeout 3600s;
-            # WebSocket support
-            proxy_set_header Connection "Upgrade";
-            proxy_read_timeout 86400;
-        }
-    }
-    NGINX_EOF
+}
+NGINX_EOF
                                       
     # Setup cron for renewal (runs daily and reloads nginx on change)
     ( crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "__CERTBOT_CRON__" ) | crontab - || true

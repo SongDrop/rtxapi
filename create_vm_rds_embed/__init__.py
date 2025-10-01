@@ -1172,7 +1172,7 @@ async def provision_vm_background(
                     "step": "completed",
                     "message": "VM provisioning successful",
                     "public_ip": public_ip,
-                    "url": fqdn,
+                    "url": f"https://{fqdn}",
                     "timestamp": datetime.utcnow().isoformat()
                 }
             }
