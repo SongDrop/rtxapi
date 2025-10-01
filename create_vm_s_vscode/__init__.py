@@ -95,7 +95,14 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         OS_DISK_SSD_GB = int(req_body.get('os_disk_ssd_gb') or req.params.get('os_disk_ssd_gb') or 256)
         RECIPIENT_EMAILS = req_body.get('recipient_emails') or req.params.get('recipient_emails')
         hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
+        app_password = req_body.get('app_password') or req.params.get('app_password') or "MyPass1234!"
         
+        if not app_password:
+            return func.HttpResponse(
+                json.dumps({"error": "Missing 'app_password' parameter"}),
+                status_code=400,
+                mimetype="application/json"
+            )
         ###Parameter checking to handle errors 
         if not vm_name:
             return func.HttpResponse(
@@ -169,7 +176,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # App constants
         ADMIN_EMAIL = f"admin@{domain}"
-        ADMIN_PASSWORD = "MyPass1234!"
+        ADMIN_PASSWORD = app_password
         FRONTEND_PORT = 3000
         BACKEND_PORT = 8000
         storage_account_base = vm_name
@@ -1119,14 +1126,15 @@ async def provision_vm_background(
             recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
             
             html_content = html_email.HTMLEmail(
-                logo_url="https://i.postimg.cc/tRcrVg8f/vscode.png",
+                logo_url="https://i.postimg.cc/0rgRh7WW/vscode.png",
                 ip_address=public_ip,
                 created_at=datetime.utcnow().isoformat(),
                 link1=f"https://{fqdn}",
                 link2=f"https://{fqdn}/admin",
                 link3=f"https://{fqdn}/status",
                 new_vm_url=f"https://rtxdevstation.xyz/requestvm",
-                dash_url="https://rtxdevstation.xyz"
+                dash_url="https://rtxdevstation.xyz",
+                password=ADMIN_PASSWORD
             )
 
             await html_email_send.send_html_email_smtp(

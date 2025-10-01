@@ -1,4 +1,4 @@
-def HTMLEmail(logo_url:str, ip_address: str, created_at: str, link1: str, link2: str, link3: str, new_vm_url, dash_url) -> str:
+def HTMLEmail(logo_url:str, ip_address: str, created_at: str, link1: str, link2: str, link3: str, new_vm_url: str, dash_url: str, password: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 
@@ -258,6 +258,11 @@ def HTMLEmail(logo_url:str, ip_address: str, created_at: str, link1: str, link2:
                 <div class="detail-row">
                     <span class="detail-label">Creation Time:</span>
                     <span class="detail-value" id="creation-time"> {created_at}</span>
+                </div>
+
+                 <div class="detail-row">
+                    <span class="detail-label">Password:</span>
+                    <span class="detail-value" id="vm-password">{password}</span>
                 </div>
             </div>
 
