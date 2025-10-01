@@ -91,14 +91,27 @@ def generate_setup(
     notify_webhook "provisioning" "system_dependencies" "Installing base packages"
 
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q
-    apt-get upgrade -y -q
-    apt-get install -y -q \
-        curl git git-lfs nginx certbot python3-pip python3-venv jq \
-        make net-tools python3-certbot-nginx openssl ufw
 
-    # Initialize git LFS
-    git lfs install
+    notify_webhook "provisioning" "apt_update" "Running apt-get update"
+    apt-get update -q || { notify_webhook "failed" "apt_update" "apt-get update failed"; exit 1; }
+
+    notify_webhook "provisioning" "apt_upgrade" "Running apt-get upgrade"
+    apt-get upgrade -y -q || { notify_webhook "failed" "apt_upgrade" "apt-get upgrade failed"; exit 1; }
+
+    notify_webhook "provisioning" "apt_install" "Installing required packages"
+    apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq \
+        make net-tools python3-certbot-nginx openssl ufw || { notify_webhook "failed" "apt_install" "apt-get install failed"; exit 1; }
+
+    # Install git-lfs separately with retry if needed
+    notify_webhook "provisioning" "git_lfs_install" "Installing git-lfs"
+    if ! command -v git-lfs >/dev/null 2>&1; then
+        curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash
+        apt-get update -q
+        apt-get install -y git-lfs || { notify_webhook "failed" "git_lfs_install" "git-lfs install failed"; exit 1; }
+    fi
+
+    git lfs install || { notify_webhook "failed" "git_lfs_init" "git lfs initialization failed"; exit 1; }
+
 
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."

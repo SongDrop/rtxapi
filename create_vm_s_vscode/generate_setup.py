@@ -309,8 +309,6 @@ bind-addr: 127.0.0.1:__PORT__
 auth: password
 password: __ADMIN_PASSWORD__
 cert: false
-marketplaceURL: "https://marketplace.visualstudio.com/_apis/public/gallery"
-marketplaceAssetUrl: "https://marketplace.visualstudio.com/_apis/public/gallery"
 EOF
                                       
     chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
