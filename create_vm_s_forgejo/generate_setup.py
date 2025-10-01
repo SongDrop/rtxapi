@@ -12,8 +12,7 @@ def generate_setup(
     resource_group=""
 ):
     """
-    Returns a full bash provisioning script for Forgejo using template method.
-    Usage: script = generate_setup("example.com", "admin@example.com", "P@ssw0rd", "8080", ...)
+    Returns a full bash provisioning script for Forgejo with enhanced error handling.
     """
     # ========== TOKEN DEFINITIONS ==========
     tokens = {
@@ -30,7 +29,7 @@ def generate_setup(
         "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
         "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
         "__MAX_UPLOAD_SIZE_MB__": "1024",
-        "__MAX_UPLOAD_SIZE_BYTES__": str(1024 * 1024 * 1024),  # 1GB in bytes
+        "__MAX_UPLOAD_SIZE_BYTES__": str(1024 * 1024 * 1024),
     }
 
     # ========== BASE TEMPLATE ==========
@@ -91,14 +90,69 @@ def generate_setup(
     notify_webhook "provisioning" "system_dependencies" "Installing base packages"
 
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q
-    apt-get upgrade -y -q
-    apt-get install -y -q \
-        curl git git-lfs nginx certbot python3-pip python3-venv jq \
-        make net-tools python3-certbot-nginx openssl ufw
+    
+    # Update package lists with retry logic
+    echo "Updating package lists..."
+    for i in {1..3}; do
+        if apt-get update -q; then
+            break
+        fi
+        echo "Package update attempt $i failed, retrying in 5 seconds..."
+        sleep 5
+    done
+
+    # Upgrade system with error handling
+    echo "Upgrading system packages..."
+    if ! apt-get upgrade -y -q; then
+        echo "WARNING: System upgrade had issues, continuing anyway..."
+        notify_webhook "warning" "upgrade_issues" "System upgrade encountered issues"
+    fi
+
+    # Install packages with individual error handling
+    echo "Installing required packages..."
+    PACKAGES=(
+        curl git nginx certbot python3-pip python3-venv jq
+        make net-tools openssl ufw
+    )
+
+    for package in "${PACKAGES[@]}"; do
+        echo "Installing $package..."
+        if ! apt-get install -y -q "$package"; then
+            echo "WARNING: Failed to install $package, attempting to continue..."
+            notify_webhook "warning" "package_install" "Failed to install $package"
+        fi
+    done
+
+    # Install git-lfs separately with better error handling
+    echo "Installing git-lfs..."
+    if ! apt-get install -y -q git-lfs; then
+        echo "WARNING: git-lfs not available in main repos, trying alternative..."
+        # Try alternative installation method for git-lfs
+        curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash
+        apt-get install -y -q git-lfs || {
+            echo "ERROR: Failed to install git-lfs"
+            notify_webhook "failed" "git_lfs_install" "Failed to install git-lfs"
+            exit 1
+        }
+    fi
+
+    # Install python3-certbot-nginx separately
+    echo "Installing python3-certbot-nginx..."
+    if ! apt-get install -y -q python3-certbot-nginx; then
+        echo "WARNING: python3-certbot-nginx installation failed, certbot may not work with nginx"
+        notify_webhook "warning" "certbot_nginx" "Failed to install python3-certbot-nginx"
+    fi
 
     # Initialize git LFS
-    git lfs install
+    if command -v git-lfs >/dev/null 2>&1; then
+        git lfs install
+    else
+        echo "WARNING: git-lfs not available, LFS support disabled"
+        notify_webhook "warning" "git_lfs_missing" "git-lfs not available"
+    fi
+
+    echo "✅ System dependencies installed successfully"
+    notify_webhook "provisioning" "dependencies_ready" "System dependencies installed"
 
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
@@ -107,31 +161,62 @@ def generate_setup(
     # Clean up any existing Docker installations
     apt-get remove -y docker docker-engine docker.io containerd runc || true
 
-    # Add Docker's official GPG key
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    # Add Docker's official GPG key with retry logic
+    echo "Adding Docker GPG key..."
+    for i in {1..3}; do
+        if curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
+            break
+        fi
+        echo "Docker GPG key download attempt $i failed, retrying in 5 seconds..."
+        sleep 5
+    done
+
+    chmod a+r /etc/apt/keyrings/docker.gpg
 
     # Add Docker repository
     ARCH=$(dpkg --print-architecture)
     CODENAME=$(lsb_release -cs)
     echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list
 
+    # Update with Docker repository
     apt-get update -q
-    apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+    # Install Docker packages
+    DOCKER_PACKAGES=(
+        docker-ce
+        docker-ce-cli 
+        containerd.io
+        docker-buildx-plugin
+        docker-compose-plugin
+    )
+
+    for package in "${DOCKER_PACKAGES[@]}"; do
+        echo "Installing $package..."
+        if ! apt-get install -y -q "$package"; then
+            echo "ERROR: Failed to install Docker package: $package"
+            notify_webhook "failed" "docker_install" "Failed to install $package"
+            exit 1
+        fi
+    done
 
     # Add current user to docker group
     CURRENT_USER=$(whoami)
     if [ "$CURRENT_USER" != "root" ]; then
-        usermod -aG docker "$CURRENT_USER" || true
+        usermod -aG docker "$CURRENT_USER" || echo "WARNING: Could not add user to docker group"
     fi
 
     # Start and enable Docker
     systemctl enable docker
-    systemctl start docker
+    if ! systemctl start docker; then
+        echo "ERROR: Failed to start Docker service"
+        notify_webhook "failed" "docker_start" "Failed to start Docker service"
+        exit 1
+    fi
 
     # Wait for Docker to be ready
     echo "[5/15] Waiting for Docker to start..."
     notify_webhook "provisioning" "docker_wait" "Waiting for Docker daemon"
+    
     timeout=180
     while [ $timeout -gt 0 ]; do
         if docker info >/dev/null 2>&1; then
@@ -199,15 +284,22 @@ EOF
     echo "[8/15] Configuring firewall..."
     notify_webhook "provisioning" "firewall" "Setting up UFW firewall"
 
-    if ! ufw status | grep -q inactive; then
-        echo "UFW already active; adding rules"
+    # Check if UFW is already active
+    if ufw status | grep -q "Status: active"; then
+        echo "UFW already active, adding rules..."
+    else
+        echo "Enabling UFW..."
     fi
 
-    ufw allow 22/tcp 
-    ufw allow 80/tcp 
-    ufw allow 443/tcp
-    ufw allow "$PORT"/tcp
-    ufw --force enable
+    ufw allow 22/tcp comment "SSH" || echo "WARNING: Could not add SSH rule"
+    ufw allow 80/tcp comment "HTTP" || echo "WARNING: Could not add HTTP rule"
+    ufw allow 443/tcp comment "HTTPS" || echo "WARNING: Could not add HTTPS rule"
+    ufw allow "$PORT"/tcp comment "Forgejo" || echo "WARNING: Could not add Forgejo port rule"
+    
+    if ! ufw --force enable; then
+        echo "WARNING: Failed to enable UFW, continuing without firewall..."
+        notify_webhook "warning" "firewall_failed" "Failed to enable UFW firewall"
+    fi
 
     # ========== SSL CERTIFICATE SETUP ==========
     echo "[9/15] Setting up SSL certificates..."
@@ -215,8 +307,8 @@ EOF
 
     # Download recommended SSL configuration
     mkdir -p /etc/letsencrypt                      
-    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf || true
-    curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem || true
+    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf || echo "WARNING: Failed to download SSL options"
+    curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem || echo "WARNING: Failed to download SSL dhparams"
 
     # Certificate issuance function
     issue_certificate() {
@@ -234,11 +326,21 @@ EOF
             echo "Using standalone method for certificate validation"
             systemctl stop nginx || true
             # Try production first, then staging as fallback
-            certbot certonly --standalone --preferred-challenges http \
-                --agree-tos --email "$ADMIN_EMAIL" -d "$DOMAIN" --non-interactive || \
-            certbot certonly --standalone --preferred-challenges http \
-                --staging --agree-tos --email "$ADMIN_EMAIL" -d "$DOMAIN" --non-interactive || return 1
-            systemctl start nginx || true
+            if certbot certonly --standalone --preferred-challenges http \
+                --agree-tos --email "$ADMIN_EMAIL" -d "$DOMAIN" --non-interactive; then
+                systemctl start nginx || true
+                return 0
+            else
+                echo "Production cert failed, trying staging..."
+                if certbot certonly --standalone --preferred-challenges http \
+                    --staging --agree-tos --email "$ADMIN_EMAIL" -d "$DOMAIN" --non-interactive; then
+                    systemctl start nginx || true
+                    return 0
+                else
+                    systemctl start nginx || true
+                    return 1
+                fi
+            fi
         fi
         return 0
     }
@@ -270,9 +372,9 @@ EOF
     notify_webhook "provisioning" "nginx_setup" "Setting up nginx reverse proxy"
 
     # Remove default nginx configurations
-    rm -f /etc/nginx/sites-enabled/default
-    rm -f /etc/nginx/sites-available/default
-    rm -f /etc/nginx/conf.d/*.conf
+    rm -f /etc/nginx/sites-enabled/default || true
+    rm -f /etc/nginx/sites-available/default || true
+    rm -f /etc/nginx/conf.d/*.conf || true
 
     # Create Forgejo nginx configuration
     cat > /etc/nginx/sites-available/forgejo <<'NGINX_EOF'
@@ -317,8 +419,23 @@ server {
 NGINX_EOF
 
     # Enable site and test configuration
-    ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
-    nginx -t && systemctl restart nginx
+    ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/ || {
+        echo "ERROR: Failed to enable nginx site"
+        notify_webhook "failed" "nginx_enable" "Failed to enable nginx site"
+        exit 1
+    }
+
+    if ! nginx -t; then
+        echo "ERROR: nginx configuration test failed"
+        notify_webhook "failed" "nginx_test" "nginx configuration test failed"
+        exit 1
+    fi
+
+    if ! systemctl restart nginx; then
+        echo "ERROR: Failed to restart nginx"
+        notify_webhook "failed" "nginx_restart" "Failed to restart nginx"
+        exit 1
+    fi
 
     # ========== FORGEJO CONTAINER STARTUP ==========
     echo "[11/15] Starting Forgejo container..."
@@ -331,13 +448,17 @@ NGINX_EOF
     }
 
     # Pull latest Forgejo image
-    docker compose pull || {
+    if ! docker compose pull; then
         echo "WARNING: Failed to pull latest image, using local if available"
         notify_webhook "warning" "image_pull" "Failed to pull latest Forgejo image"
-    }
+    fi
 
     # Start services
-    docker compose up -d
+    if ! docker compose up -d; then
+        echo "ERROR: Failed to start Forgejo container"
+        notify_webhook "failed" "container_start" "Failed to start Forgejo container"
+        exit 1
+    fi
 
     # ========== CONTAINER HEALTH CHECK ==========
     echo "[12/15] Waiting for Forgejo to become healthy..."
@@ -365,7 +486,7 @@ NGINX_EOF
     echo "[13/15] Finalizing nginx configuration..."
     notify_webhook "provisioning" "nginx_final" "Restarting nginx with final config"
 
-    nginx -t && systemctl restart nginx
+    nginx -t && systemctl restart nginx || echo "WARNING: nginx restart failed"
 
     # ========== FINAL CHECKS ==========
     echo "[14/15] Performing final verification..."
@@ -383,7 +504,7 @@ NGINX_EOF
 
     # ========== COMPLETION MESSAGE ==========
     echo "[15/15] Forgejo setup complete!"
-    notify_webhook "provisioning" "provisioning" "Forgejo provisioning completed successfully"
+    notify_webhook "success" "complete" "Forgejo provisioning completed successfully"
 
     cat <<EOF_FINAL
 =============================================
@@ -472,5 +593,3 @@ EOF_FINAL
     final_script = final_script.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
 
     return final_script
-
- 

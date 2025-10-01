@@ -255,19 +255,15 @@ def generate_setup(
     echo "[12/20] Installing code-server..."
     notify_webhook "provisioning" "code_server" "Installing code-server"
 
-    # Run official installer (save for debugging)
+    # Run official installer
     curl -fsSL https://code-server.dev/install.sh -o /tmp/install-code-server.sh
     chmod +x /tmp/install-code-server.sh
     if ! bash /tmp/install-code-server.sh; then
-        echo "ERROR: code-server installer failed"
-        notify_webhook "failed" "code_server" "Installer failed"
-        exit 1
+        echo "⚠️ code-server installer failed, continuing for debugging"
+        notify_webhook "warning" "code_server" "Installer failed, continuing"
     fi
 
-    # Verify installation
-    echo "[12.1/20] Verifying code-server binary..."
-    notify_webhook "provisioning" "code_server" "Verifying installation"
-
+    # Detect code-server binary
     CODE_BIN=$(command -v code-server || true)
     if [ -z "$CODE_BIN" ]; then
         for path in /usr/local/bin/code-server /usr/bin/code-server /opt/code-server/bin/code-server /home/$SERVICE_USER/.local/bin/code-server; do
@@ -281,13 +277,13 @@ def generate_setup(
     fi
 
     if [ -z "$CODE_BIN" ]; then
-        echo "ERROR: code-server binary not found after install"
+        echo "❌ code-server binary not found! Check installer logs"
         notify_webhook "failed" "code_server" "Binary not found after install"
         exit 1
     fi
 
     if ! "$CODE_BIN" --version >/dev/null 2>&1; then
-        echo "ERROR: code-server binary is invalid"
+        echo "❌ code-server binary invalid"
         notify_webhook "failed" "code_server" "Binary check failed"
         exit 1
     fi
@@ -295,36 +291,30 @@ def generate_setup(
     echo "✅ code-server installed at $CODE_BIN"
     notify_webhook "provisioning" "code_server" "Verified binary at $CODE_BIN"
 
-    echo "[13/20] Setting up directories..."
-    notify_webhook "provisioning" "config_dirs" "Preparing directories"
-
+    # Setup directories
     CONFIG_DIR="/home/$SERVICE_USER/.config/code-server"
     DATA_DIR="/home/$SERVICE_USER/.local/share/code-server"
     EXT_DIR="$DATA_DIR/extensions"
-
     mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
     chown -R "$SERVICE_USER:$SERVICE_USER" "/home/$SERVICE_USER/.config" "/home/$SERVICE_USER/.local"
     chmod 700 "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
 
-    echo "[13.1/20] Writing config.yaml..."
-    notify_webhook "provisioning" "config_write" "Writing config.yaml"
-
+    # Write config.yaml
     cat > "$CONFIG_DIR/config.yaml" << EOF
 bind-addr: 127.0.0.1:__PORT__
 auth: password
 password: __ADMIN_PASSWORD__
 cert: false
 EOF
-
+                                      
     chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
     chmod 600 "$CONFIG_DIR/config.yaml"
 
     # Ensure stable path for code-server binary
-    if [ ! -x /usr/local/bin/code-server ]; then
-        ln -sf "$CODE_BIN" /usr/local/bin/code-server
-    fi
+    ln -sf "$CODE_BIN" /usr/local/bin/code-server
     CODE_BIN="/usr/local/bin/code-server"
 
+    # Create systemd service
     echo "[14/20] Creating systemd service..."
     notify_webhook "provisioning" "systemd" "Creating systemd unit"
 
@@ -346,17 +336,17 @@ LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
-    EOF
+EOF
 
     systemctl daemon-reload
     systemctl enable code-server.service
 
+    # Start service
     echo "[15/20] Starting code-server service..."
     notify_webhook "provisioning" "service_start" "Starting code-server service"
-
     systemctl restart code-server.service
-    sleep 5
 
+    # Wait for readiness
     READY=false
     for i in {1..12}; do
         if curl -fsS http://127.0.0.1:__PORT__ >/dev/null 2>&1; then
@@ -378,6 +368,7 @@ WantedBy=multi-user.target
     echo "✅ code-server is running"
     notify_webhook "provisioning" "service_start" "✅ code-server is running"
 
+    # Install VSCode extensions
     echo "[16/20] Installing VSCode extensions..."
     notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
 
@@ -399,23 +390,27 @@ WantedBy=multi-user.target
         echo "📦 Installing $ext..."
         notify_webhook "provisioning" "extension_install" "Installing $ext"
 
-        # Skip if already installed
         if is_installed; then
             echo "✅ $ext already installed, skipping"
             notify_webhook "provisioning" "extension_skip" "$ext already installed"
             return 0
         fi
 
-        # Try Open VSX
+        # Try Open VSX (retry)
         while [ $attempt -le $max_attempts ] && [ "$installed" = false ]; do
-            sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
+            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
                 --install-extension "$ext" \
                 --extensions-dir="$EXT_DIR" \
-                --user-data-dir="$DATA_DIR" --force 2>/dev/null && installed=true
-            attempt=$((attempt + 1))
+                --user-data-dir="$DATA_DIR" --force 2>/dev/null; then
+                installed=true
+            else
+                echo "⚠️ Attempt $attempt failed for $ext"
+                attempt=$((attempt + 1))
+                sleep 2
+            fi
         done
 
-        # Marketplace fallback (direct VSIX)
+        # Marketplace fallback
         if [ "$installed" = false ]; then
             local publisher=$(echo "$ext" | cut -d. -f1)
             local extension_name=$(echo "$ext" | cut -d. -f2)
@@ -430,13 +425,13 @@ WantedBy=multi-user.target
             rm -f "$tmpfile"
         fi
 
-        # Verify installation
+        # Verify
         if is_installed; then
             echo "✅ Verified $ext installation"
             notify_webhook "provisioning" "extension_verified" "$ext is installed"
         else
-            echo "❌ Failed to install $ext"
-            notify_webhook "provisioning" "extension_failed" "$ext installation failed"
+            echo "❌ Failed to install $ext, skipping"
+            notify_webhook "warning" "extension_failed" "$ext installation failed"
         fi
     }
 
@@ -448,7 +443,7 @@ WantedBy=multi-user.target
     echo "📂 Installed extensions:"
     sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" --list-extensions
 
-    # Create 'code' CLI symlink
+    # Ensure 'code' CLI symlink
     echo "[17/20] Ensuring 'code' symlink"
     notify_webhook "provisioning" "code_cli" "Configuring 'code' binary"
     if [ ! -L /usr/local/bin/code ] && [ ! -f /usr/local/bin/code ]; then
