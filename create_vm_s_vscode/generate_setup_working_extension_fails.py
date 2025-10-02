@@ -380,15 +380,6 @@ EOF
         __EXTENSIONS__
     )
 
-    # Pre-initialize code-server user profile so installs persist
-    echo "[*] Pre-initializing code-server profile..."
-    sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" \
-        "$CODE_BIN" --list-extensions >/dev/null 2>&1 || true
-
-    # Ensure config dirs exist and are owned by service user
-    mkdir -p "$DATA_DIR/User"
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR" "$EXT_DIR"
-
     install_extension() {
         local ext="$1"
         local max_attempts=2
