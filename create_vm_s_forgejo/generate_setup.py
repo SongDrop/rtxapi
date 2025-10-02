@@ -104,33 +104,31 @@ def generate_setup(
 
     # ========== GIT LFS INSTALLATION ==========
     notify_webhook "provisioning" "git_lfs_install" "Installing git-lfs"
+    sleep 5
 
-    # Install git-lfs if not already installed
     if ! command -v git-lfs >/dev/null 2>&1; then
         notify_webhook "provisioning" "git_lfs_install" "git-lfs not found, installing from packagecloud"
-        
+        sleep 5
         curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash || {
             notify_webhook "failed" "git_lfs_install" "Failed to add git-lfs repository"
             exit 1
         }
-
         apt-get update -q || { 
             notify_webhook "failed" "apt_update" "apt-get update failed during git-lfs install"
             exit 1
         }
-
         apt-get install -y git-lfs || { 
             notify_webhook "failed" "git_lfs_install" "apt-get install git-lfs failed"
             exit 1
         }
-
         notify_webhook "provisioning" "git_lfs_install" "git-lfs installed successfully"
     else
         notify_webhook "provisioning" "git_lfs_install" "git-lfs already installed"
     fi
+    sleep 5
 
-    # Initialize git-lfs globally, fallback to user-level if system-level fails
     notify_webhook "provisioning" "git_lfs_init" "Initializing git-lfs globally"
+    sleep 5
     if ! sudo git lfs install --system; then
         notify_webhook "warning" "git_lfs_init" "System-level git-lfs initialization failed, falling back to user-level"
         git lfs install --skip-repo || {
@@ -139,20 +137,17 @@ def generate_setup(
         }
     fi
     notify_webhook "provisioning" "git_lfs_init" "git-lfs initialized successfully"
-
+    sleep 5
 
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
     notify_webhook "provisioning" "docker_install" "Installing Docker engine"
+    sleep 5
 
-    # Clean up any existing Docker installations
     apt-get remove -y docker docker-engine docker.io containerd runc || true
-
-    # Add Docker's official GPG key
     mkdir -p /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
-    # Add Docker repository
     ARCH=$(dpkg --print-architecture)
     CODENAME=$(lsb_release -cs)
     echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list
@@ -160,19 +155,18 @@ def generate_setup(
     apt-get update -q
     apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-    # Add current user to docker group
     CURRENT_USER=$(whoami)
     if [ "$CURRENT_USER" != "root" ]; then
         usermod -aG docker "$CURRENT_USER" || true
     fi
 
-    # Start and enable Docker
     systemctl enable docker
     systemctl start docker
 
-    # Wait for Docker to be ready
     echo "[5/15] Waiting for Docker to start..."
     notify_webhook "provisioning" "docker_wait" "Waiting for Docker daemon"
+    sleep 5
+
     timeout=180
     while [ $timeout -gt 0 ]; do
         if docker info >/dev/null 2>&1; then
@@ -188,61 +182,67 @@ def generate_setup(
         exit 1
     fi
 
-    echo "✅ Docker installed and running"
     notify_webhook "provisioning" "docker_ready" "Docker installed successfully"
+    sleep 5
 
     # ========== FORGEJO DIRECTORY SETUP ==========
     echo "[6/15] Setting up Forgejo directories..."
     notify_webhook "provisioning" "directory_setup" "Creating Forgejo directory structure"
+    sleep 5
 
     mkdir -p "$FORGEJO_DIR"/{data,config,ssl,data/gitea/lfs} || {
         echo "ERROR: Failed to create Forgejo directories"
         notify_webhook "failed" "directory_creation" "Failed to create Forgejo directories"
         exit 1
     }
-
     chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config "$FORGEJO_DIR"/data/gitea
+    sleep 5
 
     # ========== DOCKER COMPOSE CONFIGURATION ==========
     echo "[7/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose" "Configuring Docker Compose"
+    sleep 5
 
-    cat > "$FORGEJO_DIR/docker-compose.yml" <<'EOF'
+    cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF
 version: "3.8"
 networks:
-  forgejo:
+forgejo:
     external: false
 
 services:
-  server:
+server:
     image: codeberg.org/forgejo/forgejo:13
     container_name: forgejo
     restart: unless-stopped
     environment:
-      - USER_UID=1000
-      - USER_GID=1000
-      - FORGEJO__server__DOMAIN=$DOMAIN
-      - FORGEJO__server__ROOT_URL=https://$DOMAIN
-      - FORGEJO__server__HTTP_PORT=3000
-      - FORGEJO__server__LFS_START_SERVER=true
-      - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
-      - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
-      - FORGEJO__server__LFS_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
+    - USER_UID=1000
+    - USER_GID=1000
+    - FORGEJO__server__DOMAIN=$DOMAIN
+    - FORGEJO__server__ROOT_URL=https://$DOMAIN
+    - FORGEJO__server__HTTP_PORT=3000
+    - FORGEJO__server__LFS_START_SERVER=true
+    - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
+    - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
+    - FORGEJO__server__LFS_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
     volumes:
-      - ./forgejo:/data
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
+    - ./data:/data
+    - /etc/timezone:/etc/timezone:ro
+    - /etc/localtime:/etc/localtime:ro
     ports:
-      - "$PORT:3000"
-      - "222:22"
+    - "$PORT:3000"
+    - "222:22"
     networks:
-      - forgejo
+    - forgejo
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 15s
-      timeout: 10s
-      retries: 40
+    test: ["CMD", "curl", "-f", "http://localhost:3000"]
+    interval: 15s
+    timeout: 10s
+    retries: 40
 EOF
+    sleep 5
+
+    notify_webhook "provisioning" "docker_compose_ready" "Docker Compose configuration created"
+    sleep 5
 
 
     # ========== FIREWALL CONFIGURATION ==========
