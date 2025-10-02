@@ -197,7 +197,7 @@ def generate_setup(
     }
     chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config "$FORGEJO_DIR"/data/gitea
     sleep 5
-
+                                      
     # ========== DOCKER COMPOSE CONFIGURATION ==========
     echo "[7/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose" "Configuring Docker Compose"
@@ -206,41 +206,43 @@ def generate_setup(
     cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF
 version: "3.8"
 networks:
-forgejo:
+  forgejo:
     external: false
 
 services:
-server:
+  server:
     image: codeberg.org/forgejo/forgejo:13
     container_name: forgejo
     restart: unless-stopped
     environment:
-    - USER_UID=1000
-    - USER_GID=1000
-    - FORGEJO__server__DOMAIN=$DOMAIN
-    - FORGEJO__server__ROOT_URL=https://$DOMAIN
-    - FORGEJO__server__HTTP_PORT=3000
-    - FORGEJO__server__LFS_START_SERVER=true
-    - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
-    - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
-    - FORGEJO__server__LFS_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
+      - USER_UID=1000
+      - USER_GID=1000
+      - FORGEJO__server__DOMAIN=$DOMAIN
+      - FORGEJO__server__ROOT_URL=https://$DOMAIN
+      - FORGEJO__server__HTTP_PORT=3000
+      - FORGEJO__server__LFS_START_SERVER=true
+      - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
+      - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
+      - FORGEJO__server__LFS_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
     volumes:
-    - ./data:/data
-    - /etc/timezone:/etc/timezone:ro
-    - /etc/localtime:/etc/localtime:ro
+      - ./data:/data
+      - ./config:/data/config
+      - ./ssl:/data/ssl
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
     ports:
-    - "$PORT:3000"
-    - "222:22"
+      - "$PORT:3000"
+      - "222:22"
     networks:
-    - forgejo
+      - forgejo
     healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:3000"]
-    interval: 15s
-    timeout: 10s
-    retries: 40
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
 EOF
-    sleep 5
 
+    sleep 5
     notify_webhook "provisioning" "docker_compose_ready" "Docker Compose configuration created"
     sleep 5
 
@@ -371,8 +373,9 @@ NGINX_EOF
     nginx -t && systemctl restart nginx
 
     # ========== FORGEJO CONTAINER STARTUP ==========
-    echo "[11/15] Starting Forgejo container..."
+    echo "[8/15] Starting Forgejo container..."
     notify_webhook "provisioning" "forgejo_start" "Starting Forgejo container"
+    sleep 5
 
     cd "$FORGEJO_DIR" || {
         echo "ERROR: Cannot change to Forgejo directory"
@@ -380,24 +383,33 @@ NGINX_EOF
         exit 1
     }
 
-    # Pull latest Forgejo image
-    docker compose pull || {
-        echo "WARNING: Failed to pull latest image, using local if available"
-        notify_webhook "warning" "image_pull" "Failed to pull latest Forgejo image"
-    }
+    # Pull the latest image
+    if ! docker compose pull; then
+        notify_webhook "warning" "image_pull" "Failed to pull latest Forgejo image, using local if available"
+    fi
+    sleep 5
 
-    # Start services
-    docker compose up -d
+    # Start the container
+    if ! docker compose up -d; then
+        notify_webhook "failed" "forgejo_start" "Forgejo container failed to start"
+        docker compose logs --no-color > "$FORGEJO_DIR/forgejo_start.log" || true
+        exit 1
+    else
+        notify_webhook "provisioning" "forgejo_start" "Forgejo container started"
+    fi
+    sleep 5
 
     # ========== CONTAINER HEALTH CHECK ==========
-    echo "[12/15] Waiting for Forgejo to become healthy..."
+    echo "[9/15] Waiting for Forgejo container to become healthy..."
     notify_webhook "provisioning" "health_check" "Checking container health"
+    sleep 5
 
     timeout=180
     while [ $timeout -gt 0 ]; do
         HEALTH=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
         if [ "$HEALTH" = "healthy" ]; then
             echo "✅ Forgejo container is healthy"
+            notify_webhook "provisioning" "health_check" "Forgejo container is healthy"
             break
         fi
         echo "Container status: $HEALTH (waiting...)"
@@ -408,8 +420,9 @@ NGINX_EOF
     if [ $timeout -eq 0 ]; then
         echo "WARNING: Forgejo container did not become healthy within timeout"
         notify_webhook "warning" "health_timeout" "Forgejo health check timeout"
-        # Continue anyway as the container might still be starting
+        docker compose logs --no-color > "$FORGEJO_DIR/forgejo_health_timeout.log" || true
     fi
+    sleep 5
 
     # ========== FINAL NGINX RESTART ==========
     echo "[13/15] Finalizing nginx configuration..."
