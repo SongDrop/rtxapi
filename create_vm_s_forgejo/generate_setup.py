@@ -324,7 +324,7 @@ server {
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    client_max_body_size __MAX_UPLOAD_SIZE_MB__M;
+    client_max_body_size __MAX_UPLOAD_SIZE_MB__;
 
     location / {
         proxy_pass http://127.0.0.1:__PORT__;
@@ -346,13 +346,15 @@ EOF_SSL
     nginx -t && systemctl reload nginx
 
     # Setup cron for renewal
-    echo "[10/15] Setup Certbot renewal cron..."
+    echo "[14/15] Setup Certbot renewal cron..."
     notify_webhook "provisioning" "ssl_cron" "Scheduling daily certificate renewal"
+    
+    # Setup cron for renewal (runs daily and reloads nginx on change)
     (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; \
         echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
 
-    # Final verification
-    echo "[11/15] Final verification..."
+    # ========== FINAL CHECKS ==========
+    echo "[15/15] Final verification..."
     notify_webhook "provisioning" "verification" "Performing verification checks"
 
     if ! nginx -t; then
@@ -371,6 +373,7 @@ EOF_SSL
         fi
     fi
 
+    # Test and apply the new config
     if nginx -t; then
         systemctl reload nginx
         echo "✅ Nginx configuration test passed"
