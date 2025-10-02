@@ -261,22 +261,19 @@ EOF
     ufw allow "$PORT"/tcp
     ufw --force enable
 
-    # ========== NGINX + SSL SETUP (VSCode-style) ==========
-    echo "[9/15] Setting up Nginx reverse proxy with SSL..."
-    notify_webhook "provisioning" "ssl_nginx" "Configuring Nginx with SSL"
+    # ========== NGINX CONFIG + SSL (Forgejo) ==========
+    echo "[9/15] Configuring nginx reverse proxy with SSL..."
+    notify_webhook "provisioning" "ssl_nginx" "Configuring nginx + SSL"
 
-    # Remove any default or old Forgejo config
     rm -f /etc/nginx/sites-enabled/default
     rm -f /etc/nginx/sites-available/forgejo
-    sleep 2
 
-    # Download recommended Let's Encrypt configs
+    # Download Let's Encrypt recommended configs
     mkdir -p /etc/letsencrypt
-    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf || true
-    curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem || true
-    sleep 2
+    curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf" -o /etc/letsencrypt/options-ssl-nginx.conf
+    curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem" -o /etc/letsencrypt/ssl-dhparams.pem
 
-    # Temporary HTTP server for certbot validation
+    # Initial temporary HTTP server for certbot
     cat > /etc/nginx/sites-available/forgejo <<'EOF_TEMP'
 server {
     listen 80;
@@ -292,21 +289,16 @@ EOF_TEMP
 
     ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
     nginx -t && systemctl restart nginx
-    sleep 5
-    notify_webhook "provisioning" "ssl_nginx_temp" "Temporary HTTP server configured for Certbot"
 
     # Create webroot for certbot
     mkdir -p /var/www/html
     chown www-data:www-data /var/www/html
-    sleep 2
 
-    # Obtain SSL certificate using certbot with nginx plugin first, then fallback to webroot
+    # Obtain SSL certificate using certbot
     if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
-        echo "⚠️ Certbot nginx plugin failed; using webroot fallback"
-        systemctl restart nginx || true
-        sleep 5
+        echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
+        systemctl start nginx || true
         certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
-        sleep 5
     fi
 
     # Verify certificate existence
@@ -315,22 +307,14 @@ EOF_TEMP
         notify_webhook "failed" "ssl_certificate" "Failed to obtain SSL certificate"
         exit 1
     fi
-    sleep 2
-    notify_webhook "provisioning" "ssl_cert" "SSL certificate obtained successfully"
 
-    # Replace temporary HTTP server with full HTTPS reverse proxy for Forgejo
+    # Replace Nginx config with full HTTPS proxy for Forgejo
     cat > /etc/nginx/sites-available/forgejo <<'EOF_SSL'
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    '' close;
-}
-
 server {
     listen 80;
     server_name __DOMAIN__;
     return 301 https://$host$request_uri;
 }
-
 server {
     listen 443 ssl http2;
     server_name __DOMAIN__;
@@ -349,32 +333,54 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_http_version 1.1;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
         proxy_buffering off;
         proxy_request_buffering off;
-        # Content Security Policy for embedded websites
         add_header Content-Security-Policy "frame-ancestors 'self' __ALLOW_EMBED_WEBSITE__" always;
     }
 }
 EOF_SSL
 
-    # Enable site and reload Nginx
-    ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
-    if nginx -t && systemctl reload nginx; then
-        notify_webhook "provisioning" "nginx_final" "Nginx reloaded successfully"
-    else
-        notify_webhook "failed" "nginx_final" "Nginx reload failed"
-        exit 1
-    fi
-    sleep 5
+    ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
+    nginx -t && systemctl reload nginx
 
-    # ========== CERTBOT RENEWAL CRON ==========
-    echo "[10/15] Setting up Certbot renewal cron..."
+    # Setup cron for renewal
+    echo "[10/15] Setup Certbot renewal cron..."
     notify_webhook "provisioning" "ssl_cron" "Scheduling daily certificate renewal"
     (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; \
         echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
-    sleep 2
+
+    # Final verification
+    echo "[11/15] Final verification..."
+    notify_webhook "provisioning" "verification" "Performing verification checks"
+
+    if ! nginx -t; then
+        echo "ERROR: nginx config test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
+        exit 1
+    fi
+
+    if [ -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+        HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://__DOMAIN__ || echo "000")
+        echo "HTTPS check returned: $HTTPS_RESPONSE"
+        if [ "$HTTPS_RESPONSE" != "200" ]; then
+            notify_webhook "warning" "verification" "HTTPS check returned $HTTPS_RESPONSE"
+        else
+            notify_webhook "provisioning" "verification" "HTTPS OK"
+        fi
+    fi
+
+    if nginx -t; then
+        systemctl reload nginx
+        echo "✅ Nginx configuration test passed"
+        notify_webhook "success" "verification" "✅ Nginx configuration test passed"
+    else
+        echo "❌ Nginx configuration test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
+        exit 1
+    fi
+
 
     cat <<EOF_FINAL
 =============================================
