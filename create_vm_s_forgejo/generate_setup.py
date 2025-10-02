@@ -211,7 +211,7 @@ networks:
 
 services:
   server:
-    image: codeberg.org/forgejo/forgejo:13
+    image: codeberg.org/forgejo/forgejo:12
     container_name: forgejo
     restart: unless-stopped
     environment:
