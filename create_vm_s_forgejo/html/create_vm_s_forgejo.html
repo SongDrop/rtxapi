@@ -119,7 +119,7 @@
             </li>
             <li>Each user generates their own personal access token.</li>
             <li>Each dev clones using their own token:
-                <pre>git clone https://USERNAME:TOKEN@forgejo.win10dev.xyz/igiteam/prince-of-persia-3d.git</pre>
+                <pre>git clone https://TOKEN@forgejo.example.com/USERNAME/REPO.git</pre>
             </li>
         </ol>
         <p>✅ <strong>Pros:</strong></p>
@@ -217,7 +217,7 @@
         <p><a href="https://forgejo.example.com/username/repo/settings/hooks" target="_blank">
                 https://forgejo.example.com/username/repo/settings/hooks</a></p>
 
-        <h3>🔔 Discord Notifications</h3>
+        <h3>🔔 Discord Webhooks</h3>
         <ol>
             <li>Go to your Discord server → <strong>Server Settings → Integrations → Webhooks</strong>.</li>
             <li>Create a new webhook, copy the <code>https://discord.com/api/webhooks/.../...</code> URL.</li>
@@ -241,6 +241,7 @@
         </ul>
         <p>✅ This keeps your workflow fully open-source and self-hosted, without relying on paid cloud services.</p>
 
+        <h3>Custom Webhook Servers</h3>
         <h3>🐍 Python Webhook Receiver Example</h3>
         <p>If you want to process Forgejo events yourself (e.g., trigger a build, auto-tag, or custom bot),
             here’s a simple Python Flask app to catch webhook payloads:</p>
