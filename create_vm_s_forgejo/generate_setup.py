@@ -268,11 +268,13 @@ EOF
     # Remove any default or old Forgejo config
     rm -f /etc/nginx/sites-enabled/default
     rm -f /etc/nginx/sites-available/forgejo
+    sleep 2
 
     # Download recommended Let's Encrypt configs
     mkdir -p /etc/letsencrypt
     curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf || true
     curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem || true
+    sleep 2
 
     # Temporary HTTP server for certbot validation
     cat > /etc/nginx/sites-available/forgejo <<'EOF_TEMP'
@@ -286,20 +288,25 @@ server {
         add_header Content-Type text/plain;
     }
 }
-    EOF_TEMP
+EOF_TEMP
 
     ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
     nginx -t && systemctl restart nginx
+    sleep 5
+    notify_webhook "provisioning" "ssl_nginx_temp" "Temporary HTTP server configured for Certbot"
 
     # Create webroot for certbot
     mkdir -p /var/www/html
     chown www-data:www-data /var/www/html
+    sleep 2
 
     # Obtain SSL certificate using certbot with nginx plugin first, then fallback to webroot
     if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
         echo "⚠️ Certbot nginx plugin failed; using webroot fallback"
-        systemctl start nginx || true
+        systemctl restart nginx || true
+        sleep 5
         certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
+        sleep 5
     fi
 
     # Verify certificate existence
@@ -308,6 +315,8 @@ server {
         notify_webhook "failed" "ssl_certificate" "Failed to obtain SSL certificate"
         exit 1
     fi
+    sleep 2
+    notify_webhook "provisioning" "ssl_cert" "SSL certificate obtained successfully"
 
     # Replace temporary HTTP server with full HTTPS reverse proxy for Forgejo
     cat > /etc/nginx/sites-available/forgejo <<'EOF_SSL'
@@ -352,91 +361,20 @@ EOF_SSL
 
     # Enable site and reload Nginx
     ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/
-    nginx -t && systemctl reload nginx
+    if nginx -t && systemctl reload nginx; then
+        notify_webhook "provisioning" "nginx_final" "Nginx reloaded successfully"
+    else
+        notify_webhook "failed" "nginx_final" "Nginx reload failed"
+        exit 1
+    fi
+    sleep 5
 
     # ========== CERTBOT RENEWAL CRON ==========
     echo "[10/15] Setting up Certbot renewal cron..."
     notify_webhook "provisioning" "ssl_cron" "Scheduling daily certificate renewal"
-
     (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; \
-    echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
-
-
-    # ========== FORGEJO CONTAINER STARTUP ==========
-    echo "[11/15] Starting Forgejo container..."
-    notify_webhook "provisioning" "forgejo_start" "Starting Forgejo container"
-    sleep 5
-
-    cd "$FORGEJO_DIR" || {
-        echo "ERROR: Cannot change to Forgejo directory"
-        notify_webhook "failed" "directory_access" "Cannot access $FORGEJO_DIR"
-        exit 1
-    }
-
-    # Pull the latest image
-    if ! docker compose pull; then
-        notify_webhook "warning" "image_pull" "Failed to pull latest Forgejo image, using local if available"
-    fi
-    sleep 5
-
-    # Start the container
-    if ! docker compose up -d; then
-        notify_webhook "failed" "forgejo_start" "Forgejo container failed to start"
-        docker compose logs --no-color > "$FORGEJO_DIR/forgejo_start.log" || true
-        exit 1
-    else
-        notify_webhook "provisioning" "forgejo_start" "Forgejo container started"
-    fi
-    sleep 5
-
-    # ========== CONTAINER HEALTH CHECK ==========
-    echo "[12/15] Waiting for Forgejo container to become healthy..."
-    notify_webhook "provisioning" "health_check" "Checking container health"
-    sleep 5
-
-    timeout=180
-    while [ $timeout -gt 0 ]; do
-        HEALTH=$(docker inspect --format='{{.State.Health.Status}}' forgejo 2>/dev/null || echo "none")
-        if [ "$HEALTH" = "healthy" ]; then
-            echo "✅ Forgejo container is healthy"
-            notify_webhook "provisioning" "health_check" "Forgejo container is healthy"
-            break
-        fi
-        echo "Container status: $HEALTH (waiting...)"
-        sleep 5
-        timeout=$((timeout - 5))
-    done
-
-    if [ $timeout -eq 0 ]; then
-        echo "WARNING: Forgejo container did not become healthy within timeout"
-        notify_webhook "warning" "health_timeout" "Forgejo health check timeout"
-        docker compose logs --no-color > "$FORGEJO_DIR/forgejo_health_timeout.log" || true
-    fi
-    sleep 5
-
-    # ========== FINAL NGINX RESTART ==========
-    echo "[13/15] Finalizing nginx configuration..."
-    notify_webhook "provisioning" "nginx_final" "Restarting nginx with final config"
-
-    nginx -t && systemctl restart nginx
-
-    # ========== FINAL CHECKS ==========
-    echo "[14/15] Performing final verification..."
-    notify_webhook "provisioning" "verification" "Running final checks"
-
-    # Check if Forgejo is responding
-    sleep 10
-    if curl -s -f "https://$DOMAIN" > /dev/null; then
-        echo "✅ Forgejo is responding via HTTPS"
-        notify_webhook "success" "https_check" "HTTPS access verified"
-    else
-        echo "WARNING: Could not verify HTTPS access to Forgejo"
-        notify_webhook "warning" "https_warning" "HTTPS check failed"
-    fi
-
-    # ========== COMPLETION MESSAGE ==========
-    echo "[15/15] Forgejo setup complete!"
-    notify_webhook "provisioning" "provisioning" "Forgejo provisioning completed successfully"
+        echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
+    sleep 2
 
     cat <<EOF_FINAL
 =============================================
