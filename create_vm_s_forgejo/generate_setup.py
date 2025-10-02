@@ -262,7 +262,7 @@ EOF
     ufw --force enable
 
     # ========== NGINX CONFIG + SSL (Forgejo) ==========
-    echo "[9/15] Configuring nginx reverse proxy with SSL..."
+    echo "[13/15] Configuring nginx reverse proxy with SSL..."
     notify_webhook "provisioning" "ssl_nginx" "Configuring nginx + SSL"
 
     rm -f /etc/nginx/sites-enabled/default
