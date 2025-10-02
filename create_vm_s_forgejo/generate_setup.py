@@ -207,14 +207,20 @@ def generate_setup(
     echo "[7/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose" "Configuring Docker Compose"
 
-    cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF
+    cat > "$FORGEJO_DIR/docker-compose.yml" <<'EOF'
 version: "3.8"
+networks:
+  forgejo:
+    external: false
+
 services:
   server:
-    image: codeberg.org/forgejo/forgejo:latest
+    image: codeberg.org/forgejo/forgejo:13
     container_name: forgejo
     restart: unless-stopped
     environment:
+      - USER_UID=1000
+      - USER_GID=1000
       - FORGEJO__server__DOMAIN=$DOMAIN
       - FORGEJO__server__ROOT_URL=https://$DOMAIN
       - FORGEJO__server__HTTP_PORT=3000
@@ -223,18 +229,21 @@ services:
       - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
       - FORGEJO__server__LFS_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
     volumes:
-      - ./data:/data
-      - ./config:/etc/gitea
-      - ./ssl:/ssl
+      - ./forgejo:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
     ports:
       - "$PORT:3000"
       - "222:22"
+    networks:
+      - forgejo
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 15s
       timeout: 10s
       retries: 40
 EOF
+
 
     # ========== FIREWALL CONFIGURATION ==========
     echo "[8/15] Configuring firewall..."
