@@ -274,7 +274,7 @@ EOF
     curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem" -o /etc/letsencrypt/ssl-dhparams.pem
 
     # Initial temporary HTTP server for certbot
-    cat > /etc/nginx/sites-available/forgejo <<'EOF_TEMP'
+    cat > /etc/nginx/sites-available/forgejo <<EOF_TEMP
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -309,7 +309,7 @@ EOF_TEMP
     fi
 
     # Replace Nginx config with full HTTPS proxy for Forgejo
-    cat > /etc/nginx/sites-available/forgejo <<'EOF_SSL'
+    cat > /etc/nginx/sites-available/forgejo <<EOF_SSL
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -324,7 +324,7 @@ server {
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    client_max_body_size __MAX_UPLOAD_SIZE_MB__;
+    client_max_body_size __MAX_UPLOAD_SIZE_MB__M;
 
     location / {
         proxy_pass http://127.0.0.1:__PORT__;
