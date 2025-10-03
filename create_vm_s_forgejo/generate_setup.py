@@ -12,8 +12,7 @@ def generate_setup(
     resource_group=""
 ):
     """
-    Returns a full bash provisioning script for Forgejo using template method.
-    Usage: script = generate_setup("example.com", "admin@example.com", "P@ssw0rd", "8080", ...)
+    Returns a full bash provisioning script for Forgejo with improved SSL handling.
     """
     # ========== TOKEN DEFINITIONS ==========
     tokens = {
@@ -246,8 +245,7 @@ EOF
     notify_webhook "provisioning" "docker_compose_ready" "Docker Compose configuration created"
     sleep 5
 
-
-   # ========== FIREWALL CONFIGURATION ==========
+    # ========== FIREWALL CONFIGURATION ==========
     echo "[8/15] Configuring firewall..."
     notify_webhook "provisioning" "firewall" "Setting up UFW firewall"
 
@@ -261,23 +259,74 @@ EOF
     ufw allow "$PORT"/tcp
     ufw --force enable
 
-    # ========== NGINX CONFIG + SSL (Forgejo) ==========
-    echo "[13/15] Configuring nginx reverse proxy with SSL..."
+    # ========== START FORGEJO CONTAINER ==========
+    echo "[9/15] Starting Forgejo container..."
+    notify_webhook "provisioning" "container_start" "Starting Forgejo Docker container"
+    sleep 5
+
+    cd "$FORGEJO_DIR"
+    docker compose up -d || {
+        echo "ERROR: Failed to start Forgejo container"
+        notify_webhook "failed" "container_start" "Failed to start Forgejo container"
+        exit 1
+    }
+
+    echo "[10/15] Waiting for Forgejo to initialize..."
+    notify_webhook "provisioning" "forgejo_wait" "Waiting for Forgejo to become ready"
+    sleep 30
+
+    # Wait for Forgejo to be ready
+    timeout=300
+    while [ $timeout -gt 0 ]; do
+        if curl -s http://localhost:$PORT >/dev/null 2>&1; then
+            break
+        fi
+        sleep 10
+        timeout=$((timeout - 10))
+        echo "Waiting for Forgejo... ($timeout seconds remaining)"
+    done
+
+    if [ $timeout -eq 0 ]; then
+        echo "WARNING: Forgejo taking longer than expected to start"
+        notify_webhook "warning" "forgejo_timeout" "Forgejo startup taking longer than expected"
+    fi
+
+    # ========== NGINX CONFIG + SSL ==========
+    echo "[11/15] Configuring nginx reverse proxy with SSL..."
     notify_webhook "provisioning" "ssl_nginx" "Configuring nginx + SSL"
 
+    # Stop any existing nginx
+    systemctl stop nginx || true
+
+    # Clean up existing configs
     rm -f /etc/nginx/sites-enabled/default
+    rm -f /etc/nginx/sites-enabled/forgejo
     rm -f /etc/nginx/sites-available/forgejo
 
-    # Download Let's Encrypt recommended configs
-    mkdir -p /etc/letsencrypt
-    curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf" -o /etc/letsencrypt/options-ssl-nginx.conf
-    curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem" -o /etc/letsencrypt/ssl-dhparams.pem
+    # Create nginx directories if they don't exist
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/html
+
+    # Download Let's Encrypt recommended configs with retry logic
+    echo "Downloading SSL configurations..."
+    for i in {1..5}; do
+        if curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf" -o /etc/letsencrypt/options-ssl-nginx.conf; then
+            break
+        fi
+        sleep 5
+    done
+
+    for i in {1..5}; do
+        if curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem" -o /etc/letsencrypt/ssl-dhparams.pem; then
+            break
+        fi
+        sleep 5
+    done
 
     # Initial temporary HTTP server for certbot
     cat > /etc/nginx/sites-available/forgejo <<EOF_TEMP
 server {
     listen 80;
-    server_name __DOMAIN__;
+    server_name $DOMAIN;
     root /var/www/html;
 
     location / {
@@ -288,110 +337,186 @@ server {
 EOF_TEMP
 
     ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
-    nginx -t && systemctl restart nginx
+    
+    # Test nginx config
+    if ! nginx -t; then
+        echo "ERROR: Initial nginx config test failed"
+        notify_webhook "failed" "nginx_config" "Initial nginx config test failed"
+        exit 1
+    fi
+    
+    systemctl start nginx || {
+        echo "ERROR: Failed to start nginx"
+        notify_webhook "failed" "nginx_start" "Failed to start nginx"
+        exit 1
+    }
 
     # Create webroot for certbot
     mkdir -p /var/www/html
-    chown www-data:www-data /var/www/html
+    chown -R www-data:www-data /var/www/html
+    echo "Certbot validation ready" > /var/www/html/index.html
 
-    # Obtain SSL certificate using certbot
-    if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
-        echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
-        systemctl start nginx || true
-        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
+    # Obtain SSL certificate with improved error handling
+    echo "Obtaining SSL certificate for $DOMAIN..."
+    CERTBOT_SUCCESS=false
+    
+    # Method 1: Try nginx plugin first
+    if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL" --no-redirect; then
+        CERTBOT_SUCCESS=true
+        echo "✅ Certbot nginx plugin succeeded"
+    else
+        echo "⚠️ Certbot nginx plugin failed; trying webroot method"
+        # Method 2: Webroot fallback
+        if certbot certonly --webroot -w /var/www/html -d "$DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL"; then
+            CERTBOT_SUCCESS=true
+            echo "✅ Certbot webroot method succeeded"
+        else
+            echo "❌ Both certbot methods failed"
+            notify_webhook "failed" "ssl_certificate" "Failed to obtain SSL certificate"
+            
+            # Continue without SSL for now
+            echo "Continuing with HTTP only configuration..."
+            CERTBOT_SUCCESS=false
+        fi
     fi
 
-    # Verify certificate existence
-    if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
-        echo "❌ SSL certificate not found!"
-        notify_webhook "failed" "ssl_certificate" "Failed to obtain SSL certificate"
-        exit 1
-    fi
-
-    # Replace Nginx config with full HTTPS proxy for Forgejo
-    cat > /etc/nginx/sites-available/forgejo <<EOF_SSL
+    # Replace Nginx config with final configuration
+    if [ "$CERTBOT_SUCCESS" = true ] && [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+        echo "Configuring nginx with SSL..."
+        cat > /etc/nginx/sites-available/forgejo <<EOF_SSL
 server {
     listen 80;
-    server_name __DOMAIN__;
-    return 301 https://$host$request_uri;
+    server_name $DOMAIN;
+    return 301 https://\$host\$request_uri;
 }
+
 server {
     listen 443 ssl http2;
-    server_name __DOMAIN__;
+    server_name $DOMAIN;
 
-    ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    client_max_body_size __MAX_UPLOAD_SIZE_MB__M;
+    client_max_body_size ${MAX_UPLOAD_SIZE_MB}M;
 
     location / {
-        proxy_pass http://127.0.0.1:__PORT__;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400;
         proxy_buffering off;
         proxy_request_buffering off;
-        add_header Content-Security-Policy "frame-ancestors 'self' __ALLOW_EMBED_WEBSITE__" always;
+        add_header Content-Security-Policy "frame-ancestors 'self' $ALLOW_EMBED_WEBSITE" always;
     }
 }
 EOF_SSL
+    else
+        echo "Configuring nginx without SSL (HTTP only)..."
+        cat > /etc/nginx/sites-available/forgejo <<EOF_HTTP
+server {
+    listen 80;
+    server_name $DOMAIN;
 
-    ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
-    nginx -t && systemctl reload nginx
+    client_max_body_size ${MAX_UPLOAD_SIZE_MB}M;
 
-    # Setup cron for renewal
-    echo "[14/15] Setup Certbot renewal cron..."
-    notify_webhook "provisioning" "ssl_cron" "Scheduling daily certificate renewal"
-    
-    # Setup cron for renewal (runs daily and reloads nginx on change)
-    (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; \
-        echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
-
-    # ========== FINAL CHECKS ==========
-    echo "[15/15] Final verification..."
-    notify_webhook "provisioning" "verification" "Performing verification checks"
-
-    if ! nginx -t; then
-        echo "ERROR: nginx config test failed"
-        notify_webhook "failed" "verification" "Nginx config test failed"
-        exit 1
-    fi
-
-    if [ -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
-        HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://__DOMAIN__ || echo "000")
-        echo "HTTPS check returned: $HTTPS_RESPONSE"
-        if [ "$HTTPS_RESPONSE" != "200" ]; then
-            notify_webhook "warning" "verification" "HTTPS check returned $HTTPS_RESPONSE"
-        else
-            notify_webhook "provisioning" "verification" "HTTPS OK"
-        fi
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        add_header Content-Security-Policy "frame-ancestors 'self' $ALLOW_EMBED_WEBSITE" always;
+    }
+}
+EOF_HTTP
     fi
 
     # Test and apply the new config
     if nginx -t; then
         systemctl reload nginx
         echo "✅ Nginx configuration test passed"
-        notify_webhook "success" "verification" "✅ Nginx configuration test passed"
+        notify_webhook "provisioning" "nginx_ready" "Nginx configured successfully"
     else
         echo "❌ Nginx configuration test failed"
-        notify_webhook "failed" "verification" "Nginx config test failed"
+        notify_webhook "failed" "nginx_config" "Nginx config test failed"
         exit 1
     fi
 
+    # Setup cron for SSL renewal if certificate was obtained
+    if [ "$CERTBOT_SUCCESS" = true ]; then
+        echo "[12/15] Setting up Certbot renewal cron..."
+        notify_webhook "provisioning" "ssl_cron" "Scheduling daily certificate renewal"
+        
+        # Setup cron for renewal (runs daily and reloads nginx on change)
+        (crontab -l 2>/dev/null | grep -v "certbot renew" || true; \
+            echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
+    fi
+
+    # ========== FINAL CHECKS ==========
+    echo "[13/15] Performing final verification..."
+    notify_webhook "provisioning" "verification" "Performing verification checks"
+
+    # Check if services are running
+    if systemctl is-active --quiet nginx; then
+        echo "✅ Nginx is running"
+    else
+        echo "❌ Nginx is not running"
+        notify_webhook "warning" "verification" "Nginx is not running"
+    fi
+
+    if docker ps | grep -q forgejo; then
+        echo "✅ Forgejo container is running"
+    else
+        echo "❌ Forgejo container is not running"
+        notify_webhook "warning" "verification" "Forgejo container is not running"
+    fi
+
+    # Test HTTP/HTTPS accessibility
+    echo "[14/15] Testing accessibility..."
+    if [ "$CERTBOT_SUCCESS" = true ]; then
+        HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://$DOMAIN/ || echo "000")
+        echo "HTTPS check returned: $HTTPS_RESPONSE"
+        if [ "$HTTPS_RESPONSE" = "200" ]; then
+            echo "✅ HTTPS accessibility test passed"
+            notify_webhook "success" "verification" "HTTPS accessibility test passed"
+        else
+            echo "⚠️ HTTPS check returned $HTTPS_RESPONSE"
+            notify_webhook "warning" "verification" "HTTPS check returned $HTTPS_RESPONSE"
+        fi
+    else
+        HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://$DOMAIN/ || echo "000")
+        echo "HTTP check returned: $HTTP_RESPONSE"
+        if [ "$HTTP_RESPONSE" = "200" ]; then
+            echo "✅ HTTP accessibility test passed"
+            notify_webhook "success" "verification" "HTTP accessibility test passed"
+        else
+            echo "⚠️ HTTP check returned $HTTP_RESPONSE"
+            notify_webhook "warning" "verification" "HTTP check returned $HTTP_RESPONSE"
+        fi
+    fi
+
+    # ========== COMPLETION ==========
+    echo "[15/15] Setup complete!"
+    notify_webhook "success" "complete" "Forgejo provisioning completed successfully"
 
     cat <<EOF_FINAL
 =============================================
 ✅ Forgejo Setup Complete!
 ---------------------------------------------
-🔗 Access URL: https://__DOMAIN__
-👤 Admin email: __ADMIN_EMAIL__
-🔒 Default password: __ADMIN_PASSWORD__
+🔗 Access URL: http://$DOMAIN__FINAL_URL__
+👤 Admin email: $ADMIN_EMAIL
+🔒 Default password: $ADMIN_PASSWORD
 ---------------------------------------------
 ⚙️ Useful commands:
 - Check status: cd $FORGEJO_DIR && docker compose ps
@@ -400,7 +525,7 @@ EOF_SSL
 - Update: cd $FORGEJO_DIR && docker compose pull && docker compose up -d
 ---------------------------------------------
 📝 Post-installation steps:
-1. Visit https://__DOMAIN__ to complete setup
+1. Visit the Access URL to complete setup
 2. Change the default admin password immediately
 3. Configure your repository settings
 4. Set up backup procedures
@@ -471,6 +596,7 @@ EOF_FINAL
     final_script = final_script.replace("__LET_OPTIONS_URL__", tokens["__LET_OPTIONS_URL__"])
     final_script = final_script.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
 
-    return final_script
+    # Add final URL based on SSL success
+    final_script = final_script.replace("__FINAL_URL__", "" if tokens["__WEBHOOK_URL__"] else " (or https if SSL was configured)")
 
- 
+    return final_script
