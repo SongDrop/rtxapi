@@ -274,7 +274,7 @@ EOF
     curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem" -o /etc/letsencrypt/ssl-dhparams.pem
 
     # Initial temporary HTTP server for certbot
-    cat > /etc/nginx/sites-available/forgejo <<EOF_TEMP
+    cat > /etc/nginx/sites-available/forgejo <<'EOF_TEMP'
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -289,6 +289,9 @@ EOF_TEMP
 
     ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
     nginx -t && systemctl restart nginx
+
+    sleep 3
+    notify_webhook "provisioning" "ssl_nginx_restart" "restarting nginx + SSL"
 
     # Create webroot for certbot
     mkdir -p /var/www/html
@@ -308,8 +311,11 @@ EOF_TEMP
         exit 1
     fi
 
+    sleep 3
+    notify_webhook "provisioning" "ssl_obtained" "SSL obtained"
+
     # Replace Nginx config with full HTTPS proxy for Forgejo
-    cat > /etc/nginx/sites-available/forgejo <<EOF_SSL
+    cat > /etc/nginx/sites-available/forgejo <<'EOF_SSL'
 server {
     listen 80;
     server_name __DOMAIN__;
