@@ -5,94 +5,73 @@ def generate_setup(
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
     PORT,
-    VOLUME_DIR="/opt/code-server",
+    DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh",
     WEBHOOK_URL="",
+    ALLOW_EMBED_WEBSITE="",
     location="",
     resource_group=""
 ):
     """
-    Returns a full bash provisioning script as a string.
-    Usage: script = generate_setup("example.com", "admin@example.com", "P@ssw0rd", "8080", ...)
+    Returns a full bash provisioning script for Forgejo with robust SSL handling.
     """
-    # Tokens used inside the template (won't conflict with normal bash syntax)
+    # ========== TOKEN DEFINITIONS ==========
     tokens = {
         "__DOMAIN__": DOMAIN_NAME,
         "__ADMIN_EMAIL__": ADMIN_EMAIL,
         "__ADMIN_PASSWORD__": ADMIN_PASSWORD,
         "__PORT__": str(PORT),
-        "__VOLUME_DIR__": VOLUME_DIR,
-        "__SERVICE_USER__": "coder",
-        "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
-        "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
+        "__DNS_HOOK_SCRIPT__": DNS_HOOK_SCRIPT,
+        "__WEBHOOK_URL__": WEBHOOK_URL,
+        "__ALLOW_EMBED_WEBSITE__": ALLOW_EMBED_WEBSITE,
         "__LOCATION__": location,
         "__RESOURCE_GROUP__": resource_group,
-        "__WEBHOOK_URL__": WEBHOOK_URL,
+        "__FORGEJO_DIR__": "/opt/forgejo",
+        "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
+        "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
+        "__MAX_UPLOAD_SIZE_MB__": "1024",
+        "__MAX_UPLOAD_SIZE_BYTES__": str(1024 * 1024 * 1024),  # 1GB in bytes
     }
 
-    # Extensions array
-    extensions = [
-        "ms-azuretools.vscode-azureappservice",
-        "ms-azuretools.vscode-azurefunctions",
-        "ms-azuretools.vscode-azureresourcegroups",
-        "ms-azuretools.vscode-docker",
-        "ms-azuretools.vscode-containers",
-        "ms-azuretools.vscode-azurestaticwebapps",
-        "ms-azuretools.vscode-azurite",
-        "ms-azuretools.vscode-cosmosdb",
-        "ms-kubernetes-tools.vscode-kubernetes-tools",
-        "hashicorp.terraform",
-        "azurerm-tools.azurerm-vscode-tools",
-        "ms-python.python",
-        "ms-python.debugpy",
-        "ms-toolsai.jupyter",
-        "ms-toolsai.jupyter-keymap",
-        "ms-toolsai.vscode-jupyter-cell-tags",
-        "ms-toolsai.vscode-jupyter-slideshow",
-        "ms-toolsai.jupyter-renderers",
-        "ms-vscode.powershell",
-        "dbaeumer.vscode-eslint",
-        "esbenp.prettier-vscode",
-        "eamodio.gitlens",
-        "redhat.vscode-yaml",
-        "ritwickdey.liveserver",
-        "formulahendry.code-runner",
-        "humao.rest-client",
-        "streetsidesoftware.code-spell-checker",
-        "wallabyjs.quokka-vscode",
-        "donjayamanne.githistory",
-        "github.copilot"
-    ]
-
-    ext_block = "\n".join([f'    "{ext}"' for ext in extensions])
-    # Bash template using tokens; tokens will be replaced below to avoid f-string brace problems.
+    # ========== BASE TEMPLATE ==========
     script_template = textwrap.dedent(r"""
     #!/bin/bash
     set -euo pipefail
 
     # ----------------------------------------------------------------------
-    # Code Server Provisioning Script (generated)
+    # Forgejo Provisioning Script (generated)
     # ----------------------------------------------------------------------
 
-    # --- helper: webhook notification (inlined if provided) ---
+    # --- Webhook Notification System ---
     __WEBHOOK_FUNCTION__
 
-    # If any command later fails we will report it
+    # Error handling with webhook notifications
     trap 'notify_webhook "failed" "unexpected_error" "Script exited on line $LINENO with code $?"' ERR
 
-    # Logging
-    LOG_FILE="/var/log/code-server-install.log"
+    # --- Logging Setup ---
+    LOG_FILE="/var/log/forgejo_setup.log"
     exec > >(tee -a "$LOG_FILE") 2>&1
 
-    echo "[1/20] Validating inputs..."
-    notify_webhook "provisioning" "validation" "Validating inputs"
-
-    # Basic validation
+    # --- Environment Variables ---
     DOMAIN="__DOMAIN__"
-    PORT="__PORT__"
     ADMIN_EMAIL="__ADMIN_EMAIL__"
     ADMIN_PASSWORD="__ADMIN_PASSWORD__"
-    VOLUME_DIR="__VOLUME_DIR__"
-    SERVICE_USER="__SERVICE_USER__"
+    PORT="__PORT__"
+    FORGEJO_DIR="__FORGEJO_DIR__"
+    DNS_HOOK_SCRIPT="__DNS_HOOK_SCRIPT__"
+    WEBHOOK_URL="__WEBHOOK_URL__"
+    ALLOW_EMBED_WEBSITE="__ALLOW_EMBED_WEBSITE__"
+    MAX_UPLOAD_SIZE_MB="__MAX_UPLOAD_SIZE_MB__"
+    MAX_UPLOAD_SIZE_BYTES="__MAX_UPLOAD_SIZE_BYTES__"
+
+    # Generate LFS JWT secret
+    LFS_JWT_SECRET=$(openssl rand -hex 32)
+
+    echo "[1/15] Starting Forgejo provisioning..."
+    notify_webhook "provisioning" "starting" "Beginning Forgejo setup"
+
+    # ========== INPUT VALIDATION ==========
+    echo "[2/15] Validating inputs..."
+    notify_webhook "provisioning" "validation" "Validating domain and inputs"
 
     if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
         echo "ERROR: Invalid domain format: $DOMAIN"
@@ -106,384 +85,287 @@ def generate_setup(
         exit 1
     fi
 
-    # Check running port and attempt to free it
-    echo "[2/20] Checking for port conflicts..."
-    notify_webhook "provisioning" "port_check" "Checking port $PORT"
-    
-    # Improved port conflict resolution
-    PORT_IN_USE=false
-    if command -v ss >/dev/null 2>&1; then
-        if ss -tuln 2>/dev/null | awk '{print $4}' | grep -q ":$PORT$"; then
-            PORT_IN_USE=true
-        fi
-    elif command -v netstat >/dev/null 2>&1; then
-        if netstat -tuln 2>/dev/null | awk '{print $4}' | grep -q ":$PORT$"; then
-            PORT_IN_USE=true
-        fi
-    fi
+    # ========== SYSTEM DEPENDENCIES ==========
+    echo "[3/15] Installing system dependencies..."
+    notify_webhook "provisioning" "system_dependencies" "Installing base packages"
 
-    if [ "$PORT_IN_USE" = true ]; then
-        echo "WARNING: Port $PORT is in use; attempting to free..."
-        
-        # More aggressive process termination
-        echo "Stopping code-server service if running..."
-        systemctl stop "code-server@$SERVICE_USER" 2>/dev/null || true
-        systemctl disable "code-server@$SERVICE_USER" 2>/dev/null || true
-        
-        echo "Killing any processes using port $PORT..."
-        # Find and kill processes using the port
-        if command -v lsof >/dev/null 2>&1; then
-            lsof -ti:"$PORT" | xargs -r kill -9 2>/dev/null || true
-        elif command -v fuser >/dev/null 2>&1; then
-            fuser -k "$PORT"/tcp 2>/dev/null || true
-        else
-            # Fallback method
-            pkill -f "code-server" 2>/dev/null || true
-            pkill -f "node.*$PORT" 2>/dev/null || true
-        fi
-        
-        sleep 3
-        
-        # Verify port is free
-        PORT_STILL_IN_USE=false
-        if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | awk '{print $4}' | grep -q ":$PORT$"; then
-            PORT_STILL_IN_USE=true
-        elif command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | awk '{print $4}' | grep -q ":$PORT$"; then
-            PORT_STILL_IN_USE=true
-        fi
-        
-        if [ "$PORT_STILL_IN_USE" = true ]; then
-            echo "WARNING: Port $PORT still in use, but continuing anyway..."
-            notify_webhook "warning" "port_conflict" "Port $PORT still in use, continuing"
-        else
-            echo "Successfully freed port $PORT"
-        fi
-    fi
-
-    # ========== SYSTEM UPDATE & DEPENDENCIES ==========
-    echo "[3/20] Updating system and installing base dependencies..."
-    notify_webhook "provisioning" "system_update" "Updating apt and installing packages"
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q
-    apt-get upgrade -y -q
-    apt-get install -y -q \
-      curl wget gnupg2 lsb-release ca-certificates apt-transport-https \
-      nginx certbot python3-certbot-nginx ufw git build-essential sudo cron \
-      python3 python3-pip jq software-properties-common gnupg2
 
-    # Create service user if missing
-    if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
-        echo "[4/20] Creating service user: $SERVICE_USER"
-        notify_webhook "provisioning" "create_user" "Creating $SERVICE_USER"
-        useradd -m -s /bin/bash "$SERVICE_USER"
-        echo "$SERVICE_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/"$SERVICE_USER"
-        chmod 440 /etc/sudoers.d/"$SERVICE_USER"
-    fi
+    notify_webhook "provisioning" "apt_update" "Running apt-get update"
+    apt-get update -q || { notify_webhook "failed" "apt_update" "apt-get update failed"; exit 1; }
 
-    # ========== NODE.JS (LTS) ==========
-    echo "[5/20] Installing Node.js LTS (20.x)..."
-    notify_webhook "provisioning" "nodejs" "Installing Node.js"
-    apt-get remove -y nodejs npm || true
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y -q nodejs
-    NODE_VERSION=$(node --version 2>/dev/null || echo "none")
-    echo "Node.js version: $NODE_VERSION"
-    npm install -g npm@latest --no-progress
+    notify_webhook "provisioning" "apt_upgrade" "Running apt-get upgrade"
+    apt-get upgrade -y -q || { notify_webhook "failed" "apt_upgrade" "apt-get upgrade failed"; exit 1; }
 
-    # Install useful global npm tools (non-fatal)
-    echo "[6/20] Installing global npm tools (yarn, netlify-cli)..."
-    notify_webhook "provisioning" "npm_tools" "Installing npm CLI tools"
-    npm install -g yarn --no-progress || true
-    npm install -g netlify-cli --no-progress || true
+    notify_webhook "provisioning" "apt_install" "Installing required packages"
+    apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq \
+        make net-tools python3-certbot-nginx openssl ufw dnsutils || { notify_webhook "failed" "apt_install" "apt-get install failed"; exit 1; }
 
-    # ========== PYENV and Python (root and service user) ==========
-    echo "[7/20] Installing pyenv for root and $SERVICE_USER..."
-    notify_webhook "provisioning" "pyenv" "Installing pyenv and Python 3.9.7"
-    # install build deps
-    apt-get install -y -q make build-essential libssl-dev zlib1g-dev \
-      libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm \
-      libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev || true
+    # ========== GIT LFS INSTALLATION ==========
+    notify_webhook "provisioning" "git_lfs_install" "Installing git-lfs"
+    sleep 5
 
-    export HOME=/root
-    if [ -d "$HOME/.pyenv" ]; then
-        echo "Updating existing pyenv for root..."
-        cd "$HOME/.pyenv" && git pull || true
+    if ! command -v git-lfs >/dev/null 2>&1; then
+        notify_webhook "provisioning" "git_lfs_install" "git-lfs not found, installing from packagecloud"
+        sleep 5
+        curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash || {
+            notify_webhook "failed" "git_lfs_install" "Failed to add git-lfs repository"
+            exit 1
+        }
+        apt-get update -q || { 
+            notify_webhook "failed" "apt_update" "apt-get update failed during git-lfs install"
+            exit 1
+        }
+        apt-get install -y git-lfs || { 
+            notify_webhook "failed" "git_lfs_install" "apt-get install git-lfs failed"
+            exit 1
+        }
+        notify_webhook "provisioning" "git_lfs_install" "git-lfs installed successfully"
     else
-        curl -fsSL https://pyenv.run | bash || true
+        notify_webhook "provisioning" "git_lfs_install" "git-lfs already installed"
+    fi
+    sleep 5
+
+    notify_webhook "provisioning" "git_lfs_init" "Initializing git-lfs globally"
+    sleep 5
+    if ! sudo git lfs install --system; then
+        notify_webhook "warning" "git_lfs_init" "System-level git-lfs initialization failed, falling back to user-level"
+        git lfs install --skip-repo || {
+            notify_webhook "failed" "git_lfs_init" "User-level git-lfs initialization also failed"
+            exit 1
+        }
+    fi
+    notify_webhook "provisioning" "git_lfs_init" "git-lfs initialized successfully"
+    sleep 5
+
+    # ========== DOCKER INSTALLATION ==========
+    echo "[4/15] Installing Docker..."
+    notify_webhook "provisioning" "docker_install" "Installing Docker engine"
+    sleep 5
+
+    apt-get remove -y docker docker-engine docker.io containerd runc || true
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+    ARCH=$(dpkg --print-architecture)
+    CODENAME=$(lsb_release -cs)
+    echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list
+
+    apt-get update -q
+    apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+    CURRENT_USER=$(whoami)
+    if [ "$CURRENT_USER" != "root" ]; then
+        usermod -aG docker "$CURRENT_USER" || true
     fi
 
-    # add pyenv to current shell
-    export PYENV_ROOT="$HOME/.pyenv"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    if command -v pyenv >/dev/null 2>&1; then
-        eval "$(pyenv init --path)" || true
-        eval "$(pyenv init -)" || true
-    fi
+    systemctl enable docker
+    systemctl start docker
 
-    if ! pyenv versions --bare 2>/dev/null | grep -q '^3.9.7$'; then
-        pyenv install -s 3.9.7 || true
-    fi
-    pyenv global 3.9.7 || true
-    echo "Python version: $(python --version 2>&1 || echo 'unknown')"
+    echo "[5/15] Waiting for Docker to start..."
+    notify_webhook "provisioning" "docker_wait" "Waiting for Docker daemon"
+    sleep 5
 
-    # Install pyenv for service user (non-fatal)
-    su - "$SERVICE_USER" -c 'if [ ! -d "$HOME/.pyenv" ]; then curl -fsSL https://pyenv.run | bash || true; fi'
-
-    # ========== ELECTRON dependencies (optional, non-fatal) ==========
-    echo "[8/20] Installing Electron dependencies (optional)..."
-    notify_webhook "provisioning" "electron" "Installing Electron libs"
-    apt-get install -y -q libgtk-3-0 libnotify4 libnss3 libxss1 libasound2-data \
-      libasound2-plugins libxtst6 xauth xvfb || true
-
-    # ========== DOCKER ==========
-    echo "[9/20] Installing Docker..."
-    notify_webhook "provisioning" "docker" "Installing Docker"
-    curl -fsSL https://get.docker.com | sh || true
-    usermod -aG docker "$SERVICE_USER" || true
-
-    # ========== KUBECTL ==========
-    echo "[10/20] Installing kubectl..."
-    notify_webhook "provisioning" "kubectl" "Installing kubectl"
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" || true
-    install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl || true
-    rm -f kubectl || true
-
-    # ========== TERRAFORM ==========
-    echo "[11/20] Installing Terraform..."
-    notify_webhook "provisioning" "terraform" "Installing Terraform"
-    curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor --batch --yes -o /usr/share/keyrings/hashicorp.gpg || true
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list || true
-    apt-get update -q && apt-get install -y -q terraform || true
-
-    # ========== INSTALL & CONFIGURE CODE-SERVER ==========
-    echo "[12/20] Installing code-server..."
-    notify_webhook "provisioning" "code_server" "Installing code-server"
-
-    # Run official installer
-    curl -fsSL https://code-server.dev/install.sh -o /tmp/install-code-server.sh
-    chmod +x /tmp/install-code-server.sh
-    if ! bash /tmp/install-code-server.sh; then
-        echo "⚠️ code-server installer failed, continuing for debugging"
-        notify_webhook "warning" "code_server" "Installer failed, continuing"
-    fi
-
-    # Detect code-server binary
-    CODE_BIN=$(command -v code-server || true)
-    if [ -z "$CODE_BIN" ]; then
-        for path in /usr/local/bin/code-server /usr/bin/code-server /opt/code-server/bin/code-server /home/$SERVICE_USER/.local/bin/code-server; do
-            if [ -x "$path" ]; then
-                CODE_BIN="$path"
-                echo "Found code-server binary at $CODE_BIN"
-                notify_webhook "provisioning" "code_server" "Found binary at $CODE_BIN"
-                break
-            fi
-        done
-    fi
-
-    if [ -z "$CODE_BIN" ]; then
-        echo "❌ code-server binary not found! Check installer logs"
-        notify_webhook "failed" "code_server" "Binary not found after install"
-        exit 1
-    fi
-
-    if ! "$CODE_BIN" --version >/dev/null 2>&1; then
-        echo "❌ code-server binary invalid"
-        notify_webhook "failed" "code_server" "Binary check failed"
-        exit 1
-    fi
-
-    echo "✅ code-server installed at $CODE_BIN"
-    notify_webhook "provisioning" "code_server" "Verified binary at $CODE_BIN"
-
-    # Setup directories
-    CONFIG_DIR="/home/$SERVICE_USER/.config/code-server"
-    DATA_DIR="/home/$SERVICE_USER/.local/share/code-server"
-    EXT_DIR="$DATA_DIR/extensions"
-    mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
-    chown -R "$SERVICE_USER:$SERVICE_USER" "/home/$SERVICE_USER/.config" "/home/$SERVICE_USER/.local"
-    chmod 700 "$CONFIG_DIR" "$DATA_DIR" "$EXT_DIR"
-
-    # Write config.yaml
-    cat > "$CONFIG_DIR/config.yaml" << EOF
-bind-addr: 127.0.0.1:__PORT__
-auth: password
-password: __ADMIN_PASSWORD__
-cert: false
-EOF
-                                      
-    chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_DIR/config.yaml"
-    chmod 600 "$CONFIG_DIR/config.yaml"
-
-    # Ensure stable path for code-server binary
-    ln -sf "$CODE_BIN" /usr/local/bin/code-server
-    CODE_BIN="/usr/local/bin/code-server"
-
-    # Create systemd service
-    echo "[14/20] Creating systemd service..."
-    notify_webhook "provisioning" "systemd" "Creating systemd unit"
-
-    cat > /etc/systemd/system/code-server.service << EOF
-[Unit]
-Description=code-server
-After=network.target
-
-[Service]
-Type=simple
-User=$SERVICE_USER
-WorkingDirectory=/home/$SERVICE_USER
-Environment=HOME=/home/$SERVICE_USER
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=$CODE_BIN --config $CONFIG_DIR/config.yaml --user-data-dir $DATA_DIR --extensions-dir $EXT_DIR
-Restart=always
-RestartSec=5
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable code-server.service
-
-    # Start service
-    echo "[15/20] Starting code-server service..."
-    notify_webhook "provisioning" "service_start" "Starting code-server service"
-    systemctl restart code-server.service
-
-    # Wait for readiness
-    READY=false
-    for i in {1..12}; do
-        if curl -fsS http://127.0.0.1:__PORT__ >/dev/null 2>&1; then
-            READY=true
+    timeout=180
+    while [ $timeout -gt 0 ]; do
+        if docker info >/dev/null 2>&1; then
             break
         fi
-        echo "⏳ code-server not up yet (try $i/12)..."
         sleep 5
+        timeout=$((timeout - 5))
     done
 
-    if [ "$READY" = false ]; then
-        echo "❌ code-server failed to start!"
-        systemctl status code-server.service --no-pager
-        journalctl -u code-server.service -n 50 --no-pager
-        notify_webhook "failed" "service_start" "code-server failed to start"
+    if [ $timeout -eq 0 ]; then
+        echo "ERROR: Docker daemon failed to start"
+        notify_webhook "failed" "docker_timeout" "Docker daemon startup timeout"
         exit 1
     fi
 
-    echo "✅ code-server is running"
-    notify_webhook "provisioning" "service_start" "✅ code-server is running"
+    notify_webhook "provisioning" "docker_ready" "Docker installed successfully"
+    sleep 5
 
-    # Install VSCode extensions
-    echo "[16/20] Installing VSCode extensions..."
-    notify_webhook "provisioning" "extensions" "Installing VSCode extensions"
+    # ========== FORGEJO DIRECTORY SETUP ==========
+    echo "[6/15] Setting up Forgejo directories..."
+    notify_webhook "provisioning" "directory_setup" "Creating Forgejo directory structure"
+    sleep 5
 
-    extensions=(
-        __EXTENSIONS__
-    )
-
-    install_extension() {
-        local ext="$1"
-        local max_attempts=2
-        local attempt=1
-        local installed=false
-
-        is_installed() {
-            sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
-                --list-extensions | grep -q "^$ext\$"
-        }
-
-        echo "📦 Installing $ext..."
-        notify_webhook "provisioning" "extension_install" "Installing $ext"
-
-        if is_installed; then
-            echo "✅ $ext already installed, skipping"
-            notify_webhook "provisioning" "extension_skip" "$ext already installed"
-            return 0
-        fi
-
-        # Try Open VSX (retry)
-        while [ $attempt -le $max_attempts ] && [ "$installed" = false ]; do
-            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
-                --install-extension "$ext" \
-                --extensions-dir="$EXT_DIR" \
-                --user-data-dir="$DATA_DIR" --force 2>/dev/null; then
-                installed=true
-            else
-                echo "⚠️ Attempt $attempt failed for $ext"
-                attempt=$((attempt + 1))
-                sleep 2
-            fi
-        done
-
-        # Marketplace fallback
-        if [ "$installed" = false ]; then
-            local publisher=$(echo "$ext" | cut -d. -f1)
-            local extension_name=$(echo "$ext" | cut -d. -f2)
-            local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$extension_name/latest/vspackage"
-            local tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
-            if curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ]; then
-                sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
-                    --install-extension "$tmpfile" \
-                    --extensions-dir="$EXT_DIR" \
-                    --user-data-dir="$DATA_DIR" --force && installed=true
-            fi
-            rm -f "$tmpfile"
-        fi
-
-        # Verify
-        if is_installed; then
-            echo "✅ Verified $ext installation"
-            notify_webhook "provisioning" "extension_verified" "$ext is installed"
-        else
-            echo "❌ Failed to install $ext, skipping"
-            notify_webhook "warning" "extension_failed" "$ext installation failed"
-        fi
+    mkdir -p "$FORGEJO_DIR"/{data,config,ssl,data/gitea/lfs} || {
+        echo "ERROR: Failed to create Forgejo directories"
+        notify_webhook "failed" "directory_creation" "Failed to create Forgejo directories"
+        exit 1
     }
+    chown -R 1000:1000 "$FORGEJO_DIR"/data "$FORGEJO_DIR"/config "$FORGEJO_DIR"/data/gitea
+    sleep 5
+                                      
+    # ========== DOCKER COMPOSE CONFIGURATION ==========
+    echo "[7/15] Creating Docker Compose configuration..."
+    notify_webhook "provisioning" "docker_compose" "Configuring Docker Compose"
+    sleep 5
 
-    for ext in "${extensions[@]}"; do
-        install_extension "$ext"
-    done
+    cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF
+version: "3.8"
+networks:
+  forgejo:
+    external: false
 
-    # List installed extensions
-    echo "📂 Installed extensions:"
-    sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" --list-extensions
+services:
+  server:
+    image: codeberg.org/forgejo/forgejo:12
+    container_name: forgejo
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - FORGEJO__server__DOMAIN=$DOMAIN
+      - FORGEJO__server__ROOT_URL=https://$DOMAIN
+      - FORGEJO__server__HTTP_PORT=3000
+      - FORGEJO__server__LFS_START_SERVER=true
+      - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
+      - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
+      - FORGEJO__server__LFS_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
+    volumes:
+      - ./data:/data
+      - ./config:/data/config
+      - ./ssl:/data/ssl
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "$PORT:3000"
+      - "222:22"
+    networks:
+      - forgejo
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+EOF
 
-    # Ensure 'code' CLI symlink
-    echo "[17/20] Ensuring 'code' symlink"
-    notify_webhook "provisioning" "code_cli" "Configuring 'code' binary"
-    if [ ! -L /usr/local/bin/code ] && [ ! -f /usr/local/bin/code ]; then
-        ln -s "$CODE_BIN" /usr/local/bin/code
-    fi
+    sleep 5
+    notify_webhook "provisioning" "docker_compose_ready" "Docker Compose configuration created"
+    sleep 5
 
-    echo "✅ code-server setup complete"
-    notify_webhook "provisioning" "provisioning" "✅ code-server installed and ready"
+    # ========== FIREWALL CONFIGURATION ==========
+    echo "[8/15] Configuring firewall..."
+    notify_webhook "provisioning" "firewall" "Setting up UFW firewall"
 
-    # ========== FIREWALL ==========
-    echo "[17/20] Configuring UFW firewall (opens SSH/HTTP/HTTPS and code-server port)"
-    notify_webhook "provisioning" "firewall" "Configuring UFW"
     if ! ufw status | grep -q inactive; then
         echo "UFW already active; adding rules"
     fi
+
     ufw allow 22/tcp 
     ufw allow 80/tcp 
     ufw allow 443/tcp
     ufw allow "$PORT"/tcp
     ufw --force enable
 
-   # ========== NGINX CONFIG + SSL (merged from GPT Docker script) ==========
-    echo "[18/20] Configuring nginx reverse proxy with SSL..."
+    # ========== START FORGEJO CONTAINER ==========
+    echo "[9/15] Starting Forgejo container..."
+    notify_webhook "provisioning" "container_start" "Starting Forgejo Docker container"
+    sleep 5
+
+    cd "$FORGEJO_DIR"
+    docker compose up -d || {
+        echo "ERROR: Failed to start Forgejo container"
+        notify_webhook "failed" "container_start" "Failed to start Forgejo container"
+        exit 1
+    }
+
+    echo "[10/15] Waiting for Forgejo to initialize..."
+    notify_webhook "provisioning" "forgejo_wait" "Waiting for Forgejo to become ready"
+    sleep 30
+
+    # Wait for Forgejo to be ready
+    timeout=300
+    while [ $timeout -gt 0 ]; do
+        if curl -s http://localhost:$PORT >/dev/null 2>&1; then
+            break
+        fi
+        sleep 10
+        timeout=$((timeout - 10))
+        echo "Waiting for Forgejo... ($timeout seconds remaining)"
+    done
+
+    if [ $timeout -eq 0 ]; then
+        echo "WARNING: Forgejo taking longer than expected to start"
+        notify_webhook "warning" "forgejo_timeout" "Forgejo startup taking longer than expected"
+    fi
+
+    # ========== DNS CHECK ==========
+    echo "[11/15] Checking DNS configuration..."
+    notify_webhook "provisioning" "dns_check" "Verifying domain DNS resolution"
+
+    # Get public IP
+    PUBLIC_IP=$(curl -s http://checkip.amazonaws.com || curl -s http://ifconfig.me || echo "unknown")
+    echo "Server public IP: $PUBLIC_IP"
+    
+    # Check if domain resolves to this server
+    echo "Checking DNS resolution for $DOMAIN..."
+    DNS_IP=$(dig +short $DOMAIN | head -1 || echo "")
+    
+    if [ -n "$DNS_IP" ]; then
+        echo "Domain $DOMAIN resolves to: $DNS_IP"
+        if [ "$DNS_IP" = "$PUBLIC_IP" ]; then
+            echo "✅ DNS is correctly configured"
+            DNS_VALID=true
+        else
+            echo "⚠️ DNS points to $DNS_IP but server IP is $PUBLIC_IP"
+            echo "This may cause SSL certificate validation to fail"
+            DNS_VALID=false
+        fi
+    else
+        echo "❌ Domain $DOMAIN does not resolve to any IP"
+        DNS_VALID=false
+    fi
+
+    # ========== NGINX CONFIG + SSL ==========
+    echo "[12/15] Configuring nginx reverse proxy with SSL..."
+    notify_webhook "provisioning" "ssl_nginx" "Configuring nginx + SSL"
+
+    # Stop any existing nginx
+    systemctl stop nginx || true
+
+    # Clean up existing configs
     rm -f /etc/nginx/sites-enabled/default
-    rm -f /etc/nginx/sites-available/code-server
+    rm -f /etc/nginx/sites-enabled/forgejo
+    rm -f /etc/nginx/sites-available/forgejo
 
-    # Download Let's Encrypt recommended configs
-    mkdir -p /etc/letsencrypt
-    curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf" -o /etc/letsencrypt/options-ssl-nginx.conf
-    curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem" -o /etc/letsencrypt/ssl-dhparams.pem
+    # Create nginx directories if they don't exist
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /var/www/html
 
-    # Initial temporary HTTP server for certbot
-    cat > /etc/nginx/sites-available/code-server <<'EOF_TEMP'
+    # Download Let's Encrypt recommended configs with retry logic
+    echo "Downloading SSL configurations..."
+    for i in {1..5}; do
+        if curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf" -o /etc/letsencrypt/options-ssl-nginx.conf; then
+            break
+        fi
+        sleep 5
+    done
+
+    for i in {1..5}; do
+        if curl -s "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem" -o /etc/letsencrypt/ssl-dhparams.pem; then
+            break
+        fi
+        sleep 5
+    done
+
+    # Create webroot for certbot
+    mkdir -p /var/www/html
+    chown -R www-data:www-data /var/www/html
+    echo "Certbot validation ready" > /var/www/html/index.html
+
+    # SSL CERTIFICATE HANDLING WITH GRACEFUL FALLBACK
+    CERTBOT_SUCCESS=false
+    SSL_ENABLED=false
+
+    if [ "$DNS_VALID" = true ]; then
+        echo "Attempting to obtain SSL certificate..."
+        
+        # Initial temporary HTTP server for certbot
+        cat > /etc/nginx/sites-available/forgejo <<EOF_TEMP
 server {
     listen 80;
-    server_name __DOMAIN__;
+    server_name $DOMAIN;
     root /var/www/html;
 
     location / {
@@ -492,195 +374,290 @@ server {
     }
 }
 EOF_TEMP
-                                      
-    ln -sf /etc/nginx/sites-available/code-server /etc/nginx/sites-enabled/code-server
-    nginx -t && systemctl restart nginx
 
-    # Create webroot for certbot
-    mkdir -p /var/www/html
-    chown www-data:www-data /var/www/html
+        ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
+        
+        # Test nginx config
+        if nginx -t; then
+            systemctl start nginx || {
+                echo "ERROR: Failed to start nginx"
+                notify_webhook "failed" "nginx_start" "Failed to start nginx"
+            }
+        fi
 
-    # Obtain SSL certificate using certbot
-    if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
-        echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
-        systemctl start nginx || true
-        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
+        # Try certbot with different methods
+        for method in "nginx" "webroot"; do
+            echo "Trying certbot with method: $method"
+            case $method in
+                "nginx")
+                    if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL" --no-redirect; then
+                        CERTBOT_SUCCESS=true
+                        SSL_ENABLED=true
+                        echo "✅ Certbot nginx plugin succeeded"
+                        break
+                    fi
+                    ;;
+                "webroot")
+                    if certbot certonly --webroot -w /var/www/html -d "$DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL"; then
+                        CERTBOT_SUCCESS=true
+                        SSL_ENABLED=true
+                        echo "✅ Certbot webroot method succeeded"
+                        break
+                    fi
+                    ;;
+            esac
+        done
+
+        if [ "$CERTBOT_SUCCESS" = false ]; then
+            echo "❌ All certbot methods failed"
+            notify_webhook "warning" "ssl_certificate" "Failed to obtain SSL certificate, continuing with HTTP"
+            # Stop nginx to reconfigure without SSL
+            systemctl stop nginx || true
+        fi
+    else
+        echo "Skipping SSL certificate setup due to DNS misconfiguration"
+        notify_webhook "warning" "dns_misconfigured" "DNS not configured, skipping SSL"
     fi
 
-    # Verify certificate existence
-    if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
-        echo "❌ SSL certificate not found!"
-        exit 1
-    fi
-
-    # Replace Nginx config with full HTTPS proxy for code-server
-    cat > /etc/nginx/sites-available/code-server <<'EOF_SSL'
+    # FINAL NGINX CONFIGURATION
+    if [ "$SSL_ENABLED" = true ] && [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+        echo "Configuring nginx with SSL..."
+        cat > /etc/nginx/sites-available/forgejo <<EOF_SSL
 server {
     listen 80;
-    server_name __DOMAIN__;
-    return 301 https://$host$request_uri;
+    server_name $DOMAIN;
+    return 301 https://\$host\$request_uri;
 }
+
 server {
     listen 443 ssl http2;
-    server_name __DOMAIN__;
+    server_name $DOMAIN;
 
-    ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
+    client_max_body_size ${MAX_UPLOAD_SIZE_MB}M;
+
     location / {
-        proxy_pass http://127.0.0.1:__PORT__;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        add_header Content-Security-Policy "frame-ancestors 'self' $ALLOW_EMBED_WEBSITE" always;
     }
 }
 EOF_SSL
+    else
+        echo "Configuring nginx without SSL (HTTP only)..."
+        SSL_ENABLED=false
+        cat > /etc/nginx/sites-available/forgejo <<EOF_HTTP
+server {
+    listen 80;
+    server_name $DOMAIN;
 
-    ln -sf /etc/nginx/sites-available/code-server /etc/nginx/sites-enabled/code-server
-    nginx -t && systemctl reload nginx
+    client_max_body_size ${MAX_UPLOAD_SIZE_MB}M;
 
-    echo "[19/19] Setup Cron for renewal..."
-    notify_webhook "provisioning" "provisioning" "Setup Cron for renewal..."
-         
-    # Setup cron for renewal (runs daily and reloads nginx on change)
-    (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
-    
-    # ========== FINAL CHECKS ==========
-    echo "[20/20] Final verification..."
-    notify_webhook "provisioning" "verification" "Performing verification checks"
-
-    if ! nginx -t; then
-        echo "ERROR: nginx config test failed"
-        notify_webhook "failed" "verification" "Nginx config test failed"
-    fi
-
-    if [ -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
-        HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://__DOMAIN__ || echo "000")
-        echo "HTTPS check returned: $HTTPS_RESPONSE"
-        if [ "$HTTPS_RESPONSE" != "200" ]; then
-            notify_webhook "warning" "verification" "HTTPS check returned $HTTPS_RESPONSE"
-        else
-            notify_webhook "provisioning" "verification" "HTTPS OK"
-        fi
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        add_header Content-Security-Policy "frame-ancestors 'self' $ALLOW_EMBED_WEBSITE" always;
+    }
+}
+EOF_HTTP
     fi
 
     # Test and apply the new config
     if nginx -t; then
+        systemctl enable nginx
+        systemctl start nginx
         systemctl reload nginx
         echo "✅ Nginx configuration test passed"
-        notify_webhook "provisioning" "verification" "✅ Nginx configuration test passed"
+        notify_webhook "provisioning" "nginx_ready" "Nginx configured successfully"
     else
         echo "❌ Nginx configuration test failed"
-        notify_webhook "failed" "verification" "Nginx config test failed"
+        notify_webhook "failed" "nginx_config" "Nginx config test failed"
         exit 1
     fi
-                                      
+
+    # Setup cron for SSL renewal if certificate was obtained
+    if [ "$SSL_ENABLED" = true ]; then
+        echo "[13/15] Setting up Certbot renewal cron..."
+        notify_webhook "provisioning" "ssl_cron" "Scheduling daily certificate renewal"
+        
+        # Setup cron for renewal (runs daily and reloads nginx on change)
+        (crontab -l 2>/dev/null | grep -v "certbot renew" || true; \
+            echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
+    fi
+
+    # ========== FINAL CHECKS ==========
+    echo "[14/15] Performing final verification..."
+    notify_webhook "provisioning" "verification" "Performing verification checks"
+
+    # Check if services are running
+    if systemctl is-active --quiet nginx; then
+        echo "✅ Nginx is running"
+    else
+        echo "❌ Nginx is not running"
+        notify_webhook "warning" "verification" "Nginx is not running"
+    fi
+
+    if docker ps | grep -q forgejo; then
+        echo "✅ Forgejo container is running"
+    else
+        echo "❌ Forgejo container is not running"
+        notify_webhook "warning" "verification" "Forgejo container is not running"
+    fi
+
+    # Test accessibility
+    echo "[15/15] Testing accessibility..."
+    if [ "$SSL_ENABLED" = true ]; then
+        PROTOCOL="https"
+        URL="https://$DOMAIN"
+    else
+        PROTOCOL="http" 
+        URL="http://$DOMAIN"
+    fi
+
+    # Get server IP for fallback testing
+    SERVER_IP=$(hostname -I | awk '{print $1}')
+    IP_URL="$PROTOCOL://$SERVER_IP"
+
+    echo "Testing access via: $URL"
+    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
+    
+    if [ "$RESPONSE" = "200" ]; then
+        echo "✅ $PROTOCOL accessibility test passed via domain"
+        FINAL_URL="$URL"
+    else
+        echo "⚠️ Domain access returned $RESPONSE, testing via IP..."
+        IP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$IP_URL" || echo "000")
+        if [ "$IP_RESPONSE" = "200" ]; then
+            echo "✅ $PROTOCOL accessibility test passed via IP"
+            FINAL_URL="$IP_URL"
+        else
+            echo "⚠️ Both domain and IP access failed"
+            FINAL_URL="$URL"
+        fi
+    fi
+
+    # ========== COMPLETION ==========
+    echo "Setup complete!"
+    notify_webhook "success" "complete" "Forgejo provisioning completed successfully"
+
+    # Display appropriate completion message
+    if [ "$SSL_ENABLED" = true ]; then
+        SSL_STATUS="✅ SSL Enabled"
+        ACCESS_NOTES="Your instance is secured with HTTPS"
+    else
+        SSL_STATUS="⚠️  SSL Not Enabled (DNS may need configuration)"
+        ACCESS_NOTES="SSL certificate setup was skipped due to DNS configuration. You can set up SSL later by running certbot manually after configuring DNS."
+    fi
+
     cat <<EOF_FINAL
 =============================================
-✅ Code Server Setup Complete!
+✅ Forgejo Setup Complete!
 ---------------------------------------------
-🔗 Access URL     : https://__DOMAIN__
-👤 Admin password : __ADMIN_PASSWORD__
+🔗 Access URL: $FINAL_URL
+🔐 $SSL_STATUS
+👤 Admin email: $ADMIN_EMAIL
+🔒 Default password: $ADMIN_PASSWORD
 ---------------------------------------------
-⚙️ Useful commands
-- Check status: systemctl status code-server@__SERVICE_USER__
-- View logs   : journalctl -u code-server@__SERVICE_USER__ -f
-- Restart     : systemctl restart code-server@__SERVICE_USER__
-- Nginx status: systemctl status nginx
+$ACCESS_NOTES
 ---------------------------------------------
-⚠️ Post-install notes
-1️⃣  First visit https://__DOMAIN__ to access your code server
-2️⃣  To renew SSL certificates: certbot renew --quiet
-3️⃣  Extensions installed in: __VOLUME_DIR__/data/extensions
+⚙️ Useful commands:
+- Check status: cd $FORGEJO_DIR && docker compose ps
+- View logs: cd $FORGEJO_DIR && docker compose logs -f
+- Restart: cd $FORGEJO_DIR && docker compose restart
+- Update: cd $FORGEJO_DIR && docker compose pull && docker compose up -d
 ---------------------------------------------
-Enjoy your new code server!
+📝 Post-installation steps:
+1. Visit the Access URL to complete setup
+2. Change the default admin password immediately
+3. Configure your repository settings
+4. Set up backup procedures
+5. If SSL is not enabled, configure DNS and run: 
+   sudo certbot --nginx -d $DOMAIN
+---------------------------------------------
+Enjoy your new Forgejo instance!
 =============================================
 EOF_FINAL
     """)
 
-    # Build webhook function snippet (inlined) or a stub
+    # ========== WEBHOOK FUNCTION HANDLING ==========
     if tokens["__WEBHOOK_URL__"]:
-        # escape double quotes for JSON heredoc safe insertion
         webhook_fn = textwrap.dedent(r"""
         notify_webhook() {
-          local status="$1"
-          local step="$2"
-          local message="$3"
+            local status="$1"
+            local step="$2"
+            local message="$3"
 
-          # Build JSON payload
-          JSON_PAYLOAD=$(cat <<JSON_EOF
+            # Build JSON payload
+            JSON_PAYLOAD=$(cat <<JSON_EOF
         {
-          "vm_name": "$(hostname)",
-          "status": "$status",
-          "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-          "location": "__LOCATION__",
-          "resource_group": "__RESOURCE_GROUP__",
-          "details": {
-            "step": "$step",
-            "message": "$message"
-          }
+            "vm_name": "$(hostname)",
+            "status": "$status",
+            "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+            "location": "__LOCATION__",
+            "resource_group": "__RESOURCE_GROUP__",
+            "details": {
+                "step": "$step",
+                "message": "$message"
+            }
         }
         JSON_EOF
-          )
+            )
 
-          # Send POST (show HTTP code)
-          curl -s -X POST "__WEBHOOK_URL__" \
-            -H "Content-Type: application/json" \
-            -d "$JSON_PAYLOAD" \
-            --connect-timeout 10 \
-            --max-time 30 \
-            --retry 2 \
-            --retry-delay 5 \
-            --write-out "Webhook result: %{http_code}\n" \
-            --output /dev/null || true
+            # Send webhook with retry logic
+            curl -s -X POST "__WEBHOOK_URL__" \
+                -H "Content-Type: application/json" \
+                -d "$JSON_PAYLOAD" \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --retry 2 \
+                --retry-delay 5 \
+                --write-out "Webhook HTTP status: %{http_code}\n" \
+                --output /dev/null || true
         }
         """)
     else:
         webhook_fn = textwrap.dedent(r"""
         notify_webhook() {
-          # Webhook disabled/stub
-          return 0
+            # Webhook disabled - stub function
+            return 0
         }
         """)
 
-    # Now replace tokens inside script_template
-    final = script_template.replace("__WEBHOOK_FUNCTION__", webhook_fn)
+    # ========== TOKEN REPLACEMENT ==========
+    # Replace webhook function first
+    final_script = script_template.replace("__WEBHOOK_FUNCTION__", webhook_fn)
 
-    # Replace the rest of simple tokens
-    for tk, val in tokens.items():
-        # Skip webhook_url token here because webhook_fn included it as placeholders
-        if tk == "__WEBHOOK_URL__":
-            continue
-        final = final.replace(tk, val)
+    # Replace all other tokens
+    for token, value in tokens.items():
+        final_script = final_script.replace(token, value)
 
-    # Replace webhook placeholders in webhook_fn portion (location/resource_group/webhook_url)
-    final = final.replace("__LOCATION__", tokens["__LOCATION__"])
-    final = final.replace("__RESOURCE_GROUP__", tokens["__RESOURCE_GROUP__"])
-    final = final.replace("__WEBHOOK_URL__", tokens["__WEBHOOK_URL__"])
-    final = final.replace("__LET_OPTIONS_URL__", tokens["__LET_OPTIONS_URL__"])
-    final = final.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
+    # Replace webhook-specific tokens in the webhook function
+    final_script = final_script.replace("__LOCATION__", tokens["__LOCATION__"])
+    final_script = final_script.replace("__RESOURCE_GROUP__", tokens["__RESOURCE_GROUP__"])
+    final_script = final_script.replace("__WEBHOOK_URL__", tokens["__WEBHOOK_URL__"])
 
-    # Replace CERTBOT_CRON token
-    certbot_cron = "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'"
-    final = final.replace("__CERTBOT_CRON__", certbot_cron)
+    # Replace SSL configuration URLs
+    final_script = final_script.replace("__LET_OPTIONS_URL__", tokens["__LET_OPTIONS_URL__"])
+    final_script = final_script.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
 
-    # Small safety: ensure files under VOLUME_DIR exist and are substituted
-    final = final.replace("__VOLUME_DIR__", tokens["__VOLUME_DIR__"])
-
-    # Replace extensions
-    final = final.replace("__EXTENSIONS__", ext_block)
-    # Replace remaining tokens for service user, password, admin email, domain, port
-    final = final.replace("__SERVICE_USER__", tokens["__SERVICE_USER__"])
-    final = final.replace("__ADMIN_PASSWORD__", tokens["__ADMIN_PASSWORD__"])
-    final = final.replace("__ADMIN_EMAIL__", tokens["__ADMIN_EMAIL__"])
-    final = final.replace("__DOMAIN__", tokens["__DOMAIN__"])
-    final = final.replace("__PORT__", tokens["__PORT__"])
-
-    # Return the final script string
-    return final
+    return final_script
