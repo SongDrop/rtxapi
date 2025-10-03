@@ -29,7 +29,7 @@ def generate_setup(
         "__FORGEJO_DIR__": "/opt/forgejo",
         "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
         "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
-        "__MAX_UPLOAD_SIZE_MB__": "1024",
+        "__MAX_UPLOAD_SIZE_MB__": "1024M", #u need like this unless it fails
         "__MAX_UPLOAD_SIZE_BYTES__": str(1024 * 1024 * 1024),  # 1GB in bytes
     }
 
@@ -324,7 +324,7 @@ server {
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    client_max_body_size __MAX_UPLOAD_SIZE_MB__M;
+    client_max_body_size __MAX_UPLOAD_SIZE_MB__;
 
     location / {
         proxy_pass http://127.0.0.1:__PORT__;
@@ -337,10 +337,11 @@ server {
         proxy_read_timeout 86400;
         proxy_buffering off;
         proxy_request_buffering off;
-        add_header Content-Security-Policy "frame-ancestors 'self' __ALLOW_EMBED_WEBSITE__" always;
     }
 }
 EOF_SSL
+
+    #add_header Content-Security-Policy "frame-ancestors 'self' __ALLOW_EMBED_WEBSITE__" always;
 
     ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
     nginx -t && systemctl reload nginx
