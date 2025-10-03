@@ -9,7 +9,8 @@ def generate_setup(
     WEBHOOK_URL="",
     ALLOW_EMBED_WEBSITE="",
     location="",
-    resource_group=""
+    resource_group="",
+    UPLOAD_SIZE_MB=1024  # default 1GB
 ):
     """
     Returns a full bash provisioning script for Forgejo using template method.
@@ -29,7 +30,7 @@ def generate_setup(
         "__FORGEJO_DIR__": "/opt/forgejo",
         "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
         "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
-        "__MAX_UPLOAD_SIZE_MB__": "1024M", #u need like this unless it fails
+        "__MAX_UPLOAD_SIZE_MB__": f"{UPLOAD_SIZE_MB}M", #u need like this unless it fails
         "__MAX_UPLOAD_SIZE_BYTES__": str(1024 * 1024 * 1024),  # 1GB in bytes
     }
 
@@ -297,12 +298,33 @@ EOF_TEMP
     mkdir -p /var/www/html
     chown www-data:www-data /var/www/html
 
-    # Obtain SSL certificate using certbot
-    if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
-        echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
-        systemctl start nginx || true
-        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
+    echo "🔍 Testing nginx before Certbot..."
+    if ! nginx -t; then
+        echo "❌ Nginx config test failed before Certbot"
+        notify_webhook "failed" "nginx_test" "Nginx config test failed before Certbot"
+        exit 1
     fi
+
+    systemctl restart nginx || {
+        notify_webhook "failed" "nginx_restart" "Failed to restart nginx before Certbot"
+        exit 1
+    }
+
+    sleep 3
+
+    echo "🔍 Running Certbot..."
+    notify_webhook "failed" "ssl_certbot" "Running Certbot..."
+
+    if ! certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL"; then
+        echo "⚠️ Certbot nginx plugin failed, falling back to webroot"
+        systemctl start nginx || true
+        if ! certbot certonly --webroot -w /var/www/html -d "$DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL"; then
+            echo "❌ Certbot failed with both nginx and webroot"
+            notify_webhook "failed" "certbot" "Certbot failed with both nginx and webroot"
+            exit 1
+        fi
+    fi
+
 
     # Verify certificate existence
     if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
