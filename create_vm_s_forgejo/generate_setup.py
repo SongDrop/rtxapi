@@ -349,12 +349,29 @@ EOF_TEMP
     echo "🔍 Running Certbot..."
     notify_webhook "failed" "ssl_certbot" "Running Certbot..."
 
-    # Issue real certificate with nginx plugin
-    if ! certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect; then
-        echo "❌ Certbot failed with nginx plugin"
-        notify_webhook "failed" "certbot" "Certbot failed with nginx plugin"
+    echo "🔍 Checking DNS resolution for $DOMAIN..."
+    if ! host "$DOMAIN" >/dev/null 2>&1; then
+        echo "❌ Domain $DOMAIN does not resolve"
+        notify_webhook "failed" "dns_check" "Domain $DOMAIN does not resolve to this server"
         exit 1
     fi
+
+    echo "🔍 Testing HTTP accessibility..."
+    if ! curl -fsS http://127.0.0.1 >/dev/null 2>&1; then
+        echo "❌ Local HTTP test failed"
+        notify_webhook "failed" "nginx_http" "Local HTTP test failed before Certbot"
+        exit 1
+    fi
+
+    # Issue real certificate with nginx plugin
+    if ! certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect; then
+        echo "⚠️ Certbot failed with production, retrying with staging..."
+        certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect --staging || {
+            notify_webhook "failed" "certbot" "Certbot failed in both production and staging"
+            exit 1
+        }
+    fi
+
 
     # Verify certificate existence
     if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
