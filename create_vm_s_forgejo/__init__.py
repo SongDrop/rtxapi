@@ -169,7 +169,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # App constants
         ADMIN_EMAIL = f"admin@{domain}"
-        ADMIN_PASSWORD = "MyPass1234!"
+        ADMIN_PASSWORD = "password_on_install"
         FRONTEND_PORT = 3000
         BACKEND_PORT = 8000
         storage_account_base = vm_name

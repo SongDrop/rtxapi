@@ -217,13 +217,13 @@ services:
     environment:
       - USER_UID=1000
       - USER_GID=1000
-      - FORGEJO__server__DOMAIN=$DOMAIN
-      - FORGEJO__server__ROOT_URL=https://$DOMAIN
+      - FORGEJO__server__DOMAIN=__DOMAIN__
+      - FORGEJO__server__ROOT_URL=https://__DOMAIN__
       - FORGEJO__server__HTTP_PORT=3000
       - FORGEJO__server__LFS_START_SERVER=true
       - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
       - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
-      - FORGEJO__server__LFS_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
+      - FORGEJO__server__LFS_MAX_FILE_SIZE=__MAX_UPLOAD_SIZE_BYTES__
     volumes:
       - ./data:/data
       - ./config:/data/config
@@ -250,12 +250,12 @@ EOF
     notify_webhook "provisioning" "forgejo_readiness" " Waiting for Forgejo to become ready..."
    
     READY=false
-    for i in {1..20}; do
+    for i in {1..40}; do
         if curl -fsS http://127.0.0.1:3000 >/dev/null 2>&1; then
             READY=true
             break
         fi
-        echo "⏳ Forgejo not up yet (try $i/20)..."
+        echo "⏳ Forgejo not up yet (try $i/40)..."
         sleep 5
     done
 
