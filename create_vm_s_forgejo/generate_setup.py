@@ -250,8 +250,12 @@ EOF
     echo "[7c/15] Restarting daemon and Forgejo"
     notify_webhook "provisioning" "forgejo_start" "Restarting daemon and Forgejo"
    
-    sudo systemctl daemon-reload
-    sudo systemctl start forgejo
+    cd "$FORGEJO_DIR"
+    docker compose up -d || {
+        echo "ERROR: Failed to start Forgejo container"
+        notify_webhook "failed" "container_start" "Failed to start Forgejo container"
+        exit 1
+    }
 
     sleep 10
 
