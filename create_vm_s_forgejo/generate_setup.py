@@ -204,22 +204,23 @@ def generate_setup(
     notify_webhook "provisioning" "docker_compose" "Configuring Docker Compose"
     sleep 5
 
-    cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF
+    cat > "$FORGEJO_DIR/docker-compose.yml" <<'EOF'
 version: "3.8"
 networks:
   forgejo:
     external: false
+                                      
 services:
   server:
     image: codeberg.org/forgejo/forgejo:12
     container_name: forgejo
-    restart: unless-stopped
+    restart: always
     environment:
       - USER_UID=1000
       - USER_GID=1000
-      - FORGEJO__server__DOMAIN=__DOMAIN__
-      - FORGEJO__server__ROOT_URL=https://__DOMAIN__
-      - FORGEJO__server__HTTP_PORT=3000
+      - FORGEJO__server__DOMAIN=$DOMAIN
+      - FORGEJO__server__ROOT_URL=https://$DOMAIN
+      - FORGEJO__server__HTTP_PORT=$PORT
       - FORGEJO__server__LFS_START_SERVER=true
       - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
       - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
@@ -231,12 +232,12 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
     ports:
-      - "$PORT:3000"
+      - "$PORT:$PORT"
       - "222:22"
     networks:
       - forgejo
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD", "curl", "-f", "http://localhost:$PORT"]
       interval: 15s
       timeout: 10s
       retries: 40
@@ -246,9 +247,17 @@ EOF
     notify_webhook "provisioning" "docker_compose_ready" "Docker Compose configuration created"
                                       
     sleep 5
-    echo "[7c/15] Waiting for Forgejo to become ready..."
-    notify_webhook "provisioning" "forgejo_readiness" " Waiting for Forgejo to become ready..."
+    echo "[7c/15] Restarting daemon and Forgejo"
+    notify_webhook "provisioning" "forgejo_start" "Restarting daemon and Forgejo"
    
+    sudo systemctl daemon-reload
+    sudo systemctl start forgejo
+
+    sleep 10
+
+    echo "[7d/15] Waiting for Forgejo to become ready..."
+    notify_webhook "provisioning" "forgejo_readiness" "Waiting for Forgejo to become ready..."
+                                                                
     READY=false
     for i in {1..40}; do
         if curl -fsS http://127.0.0.1:$PORT >/dev/null 2>&1; then

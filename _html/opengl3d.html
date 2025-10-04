@@ -9,31 +9,72 @@
         body {
             font-family: Arial, sans-serif;
             margin: 20px;
-            background-color: #f5f5f5;
+            background-color: #fafafa;
             color: #333;
+            line-height: 1.6;
+            text-align: left !important;
+
+        }
+
+        .logo-container {
+            display: flex;
+            justify-content: left;
+            /* center horizontally */
+            align-items: center;
+            /* center vertically if needed */
+            gap: 20px;
+            /* spacing between logos */
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            /* allow wrapping on smaller screens */
+        }
+
+        .logo {
+            max-width: 150px;
+            /* adjust logo size */
+            height: auto;
         }
 
         h1,
         h2 {
             text-align: center;
+            color: #0078D4;
+            margin-bottom: 10px;
+        }
+
+        h3 {
+            color: #0078D4;
+            margin: 0px;
+        }
+
+        p {
+            margin: 0px;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
-            margin: 20px 0;
+            margin-bottom: 20px;
         }
 
+        body,
+        h1,
+        h2,
+        h3,
+        p,
+        ul,
+        li,
         table,
         th,
         td {
-            border: 1px solid #ccc;
+            text-align: left;
         }
 
         th,
         td {
-            padding: 12px;
             text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
         }
 
         th {
@@ -41,23 +82,65 @@
             color: white;
         }
 
-        .summary {
-            font-weight: bold;
-            margin-top: 20px;
-            font-size: 1.1em;
+        .cost-breakdown {
+            padding: 5px;
         }
 
-        .technical {
-            background-color: #fff;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+        .cost-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #ecf0f1;
+        }
+
+        .cost-total {
+            font-weight: bold;
+            font-size: 1.2em;
+            color: #27ae60;
+            border-top: 2px solid #3498db;
+            margin-top: 10px;
+            padding-top: 15px;
         }
     </style>
 </head>
 
 <body>
     <h2>Xash3D-fwsg-OpenGL3D Full Setup</h2>
+    <!-- Logo Flexbox -->
+    <div class="logo-container">
+        <img class="logo" src="https://i.postimg.cc/Jz9kdy1M/opengl3d.png" alt="OpenGL3D Logo">
+        <img class="logo" src="https://i.postimg.cc/nXVb14h8/LG-Logo.png" alt="LG Logo">
+        <img class="logo" src="https://i.postimg.cc/ZWYtL85T/lg-cinema-3d.png" alt="LG Cinema 3D Logo">
+    </div>
+    <div class="executive-summary">
+        <h2>Project Overview</h2>
+        <p>This system delivers Avatar-level stereoscopic 3D gaming experiences using modified Xash3D engine with OpenGL
+            stereoscopic rendering, precision motion controls, and LG passive 3D OLED displays - all at
+            consumer-friendly
+            prices.</p>
+
+        <div class="summary-grid">
+            <div class="summary-item">
+                <p><strong>💿 Video Game Engine: </strong>Xash3D-fwsg-OpenGL3D based stereoscopic rendering with
+                    multiple
+                    output formats and real-time 3D
+                    gameplay</p>
+            </div>
+            <div class="summary-item">
+                <p><strong>🎮 Motion Controls: </strong>Wii Remote & Joy-Con integration for immersive 1:1 motion aiming
+                    and interaction</p>
+            </div>
+            <div class="summary-item">
+                <p><strong>📺 Display System: </strong>LG passive 3D OLED TVs delivering full-color stereoscopic visuals
+                    without active glasses</p>
+            </div>
+            <div class="summary-item">
+                <p><strong>💰 Cost Effective: </strong>~$6,300 complete development setup vs $50M+ movie production
+                    budgets</p>
+            </div>
+            <br>
+        </div>
+    </div>
     <table>
         <tr>
             <th>Category</th>
@@ -138,6 +221,12 @@
             <td>$20</td>
         </tr>
         <tr>
+            <td>Passive 3d tv DUAL PLAY Glasses</td>
+            <td>LG DUAL PLAY GAMES Glasses</td>
+            <td>LG DUAL PLAY GAMES Glasses</td>
+            <td>$40</td>
+        </tr>
+        <tr>
             <td>PC with NVIDIA GPU</td>
             <td>PC with NVIDIA RTX 3090, 32GB RAM, 4CPU, 512gb ssd</td>
             <td>PC with NVIDIA RTX 3090, 32GB RAM, 4CPU, 512gb ssd</td>
@@ -145,15 +234,28 @@
         </tr>
     </table>
 
-    <div class="summary">
-        <p><strong>Grand Total Estimated:</strong></p>
-        <ul>
-            <li>Controllers + Accessories: $84.23</li>
-            <li>TVs: $5,200</li>
-            <li>3d Glasses: $20</li>
-            <li>PC: $1,000</li>
-            <li><strong>Total: ≈ $6,304.23</strong></li>
-        </ul>
+    <div class="cost-breakdown">
+        <h3>Total Investment Breakdown</h3>
+        <div class="cost-item">
+            <span>Controllers & Accessories:</span>
+            <span>$84.23</span>
+        </div>
+        <div class="cost-item">
+            <span>3D TVs (55", 65", 77"):</span>
+            <span>$5,200</span>
+        </div>
+        <div class="cost-item">
+            <span>3D Glasses:</span>
+            <span>$40</span>
+        </div>
+        <div class="cost-item">
+            <span>Development PC:</span>
+            <span>$1,200</span>
+        </div>
+        <div class="cost-item cost-total">
+            <span>Grand Total:</span>
+            <span>≈ $6,524.23</span>
+        </div>
     </div>
 
     <div class="technical">
@@ -175,6 +277,67 @@
             real-time stereoscopic 3D gameplay with immersive cutscenes, interactive motion input, and full-color 3D
             output — creating a true cinematic gaming experience.</p>
     </div>
+    <div>
+        <h2>Avatar 3D: The Movie Effect</h2>
+
+        <h3>Huge Budget and Innovation</h3>
+        <ul>
+            <li><strong>Cost:</strong> Around $50 million just for the 3D technology.</li>
+            <li>James Cameron’s team had to invent a completely new dual-lens 3D camera system.</li>
+            <li>This was a massive R&D investment on top of the $200+ million production budget.</li>
+        </ul>
+
+        <h3>Boosted the 3D Market Temporarily</h3>
+        <ul>
+            <li>The hype for Avatar 3D drove millions of viewers to 3D theaters.</li>
+            <li>It helped sell 3D TVs and Blu-ray players for home use — people wanted to replicate the experience at
+                home.
+            </li>
+        </ul>
+
+        <h3>Why 3D Cinema Didn’t Stick</h3>
+        <ul>
+            <li><strong>High production cost:</strong> Roughly $20 million extra per film for stereoscopic production.
+            </li>
+            <li><strong>Specialized post-production tools:</strong> Rendering 3D Blu-rays requires expensive software,
+                hardware, and studios.</li>
+            <li><strong>Limited ROI:</strong> Only a handful of movies could justify these costs; most studios didn’t
+                see
+                enough financial benefit.</li>
+        </ul>
+
+        <h2 style="color: #0078D4;">Games: A Totally Different Economics</h2>
+
+        <h3>Lower Costs</h3>
+        <ul>
+            <li>A AAA game can integrate stereoscopic 3D for roughly $500k.</li>
+            <li>Using open-source engines like Xash3D-fwsg-OpenGL3D lowers infrastructure costs.</li>
+        </ul>
+
+        <h3>Faster Turnaround</h3>
+        <ul>
+            <li>A 3D-enabled game can be ready in under 1 year.</li>
+            <li>No need to invent new cameras or expensive filming equipment — motion input and 3D rendering are handled
+                by
+                the engine.</li>
+        </ul>
+
+        <h3>Scalable Home Market</h3>
+        <ul>
+            <li>Gamers already own PCs and TVs capable of stereoscopic 3D.</li>
+            <li>Content can be updated, expanded, and patched, unlike movies.</li>
+            <li>Single titles can have ongoing support, making the technology more sustainable and accessible.</li>
+        </ul>
+
+        <h3 style="color: #0078D4;">✅ Takeaway</h3>
+        <p>
+            Movies like Avatar 3D were technologically groundbreaking but expensive and limited in scalability.
+            Stereoscopic 3D in games is feasible, much cheaper, and faster to deploy.
+            That’s why a $6k–$7k home 3D rig for developers or enthusiasts is a realistic market and a better investment
+            than replicating a $50M movie workflow.
+        </p>
+    </div>
+
 </body>
 
 </html>
