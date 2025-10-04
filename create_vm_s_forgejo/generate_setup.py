@@ -209,7 +209,6 @@ version: "3.8"
 networks:
   forgejo:
     external: false
-
 services:
   server:
     image: codeberg.org/forgejo/forgejo:12
@@ -245,9 +244,11 @@ EOF
 
     sleep 5
     notify_webhook "provisioning" "docker_compose_ready" "Docker Compose configuration created"
+                                      
     sleep 5
-
     echo "[7c/15] Waiting for Forgejo to become ready..."
+    notify_webhook "provisioning" "forgejo_readiness" " Waiting for Forgejo to become ready..."
+   
     READY=false
     for i in {1..20}; do
         if curl -fsS http://127.0.0.1:3000 >/dev/null 2>&1; then
