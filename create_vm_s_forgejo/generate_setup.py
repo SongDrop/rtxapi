@@ -315,19 +315,15 @@ EOF_TEMP
     echo "🔍 Running Certbot..."
     notify_webhook "failed" "ssl_certbot" "Running Certbot..."
 
-    if ! certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL"; then
-        echo "⚠️ Certbot nginx plugin failed, falling back to webroot"
-        systemctl start nginx || true
-        if ! certbot certonly --webroot -w /var/www/html -d "$DOMAIN" --non-interactive --agree-tos -m "$ADMIN_EMAIL"; then
-            echo "❌ Certbot failed with both nginx and webroot"
-            notify_webhook "failed" "certbot" "Certbot failed with both nginx and webroot"
-            exit 1
-        fi
+    # Issue real certificate with nginx plugin
+    if ! certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect; then
+        echo "❌ Certbot failed with nginx plugin"
+        notify_webhook "failed" "certbot" "Certbot failed with nginx plugin"
+        exit 1
     fi
 
-
     # Verify certificate existence
-    if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+    if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
         echo "❌ SSL certificate not found!"
         notify_webhook "failed" "ssl_certificate" "Failed to obtain SSL certificate"
         exit 1
@@ -335,6 +331,7 @@ EOF_TEMP
 
     sleep 3
     notify_webhook "provisioning" "ssl_obtained" "SSL obtained"
+
 
     # Replace Nginx config with full HTTPS proxy for Forgejo
     cat > /etc/nginx/sites-available/forgejo <<'EOF_SSL'
