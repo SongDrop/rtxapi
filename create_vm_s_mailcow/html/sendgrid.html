@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mailcow + SendGrid (on Azure DNS)</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.5;
+        }
+
+        h2 {
+            margin-bottom: 5px;
+        }
+
+        img {
+            display: block;
+            margin: 10px 0 20px 0;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
+
+        tr:nth-child(even) {
+            background-color: #fafafa;
+        }
+
+        .auto {
+            color: green;
+            font-weight: bold;
+        }
+
+        .manual {
+            color: #d35400;
+            font-weight: bold;
+        }
+
+        .system-mailcow {
+            color: #0073e6;
+            font-weight: bold;
+        }
+
+        .system-sendgrid {
+            color: #8e44ad;
+            font-weight: bold;
+        }
+
+        .note {
+            margin-top: 20px;
+            padding: 12px;
+            background: #f9f9f9;
+            border-left: 4px solid #0073e6;
+        }
+
+        .steps {
+            margin-top: 15px;
+            padding: 12px;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+
+        .steps h4 {
+            margin-top: 0;
+        }
+
+        .steps ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>📌 DNS Records Required for Mailcow + SendGrid (on Azure DNS)</h2>
+    <img src="https://i.postimg.cc/RVY7BM5W/mailcow.png" alt="Mailcow Logo" style="width:200px;" />
+
+    <div class="note">
+        <h3>⚠️ BEFORE INSTALL:</h3>
+        <p>
+            - You need a domain name purchased. This domain must point to Azure NS, usually:<br>
+            <code>ns1-09.azure-dns.com</code><br>
+            <code>ns2-09.azure-dns.net</code><br>
+            <code>ns3-09.azure-dns.org</code><br>
+            <code>ns4-09.azure-dns.info</code><br>
+        </p>
+        <p>
+            In <code>create_vm_s_mailcow</code> the DNS will be checked to point to the correct values. If the check
+            fails,
+            the setup will fail. These can be set in your domain provider.
+        </p>
+
+        <p>
+            During install, <code>create_vm_s_mailcow</code> will create most resources automatically, but some domain
+            setup
+            will be manual since it is created after installing Mailcow and setting up your SendGrid profile.
+        </p>
+    </div>
+
+    <div class="note">
+        <h3>✅ AFTER INSTALL:</h3>
+        <p>
+            - Login to Mailcow, register your domain. A DKIM key will be generated, and you need to add that manually in
+            Azure DNS for your domain as a <b>Record Set</b>, which can be found in
+            <code>Group → DOMAIN → Record Sets</code>.<br>
+            - Create a SendGrid profile, acquire an <code>API_KEY</code>, and complete the validations (see the table
+            above
+            where it says SendGrid manual).
+        </p>
+    </div>
+    <div class="note">
+        <h3>⚡ Deploy Mailcow on Azure (Automatic)</h3>
+        <p>
+            <b>Note:</b> If you are using the <code>create_vm_s_mailcow</code> script, this step is handled
+            automatically.
+            You do <b>not</b> need to manually install anything, the script handles it for you.
+        </p>
+        <ul>
+            <li>Create Azure VM (Ubuntu, minimum 2 CPU, 4GB RAM)</li>
+            <li>Install Docker & Docker Compose</li>
+            <li>Deploy Mailcow using <code>docker-compose</code></li>
+            <li>Setup SSL https configuration for your domain</li>
+        </ul>
+    </div>
+    <p>
+        Below are the DNS(Domain) 'Record sets' you need to have in Azure for the right configuration:
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>Record Type</th>
+                <th>Host / Name</th>
+                <th>Value</th>
+                <th>Purpose</th>
+                <th>Input</th>
+                <th>System</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>TXT</td>
+                <td>_dmarc</td>
+                <td>v=DMARC1; p=quarantine; rua=mailto:admin@win10dev.xyz; ruf=mailto:admin@win10dev.xyz; fo=1;
+                    adkim=s;
+                    aspf=s</td>
+                <td>DMARC – tells receivers how to handle failed mail</td>
+                <td class="auto">Automated</td>
+                <td class="system-mailcow">Mailcow</td>
+            </tr>
+            <tr>
+                <td>MX</td>
+                <td>@</td>
+                <td>smtp.win10dev.xyz (priority 10)</td>
+                <td>Mail exchange – where incoming mail is delivered</td>
+                <td class="auto">Automated</td>
+                <td class="system-mailcow">Mailcow</td>
+            </tr>
+            <tr>
+                <td>CNAME</td>
+                <td>autoconfig</td>
+                <td>smtp.win10dev.xyz</td>
+                <td>Mail client auto-configuration</td>
+                <td class="auto">Automated</td>
+                <td class="system-mailcow">Mailcow</td>
+            </tr>
+            <tr>
+                <td>CNAME</td>
+                <td>autodiscover</td>
+                <td>smtp.win10dev.xyz</td>
+                <td>Mail client autodiscover (Outlook, Thunderbird)</td>
+                <td class="auto">Automated</td>
+                <td class="system-mailcow">Mailcow</td>
+            </tr>
+            <tr>
+                <td>TXT</td>
+                <td>dkim._domainkey</td>
+                <td>v=DKIM1; k=rsa; p=MIIBIjANBgkqhki... (Mailcow DKIM public key)</td>
+                <td>DKIM – signs outgoing mail from Mailcow</td>
+                <td class="manual">Manual</td>
+                <td class="system-mailcow">Mailcow</td>
+            </tr>
+            <tr>
+                <td>TXT</td>
+                <td>@</td>
+                <td>v=spf1 mx include:sendgrid.net ~all</td>
+                <td>SPF – allows mail from your MX and SendGrid</td>
+                <td class="manual">Manual</td>
+                <td class="system-sendgrid">SendGrid</td>
+            </tr>
+            <tr>
+                <td>CNAME</td>
+                <td>s1._domainkey</td>
+                <td>s1.domainkey.u55209657.wl158.sendgrid.net</td>
+                <td>SendGrid DKIM (key 1)</td>
+                <td class="manual">Manual</td>
+                <td class="system-sendgrid">SendGrid</td>
+            </tr>
+            <tr>
+                <td>CNAME</td>
+                <td>s2._domainkey</td>
+                <td>s2.domainkey.u55209657.wl158.sendgrid.net</td>
+                <td>SendGrid DKIM (key 2)</td>
+                <td class="manual">Manual</td>
+                <td class="system-sendgrid">SendGrid</td>
+            </tr>
+            <tr>
+                <td>CNAME</td>
+                <td>em9514</td>
+                <td>u55209657.wl158.sendgrid.net</td>
+                <td>SendGrid domain verification</td>
+                <td class="manual">Manual</td>
+                <td class="system-sendgrid">SendGrid</td>
+            </tr>
+        </tbody>
+    </table>
+    <div class="note">
+        <h3>ℹ️ What do <span class="auto">Automatic</span> and <span class="manual">Manual</span> mean?</h3>
+        <p>
+            <b>Automatic</b>: These DNS records are created automatically by <code>create_vm_s_mailcow</code> when
+            deploying
+            Mailcow.<br>
+            <b>Manual</b>: These records must be added manually. You will need to obtain the values from either the
+            <span class="system-mailcow">Mailcow admin panel</span> (e.g. DKIM keys) or the
+            <span class="system-sendgrid">SendGrid dashboard</span> (e.g. SPF, DKIM, and verification records).
+        </p>
+    </div>
+    <div class="steps">
+        <h4>📖 How to get the manual records</h4>
+
+        <h5 class="system-mailcow">From Mailcow:</h5>
+        <ol>
+            <li>Login to your Mailcow Admin Panel.</li>
+            <li>Go to <b>Configuration → Mail Setup → Domains</b>.</li>
+            <li>Select your domain and click <b>Generate DKIM</b> if not already generated.</li>
+            <li>Copy the <code>dkim._domainkey</code> TXT record and add it in Azure DNS.</li>
+        </ol>
+
+        <h5 class="system-sendgrid">From SendGrid:</h5>
+        <ol>
+            <li>Login to your SendGrid dashboard.</li>
+            <li>Go to <b>Settings → Sender Authentication</b>.</li>
+            <li>Click <b>Authenticate Your Domain</b> and follow the wizard.</li>
+            <li>SendGrid will give you DNS records for:
+                <ul>
+                    <li>SPF (TXT @)</li>
+                    <li>DKIM (CNAME s1._domainkey & s2._domainkey)</li>
+                    <li>Verification record (CNAME em####)</li>
+                </ul>
+            </li>
+            <li>Add those records into Azure DNS.</li>
+        </ol>
+    </div>
+    <div>
+        <h2>📄 Code: html_email_send.py</h2>
+        <pre><code>
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    import ssl
+    
+    def send_html_email_smtp(
+        smtp_host: str,
+        smtp_port: int,
+        smtp_user: str,
+        smtp_password: str,
+        sender_email: str,
+        recipient_emails: list,
+        subject: str,
+        html_content: str,
+        use_tls: bool = True,
+        use_ssl: bool = False
+    ):
+        msg = MIMEMultipart('alternative')
+        msg['From'] = sender_email
+        msg['To'] = ", ".join(recipient_emails)
+        msg['Subject'] = subject
+        msg.attach(MIMEText(html_content, 'html'))
+    
+        try:
+            if use_ssl:
+                context = ssl.create_default_context()
+                server = smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=10)
+            else:
+                server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
+            if use_tls:
+                server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(sender_email, recipient_emails, msg.as_string())
+            server.quit()
+            print("[SUCCESS] Notification email sent successfully.")
+        except Exception as e:
+            print(f"[ERROR] Failed to send email: {e}")
+      </code></pre>
+
+        <h2>📄 Code: .env</h2>
+        <pre><code>
+    SMTP_HOST='smtp.sendgrid.net' #'smtp.sendgrid.net' , don't change this
+    SMTP_PORT='587' #port '587' has to be opened to send
+    SMTP_USER='apikey' #'apikey' as word, don't change this
+    SMTP_PASS='SENDGRID_API_KEY' #'sendgrid_api_key' from sendgrid.com
+    SENDER_EMAIL='MAILCOW_USER_EMAIL' #'your email address to send emails'
+      </code></pre>
+
+        <h2>📄 Code: html_email.py</h2>
+        <pre><code>
+    def HTMLEmail(title: str,
+                  main_heading: str,
+                  main_description: str,
+                  credentials: str):
+        return f"""&lt;!DOCTYPE html&gt;
+        &lt;html&gt;
+        &lt;head&gt;&lt;title&gt;{title}&lt;/title&gt;&lt;/head&gt;
+        &lt;body&gt;
+            &lt;h1&gt;{main_heading}&lt;/h1&gt;
+            &lt;p&gt;{main_description}&lt;/p&gt;
+            &lt;p&gt;Credentials: {credentials}&lt;/p&gt;
+        &lt;/body&gt;
+        &lt;/html&gt;"""
+      </code></pre>
+    </div>
+    <div>
+        <h2>📄 Code: test_send_email.py</h2>
+        <pre><code>
+    import os
+    import sys
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    import html_email
+    import html_email_send
+    
+    RECIPIENT_EMAILS = 'mail@example.com'
+    
+    def print_info(msg):
+        print(f"[INFO] {msg}")
+    
+    def print_error(msg):
+        print(f"[ERROR] {msg}")
+    
+    def print_success(msg):
+        print(f"[SUCCESS] {msg}")
+    
+    def main():
+        smtp_host = os.environ.get('SMTP_HOST')
+        smtp_port_str = os.environ.get('SMTP_PORT')
+        smtp_user = os.environ.get('SMTP_USER')
+        smtp_password = os.environ.get('SMTP_PASS')
+        sender_email = os.environ.get('SENDER_EMAIL')
+        recipient_emails_str = RECIPIENT_EMAILS
+        if not recipient_emails_str:
+            print_error("RECIPIENT_EMAILS environment variable is not set.")
+            sys.exit(1)
+        recipient_emails = [e.strip() for e in recipient_emails_str.split(',')]
+    
+        # Validate and convert smtp_port safely
+        try:
+            smtp_port = int(smtp_port_str)
+        except (ValueError, TypeError):
+            print_error(f"Invalid SMTP_PORT value: {smtp_port_str}")
+            sys.exit(1)
+    
+    
+        # Build the HTML content using simplified html_email.HTMLEmail
+        html_content = html_email.HTMLEmail(
+            title=f"Test Email",
+            main_heading=f"Hi there!",
+            main_description="This is a test email!",
+            credentials=f"Password: ****"
+        )
+    
+        try:
+            print_info("Sending test email via SMTP...")
+            html_email_send.send_html_email_smtp(
+                smtp_host=smtp_host,
+                smtp_port=smtp_port,
+                smtp_user=smtp_user,
+                smtp_password=smtp_password,
+                sender_email=sender_email,
+                recipient_emails=recipient_emails,
+                subject=f"Test Email",
+                html_content=html_content,
+                use_ssl=(smtp_port == 465),
+                use_tls=(smtp_port != 465)
+            )
+            print_success("Test email sent successfully!")
+        except Exception as e:
+            print_error(f"Failed to send test email: {e}")
+    
+    if __name__ == "__main__":
+        main()
+    </code></pre>
+    </div>
+
+
+</body>
+
+</html>
