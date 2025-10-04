@@ -31,7 +31,7 @@ def generate_setup(
         "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
         "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
         "__MAX_UPLOAD_SIZE_MB__": f"{UPLOAD_SIZE_MB}M", #u need like this unless it fails
-        "__MAX_UPLOAD_SIZE_BYTES__": str(1024 * 1024 * 1024),  # 1GB in bytes
+        "__MAX_UPLOAD_SIZE_BYTES__": str(UPLOAD_SIZE_MB * 1024 * 1024),  # 1GB in bytes
     }
 
     # ========== BASE TEMPLATE ==========
@@ -247,7 +247,27 @@ EOF
     notify_webhook "provisioning" "docker_compose_ready" "Docker Compose configuration created"
     sleep 5
 
+    echo "[7c/15] Waiting for Forgejo to become ready..."
+    READY=false
+    for i in {1..20}; do
+        if curl -fsS http://127.0.0.1:3000 >/dev/null 2>&1; then
+            READY=true
+            break
+        fi
+        echo "⏳ Forgejo not up yet (try $i/20)..."
+        sleep 5
+    done
 
+    if [ "$READY" = false ]; then
+        echo "❌ Forgejo failed to start!"
+        docker compose logs --tail=50
+        notify_webhook "failed" "service_start" "Forgejo failed to start"
+        exit 1
+    fi
+
+    echo "✅ Forgejo is running"
+    notify_webhook "provisioning" "service_start" "✅ Forgejo is running"
+                                      
    # ========== FIREWALL CONFIGURATION ==========
     echo "[8/15] Configuring firewall..."
     notify_webhook "provisioning" "firewall" "Setting up UFW firewall"

@@ -350,14 +350,14 @@ EOF
     notify_webhook "provisioning" "service_start" "Starting code-server service"
     systemctl restart code-server.service
 
-    # Wait for readiness
+    # Wait for readiness: If this fails, maybe try to add 20+
     READY=false
-    for i in {1..12}; do
+    for i in {1..20}; do
         if curl -fsS http://127.0.0.1:__PORT__ >/dev/null 2>&1; then
             READY=true
             break
         fi
-        echo "⏳ code-server not up yet (try $i/12)..."
+        echo "⏳ code-server not up yet (try $i/20)..."
         sleep 5
     done
 
