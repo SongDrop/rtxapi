@@ -204,7 +204,7 @@ def generate_setup(
     notify_webhook "provisioning" "docker_compose" "Configuring Docker Compose"
     sleep 5
 
-    cat > "$FORGEJO_DIR/docker-compose.yml" <<'EOF'
+    cat > "$FORGEJO_DIR/docker-compose.yml" <<EOF
 version: "3.8"
 networks:
   forgejo:
@@ -220,11 +220,11 @@ services:
       - USER_GID=1000
       - FORGEJO__server__DOMAIN=$DOMAIN
       - FORGEJO__server__ROOT_URL=https://$DOMAIN
-      - FORGEJO__server__HTTP_PORT=$PORT
+      - FORGEJO__server__HTTP_PORT=3000
       - FORGEJO__server__LFS_START_SERVER=true
       - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
       - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
-      - FORGEJO__server__LFS_MAX_FILE_SIZE=__MAX_UPLOAD_SIZE_BYTES__
+      - FORGEJO__server__LFS_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
     volumes:
       - ./data:/data
       - ./config:/data/config
@@ -232,12 +232,12 @@ services:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
     ports:
-      - "$PORT:$PORT"
+      - "$PORT:3000"
       - "222:22"
     networks:
       - forgejo
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:$PORT"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 15s
       timeout: 10s
       retries: 40
