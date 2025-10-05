@@ -418,6 +418,8 @@ server {
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
+    client_max_body_size __MAX_UPLOAD_SIZE_MB__;
+
     location / {
         proxy_pass http://127.0.0.1:__PORT__;
         proxy_set_header Host $host;
@@ -427,6 +429,8 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400;
+        proxy_buffering off;
+        proxy_request_buffering off;
     }
 }
 EOF_SSL
@@ -441,7 +445,6 @@ EOF_SSL
          
     # Setup cron for renewal (runs daily and reloads nginx on change)
     (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
-    notify_webhook "provisioning" "ssl_obtained" "SSL obtained"
 
     # ========== FINAL CHECKS ==========
     echo "[15/15] Final verification..."
