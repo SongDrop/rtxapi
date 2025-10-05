@@ -20,6 +20,7 @@ def generate_setup(
     tokens = {
         "__DOMAIN__": DOMAIN_NAME,
         "__ADMIN_EMAIL__": ADMIN_EMAIL,
+        "__ADMIN_PASSWORD__": ADMIN_PASSWORD,
         "__PORT__": str(PORT),
         "__DATA_DIR__": DATA_DIR,
         "__WEBHOOK_URL__": WEBHOOK_URL,
