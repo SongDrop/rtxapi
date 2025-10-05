@@ -400,6 +400,7 @@ EOF_TEMP
         notify_webhook "warning" "ssl" "Forgejo Certbot failed, SSL not installed for __DOMAIN__"
     else
         echo "✅ SSL certificate obtained"
+        notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
 
         # Replace nginx config for HTTPS proxy only if SSL exists
         cat > /etc/nginx/sites-available/forgejo <<'EOF_SSL'
