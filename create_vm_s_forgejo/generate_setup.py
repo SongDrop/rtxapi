@@ -272,70 +272,60 @@ EOF
     sleep 10
 
     # Wait for Forgejo to become ready - prefer container health check, fallback to HTTP probe
-    echo "[7d/15] Waiting for Forgejo to become ready (health-check preferred)..."
+    echo "[7d/15] Waiting for Forgejo to become ready..."
     notify_webhook "provisioning" "forgejo_readiness" "Waiting for Forgejo to become ready..."
 
-    # Give Docker some time to settle
-    sleep 5
-
-    # timeout in seconds
     READY_TIMEOUT=600   # 10 minutes
     SLEEP_INTERVAL=5
     elapsed=0
     READY=false
 
-    # First, wait for the container to exist
-    echo "⏳ Waiting for container 'forgejo' to be present..."
+    # Ensure container exists
+    echo "⏳ Waiting for container 'forgejo' to appear..."
     while ! docker ps -a --format '{{.Names}}' | grep -wq forgejo; do
         sleep $SLEEP_INTERVAL
         elapsed=$((elapsed + SLEEP_INTERVAL))
-        if [ $elapsed -ge $READY_TIMEOUT ]; then
+        [ $elapsed -ge $READY_TIMEOUT ] && {
             echo "❌ Timeout waiting for container 'forgejo' to appear"
             notify_webhook "failed" "service_start" "Timeout waiting for forgejo container"
             docker ps -a
             docker compose logs --tail=200
             exit 1
-        fi
+        }
     done
 
-    # Reset elapsed for health wait
+    # Reset timer
     elapsed=0
 
-    # If container has a Health check, prefer observing its .State.Health.Status
-    if docker inspect -f '{{.State.Health}}' forgejo >/dev/null 2>&1; then
-        echo "🔎 Container 'forgejo' has a healthcheck; polling health status..."
-        while [ $elapsed -lt $READY_TIMEOUT ]; do
-            health=$(docker inspect -f '{{.State.Health.Status}}' forgejo 2>/dev/null || echo "no-info")
-            echo "   -> health status: $health (elapsed ${elapsed}s)"
-            if [ "$health" = "healthy" ]; then
-                READY=true
-                break
-            fi
-            # If container stopped/exit, bail out early
-            state=$(docker inspect -f '{{.State.Status}}' forgejo 2>/dev/null || echo "unknown")
-            if [ "$state" = "exited" ] || [ "$state" = "dead" ]; then
-                echo "❌ Container 'forgejo' is $state. Dumping logs:"
-                docker ps -a
-                docker logs --tail=200 forgejo || true
-                notify_webhook "failed" "service_start" "Forgejo container in $state state"
-                exit 1
-            fi
-            sleep $SLEEP_INTERVAL
-            elapsed=$((elapsed + SLEEP_INTERVAL))
-        done
-    else
-        echo "⚠️ No container-level health info available; falling back to HTTP probe on 127.0.0.1:$PORT"
-        elapsed=0
-        while [ $elapsed -lt $READY_TIMEOUT ]; do
-            if curl -fsS "http://127.0.0.1:$PORT" >/dev/null 2>&1; then
-                READY=true
-                break
-            fi
-            echo "⏳ Forgejo not up yet (elapsed ${elapsed}s)..."
-            sleep $SLEEP_INTERVAL
-            elapsed=$((elapsed + SLEEP_INTERVAL))
-        done
-    fi
+    echo "🔎 Checking Forgejo container health (fallback to HTTP probe if needed)..."
+    while [ $elapsed -lt $READY_TIMEOUT ]; do
+        # Check container state first
+        state=$(docker inspect -f '{{.State.Status}}' forgejo 2>/dev/null || echo "unknown")
+        health=$(docker inspect -f '{{.State.Health.Status}}' forgejo 2>/dev/null || echo "no-health")
+        echo "   -> state=$state, health=$health (elapsed ${elapsed}s)"
+
+        if [ "$state" = "running" ] && [ "$health" = "healthy" ]; then
+            READY=true
+            break
+        fi
+
+        # Fallback: HTTP probe
+        if curl -fsS "http://127.0.0.1:3000" >/dev/null 2>&1; then
+            READY=true
+            break
+        fi
+
+        # If container exited, bail early
+        if [ "$state" = "exited" ] || [ "$state" = "dead" ]; then
+            echo "❌ Container 'forgejo' is $state. Dumping logs:"
+            docker logs --tail=200 forgejo || true
+            notify_webhook "failed" "service_start" "Forgejo container is $state"
+            exit 1
+        fi
+
+        sleep $SLEEP_INTERVAL
+        elapsed=$((elapsed + SLEEP_INTERVAL))
+    done
 
     if [ "$READY" = false ]; then
         echo "❌ Forgejo failed to become ready in $READY_TIMEOUT seconds"
@@ -345,8 +335,9 @@ EOF
         exit 1
     fi
 
-    echo "✅ Forgejo is running and healthy (or responding on $PORT)"
-    notify_webhook "provisioning" "service_start" "Forgejo is running"
+    echo "✅ Forgejo is running and healthy"
+    notify_webhook "provisioning" "service_start" "Forgejo is running and healthy"
+    sleep 5
 
                                       
    # ========== FIREWALL CONFIGURATION ==========
