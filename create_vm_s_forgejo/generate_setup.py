@@ -354,7 +354,7 @@ EOF
     ufw allow "$PORT"/tcp
     ufw --force enable
 
-  # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
+   # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
     echo "[18/20] Configuring nginx reverse proxy with SSL..."
     rm -f /etc/nginx/sites-enabled/default
     rm -f /etc/nginx/sites-available/forgejo
@@ -389,9 +389,9 @@ EOF_TEMP
     if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
         echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
         systemctl start nginx || true
-        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__" || true
+        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
     fi
-
+                                      
     # Fail-safe check
     if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
         echo "⚠️ SSL certificate not found! Continuing without SSL..."
@@ -543,21 +543,30 @@ EOF_FINAL
 
     # ========== TOKEN REPLACEMENT ==========
     # Replace webhook function first
-    final_script = script_template.replace("__WEBHOOK_FUNCTION__", webhook_fn)
+    final = script_template.replace("__WEBHOOK_FUNCTION__", webhook_fn)
 
     # Replace all other tokens
     for token, value in tokens.items():
-        final_script = final_script.replace(token, value)
+        final = final.replace(token, value)
 
     # Replace webhook-specific tokens in the webhook function
-    final_script = final_script.replace("__LOCATION__", tokens["__LOCATION__"])
-    final_script = final_script.replace("__RESOURCE_GROUP__", tokens["__RESOURCE_GROUP__"])
-    final_script = final_script.replace("__WEBHOOK_URL__", tokens["__WEBHOOK_URL__"])
-
+    final = final.replace("__LOCATION__", tokens["__LOCATION__"])
+    final = final.replace("__RESOURCE_GROUP__", tokens["__RESOURCE_GROUP__"])
+    final = final.replace("__WEBHOOK_URL__", tokens["__WEBHOOK_URL__"])
     # Replace SSL configuration URLs
-    final_script = final_script.replace("__LET_OPTIONS_URL__", tokens["__LET_OPTIONS_URL__"])
-    final_script = final_script.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
+    final = final.replace("__LET_OPTIONS_URL__", tokens["__LET_OPTIONS_URL__"])
+    final = final.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
 
-    return final_script
+    # Replace CERTBOT_CRON token
+    certbot_cron = "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'"
+    final = final.replace("__CERTBOT_CRON__", certbot_cron)
+
+    # Replace remaining tokens for password, admin email, domain, port
+    final = final.replace("__ADMIN_PASSWORD__", tokens["__ADMIN_PASSWORD__"])
+    final = final.replace("__ADMIN_EMAIL__", tokens["__ADMIN_EMAIL__"])
+    final = final.replace("__DOMAIN__", tokens["__DOMAIN__"])
+    final = final.replace("__PORT__", tokens["__PORT__"])
+
+    return final
 
  
