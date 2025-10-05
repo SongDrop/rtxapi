@@ -285,7 +285,7 @@ EOF
 
     # Download Let's Encrypt recommended configs
     mkdir -p /etc/letsencrypt
-    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf
+    curl -s "__LETSENCRYPT_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf
     curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
 
     # Temporary HTTP server for certbot validation
