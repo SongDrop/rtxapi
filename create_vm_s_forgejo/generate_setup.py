@@ -234,9 +234,9 @@ services:
       - FORGEJO__server__ROOT_URL=https://$DOMAIN
       - FORGEJO__server__HTTP_PORT=3000
       - FORGEJO__server__LFS_START_SERVER=true
-      - FORGEJO__server__LFS_CONTENT_PATH=/data/gitea/lfs
-      - FORGEJO__server__LFS_JWT_SECRET=$LFS_JWT_SECRET
-      - FORGEJO__server__LFS_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
+      - FORGEJO__lfs__PATH=/data/gitea/lfs
+      - FORGEJO__lfs__JWT_SECRET=$LFS_JWT_SECRET
+      - FORGEJO__lfs__MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
     volumes:
       - ./data:/data
       - ./config:/data/config
