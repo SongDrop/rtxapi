@@ -27,7 +27,7 @@ def generate_setup(
         "__RESOURCE_GROUP__": resource_group,
         "__DOCKER_COMPOSE_VERSION__": DOCKER_COMPOSE_VERSION,
         "__DNS_HOOK_SCRIPT__": DNS_HOOK_SCRIPT,
-        "__LETSENCRYPT_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
+        "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
         "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
     }
 
@@ -285,7 +285,7 @@ EOF
 
     # Download Let's Encrypt recommended configs
     mkdir -p /etc/letsencrypt
-    curl -s "__LETSENCRYPT_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf
+    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf
     curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
 
     # Temporary HTTP server for certbot validation
