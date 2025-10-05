@@ -145,46 +145,58 @@ def generate_setup(
     notify_webhook "provisioning" "docker_install" "Installing Docker engine"
     sleep 5
 
-    apt-get remove -y docker docker-engine docker.io containerd runc || true
+    # Ensure prerequisites exist
+    apt-get install -y -q ca-certificates curl gnupg lsb-release || {
+        notify_webhook "failed" "docker_prereq" "Failed to install Docker prerequisites"
+        exit 1
+    }
+
+    # Remove old versions (ignore errors)
+    apt-get remove -y docker docker-engine docker.io containerd runc >/dev/null 2>&1 || true
+
+    # Setup Docker’s official GPG key
     mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
+        echo "❌ Failed to download Docker GPG key"
+        notify_webhook "failed" "docker_gpg" "Failed to download Docker GPG key"
+        exit 1
+    fi
+    chmod a+r /etc/apt/keyrings/docker.gpg
 
     ARCH=$(dpkg --print-architecture)
     CODENAME=$(lsb_release -cs)
     echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list
 
-    apt-get update -q
-    apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    # Update and install Docker with retries
+    for i in {1..3}; do
+        if apt-get update -q && apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+            break
+        fi
+        echo "⚠️ Docker install attempt $i failed; retrying..."
+        sleep 5
+        [ $i -eq 3 ] && {
+            echo "❌ Docker installation failed after 3 attempts"
+            notify_webhook "failed" "docker_install" "Docker install failed after 3 attempts"
+            exit 1
+        }
+    done
 
-    CURRENT_USER=$(whoami)
-    if [ "$CURRENT_USER" != "root" ]; then
-        usermod -aG docker "$CURRENT_USER" || true
-    fi
-
+    # Enable and start Docker
     systemctl enable docker
     systemctl start docker
 
-    echo "[5/15] Waiting for Docker to start..."
-    notify_webhook "provisioning" "docker_wait" "Waiting for Docker daemon"
-    sleep 5
-
-    timeout=180
-    while [ $timeout -gt 0 ]; do
-        if docker info >/dev/null 2>&1; then
-            break
-        fi
-        sleep 5
-        timeout=$((timeout - 5))
-    done
-
-    if [ $timeout -eq 0 ]; then
-        echo "ERROR: Docker daemon failed to start"
-        notify_webhook "failed" "docker_timeout" "Docker daemon startup timeout"
+    # Verify Docker works
+    if ! docker info >/dev/null 2>&1; then
+        echo "❌ Docker daemon did not start correctly"
+        notify_webhook "failed" "docker_daemon" "Docker daemon failed to start"
+        journalctl -u docker --no-pager | tail -n 50 || true
         exit 1
     fi
 
+    echo "✅ Docker installed and running"
     notify_webhook "provisioning" "docker_ready" "Docker installed successfully"
     sleep 5
+
 
     # ========== FORGEJO DIRECTORY SETUP ==========
     echo "[6/15] Setting up Forgejo directories..."
