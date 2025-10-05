@@ -87,18 +87,22 @@ def generate_setup(
     apt-get upgrade -y -q
     apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq make net-tools python3-certbot-nginx openssl ufw
 
+
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
     notify_webhook "provisioning" "docker_install" "Installing Docker engine"
     sleep 5
 
+    # Ensure prerequisites exist
     apt-get install -y -q ca-certificates curl gnupg lsb-release || {
         notify_webhook "failed" "docker_prereq" "Failed to install Docker prerequisites"
         exit 1
     }
 
+    # Remove old versions (ignore errors)
     apt-get remove -y docker docker-engine docker.io containerd runc >/dev/null 2>&1 || true
 
+    # Setup Docker’s official GPG key
     mkdir -p /etc/apt/keyrings
     if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
         echo "❌ Failed to download Docker GPG key"
@@ -111,42 +115,34 @@ def generate_setup(
     CODENAME=$(lsb_release -cs)
     echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list
 
+    # Update and install Docker with retries
     for i in {1..3}; do
         if apt-get update -q && apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
             break
         fi
         echo "⚠️ Docker install attempt $i failed; retrying..."
         sleep 5
-[ $i -eq 3 ] && {
+        [ $i -eq 3 ] && {
             echo "❌ Docker installation failed after 3 attempts"
             notify_webhook "failed" "docker_install" "Docker install failed after 3 attempts"
             exit 1
         }
     done
 
+    # Enable and start Docker
     systemctl enable docker
     systemctl start docker
 
-    # ========== DOCKER COMPOSE ==========
-    echo "[5/15] Installing Docker Compose..."
-    notify_webhook "provisioning" "docker_compose_install" "Installing Docker Compose plugin"
-    sleep 5
-
-    mkdir -p /usr/local/lib/docker/cli-plugins
-    if ! curl -fsSL "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose; then
-        echo "❌ Failed to download Docker Compose"
-        notify_webhook "failed" "docker_compose_download" "Failed to download Docker Compose binary"
+    # Verify Docker works
+    if ! docker info >/dev/null 2>&1; then
+        echo "❌ Docker daemon did not start correctly"
+        notify_webhook "failed" "docker_daemon" "Docker daemon failed to start"
+        journalctl -u docker --no-pager | tail -n 50 || true
         exit 1
     fi
-    chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-    ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose || true
 
-    docker --version || { echo "⚠️ Docker not found"; notify_webhook "failed" "docker_missing" "Docker not found"; exit 1; }
-    docker-compose --version || { echo "⚠️ Docker Compose failed to run"; notify_webhook "failed" "docker_compose_failed" "Docker Compose failed to execute"; exit 1; }
-
-    systemctl enable --now docker
-    echo "✅ Docker Compose installed and Docker service running"
-    notify_webhook "provisioning" "docker_compose_ready" "Docker Compose installed and Docker running"
+    echo "✅ Docker installed and running"
+    notify_webhook "provisioning" "docker_ready" "Docker installed successfully"
     sleep 5
 
     # ========== PLANE DIRECTORY SETUP ==========
