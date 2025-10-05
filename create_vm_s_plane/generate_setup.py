@@ -1,9 +1,10 @@
 import textwrap
 
-def generate_plane_setup(
+def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
-    PORT=80,
+    ADMIN_PASSWORD,
+    PORT=3000,
     WEBHOOK_URL="",
     location="",
     resource_group="",
@@ -128,31 +129,143 @@ def generate_plane_setup(
     # ========== DOCKER COMPOSE ==========
     echo "[5/15] Installing Docker Compose..."
     notify_webhook "provisioning" "docker_compose_install" "Installing Docker Compose plugin"
+    sleep 5
+
     mkdir -p /usr/local/lib/docker/cli-plugins
-    curl -fsSL "https://github.com/docker/compose/releases/download/__DOCKER_COMPOSE_VERSION__/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose
+    if ! curl -fsSL "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose; then
+        echo "❌ Failed to download Docker Compose"
+        notify_webhook "failed" "docker_compose_download" "Failed to download Docker Compose binary"
+        exit 1
+    fi
     chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
     ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/docker-compose || true
-    docker --version
-    docker-compose --version
-    systemctl enable --now docker
 
-    # ========== PLANE DIRECTORY ==========
+    docker --version || { echo "⚠️ Docker not found"; notify_webhook "failed" "docker_missing" "Docker not found"; exit 1; }
+    docker-compose --version || { echo "⚠️ Docker Compose failed to run"; notify_webhook "failed" "docker_compose_failed" "Docker Compose failed to execute"; exit 1; }
+
+    systemctl enable --now docker
+    echo "✅ Docker Compose installed and Docker service running"
+    notify_webhook "provisioning" "docker_compose_ready" "Docker Compose installed and Docker running"
+    sleep 5
+
+    # ========== PLANE DIRECTORY SETUP ==========
     echo "[6/15] Setting up Plane directory..."
-    notify_webhook "provisioning" "directory_setup" "Creating Plane directory"
-    mkdir -p "$DATA_DIR"
+    notify_webhook "provisioning" "directory_setup" "Creating Plane directory structure"
+    sleep 5
+
+    mkdir -p "$DATA_DIR" || {
+        echo "ERROR: Failed to create Plane data directory"
+        notify_webhook "failed" "directory_creation" "Failed to create Plane directory"
+        exit 1
+    }
     chown -R 1000:1000 "$DATA_DIR"
     cd "$DATA_DIR"
+    echo "✅ Plane directory ready"
+    notify_webhook "provisioning" "directory_ready" "Plane directory created successfully"
+    sleep 5
 
-    # ========== PLANE INSTALL ==========
-    echo "[7/15] Downloading and running Plane setup..."
+    #   ========== PLANE INSTALL ==========
+    echo "[7/15] Downloading and installing Plane..."
     notify_webhook "provisioning" "plane_install" "Downloading Plane setup script"
-    curl -fsSL -o setup.sh "https://github.com/makeplane/plane/releases/latest/download/setup.sh"
+    sleep 5
+
+    if ! curl -fsSL -o setup.sh "https://github.com/makeplane/plane/releases/latest/download/setup.sh"; then
+        echo "❌ Failed to download Plane setup script"
+        notify_webhook "failed" "plane_setup_download" "Failed to download Plane setup.sh"
+        exit 1
+    fi
     chmod +x setup.sh
-    ./setup.sh <<EOF
+
+    echo "🚀 Running Plane installer..."
+    if ! ./setup.sh <<EOF
 1
 8
 EOF
-    notify_webhook "provisioning" "plane_install" "Plane installed successfully"
+    then
+        echo "❌ Plane installation failed"
+        notify_webhook "failed" "plane_install_run" "Plane setup script failed"
+        exit 1
+    fi
+
+    echo "✅ Plane installation completed"
+    notify_webhook "provisioning" "plane_install_complete" "Plane installed successfully"
+    sleep 5
+
+    # ========== PLANE SERVICE START ==========
+    echo "[8/15] Starting Plane services..."
+    notify_webhook "provisioning" "plane_start" "Starting Plane containers"
+    sleep 5
+
+    if ! ./setup.sh <<EOF
+2
+8
+EOF
+    then
+        echo "❌ Failed to start Plane services"
+        notify_webhook "failed" "plane_start" "Plane services failed to start"
+        exit 1
+    fi
+
+    echo "⏳ Waiting for Plane containers to become ready..."
+    notify_webhook "provisioning" "plane_readiness" "Waiting for Plane containers to become healthy"
+
+    READY_TIMEOUT=600   # 10 minutes
+    SLEEP_INTERVAL=5
+    elapsed=0
+    READY=false
+
+    # Ensure container appears
+    echo "⏳ Waiting for Plane containers to appear..."
+    while ! docker ps -a --format '{{.Names}}' | grep -iq plane; do
+        sleep $SLEEP_INTERVAL
+        elapsed=$((elapsed + SLEEP_INTERVAL))
+        if [ $elapsed -ge $READY_TIMEOUT ]; then
+            echo "❌ Timeout waiting for Plane containers"
+            notify_webhook "failed" "plane_start" "Timeout waiting for Plane containers to start"
+            docker ps -a
+            exit 1
+        fi
+    done
+
+    # Reset timer for health checks
+    elapsed=0
+
+    echo "🔎 Checking Plane container health..."
+    while [ $elapsed -lt $READY_TIMEOUT ]; do
+        plane_containers=$(docker ps --filter "name=plane" --format '{{.Names}}')
+        all_healthy=true
+
+        for container in $plane_containers; do
+            state=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "unknown")
+            health=$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo "no-health")
+            echo "   -> $container: state=$state, health=$health (elapsed ${elapsed}s)"
+
+            if [ "$state" != "running" ] || { [ "$health" != "healthy" ] && [ "$health" != "no-health" ]; }; then
+                all_healthy=false
+                break
+            fi
+        done
+
+        if [ "$all_healthy" = true ]; then
+            READY=true
+            break
+        fi
+
+        sleep $SLEEP_INTERVAL
+        elapsed=$((elapsed + SLEEP_INTERVAL))
+    done
+
+    if [ "$READY" = false ]; then
+        echo "❌ Plane failed to become ready in $READY_TIMEOUT seconds"
+        docker ps -a
+        docker compose logs --tail=500 || true
+        notify_webhook "failed" "plane_readiness" "Plane containers failed to become healthy"
+        exit 1
+    fi
+
+    echo "✅ Plane is running and healthy"
+    notify_webhook "provisioning" "plane_healthy" "✅ Plane is running and healthy"
+    sleep 5
 
     # ========== FIREWALL ==========
     echo "[8/15] Configuring firewall..."
@@ -163,11 +276,16 @@ EOF
     ufw allow "$PORT"/tcp
     ufw --force enable
 
-    # ========== SSL CERTIFICATE ==========
-    echo "[9/15] Configuring SSL..."
-    notify_webhook "provisioning" "ssl" "Obtaining Let's Encrypt certificate"
+   # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
+    echo "[18/20] Configuring nginx reverse proxy with SSL..."
+    notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
+
+    rm -f /etc/nginx/sites-enabled/default
+    rm -f /etc/nginx/sites-available/plane
+
+    # Download Let's Encrypt recommended configs
     mkdir -p /etc/letsencrypt
-    curl -s "__LETSENCRYPT_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf
+    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf
     curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
 
     # Temporary HTTP server for certbot validation
@@ -183,28 +301,33 @@ server {
     }
 }
 EOF_TEMP
+
     ln -sf /etc/nginx/sites-available/plane /etc/nginx/sites-enabled/plane
-    rm -f /etc/nginx/sites-enabled/default
-    mkdir -p /var/www/html
-    chown www-data:www-data /var/www/html
     nginx -t && systemctl restart nginx
 
-    if [ -x "$DNS_HOOK_SCRIPT" ]; then
-        chmod +x "$DNS_HOOK_SCRIPT"
-        certbot certonly --manual --preferred-challenges dns --manual-auth-hook "$DNS_HOOK_SCRIPT add" \
-            --manual-cleanup-hook "$DNS_HOOK_SCRIPT clean" --agree-tos --email "$ADMIN_EMAIL" \
-            -d "$DOMAIN" -d "*.$DOMAIN" --non-interactive --manual-public-ip-logging-ok
-    else
-        systemctl stop nginx || true
-        certbot certonly --standalone --preferred-challenges http --agree-tos --email "$ADMIN_EMAIL" \
-            -d "$DOMAIN" --non-interactive
+    # Create webroot for certbot
+    mkdir -p /var/www/html
+    chown www-data:www-data /var/www/html
+
+    #use --staging if u reach daily limit
+    #certbot --nginx -d "__DOMAIN__" --staging --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
+    # Attempt to obtain SSL certificate
+    if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
+        echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
         systemctl start nginx || true
+        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__" || true
     fi
 
-    # ========== NGINX REVERSE PROXY ==========
-    echo "[10/15] Configuring Nginx..."
-    notify_webhook "provisioning" "nginx_setup" "Setting up reverse proxy"
-    cat > /etc/nginx/sites-available/plane <<'EOF_NGINX'
+    # Fail-safe check
+    if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+        echo "⚠️ SSL certificate not found! Continuing without SSL..."
+        notify_webhook "warning" "ssl" "Forgejo Certbot failed, SSL not installed for __DOMAIN__"
+    else
+        echo "✅ SSL certificate obtained"
+        notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
+
+        # Replace nginx config for HTTPS proxy only if SSL exists
+        cat > /etc/nginx/sites-available/plane <<'EOF_SSL'
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -213,10 +336,12 @@ server {
 server {
     listen 443 ssl http2;
     server_name __DOMAIN__;
+
     ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
     client_max_body_size 100M;
 
     location / {
@@ -232,33 +357,55 @@ server {
         proxy_request_buffering off;
     }
 }
-EOF_NGINX
+EOF_SSL
 
-    ln -sf /etc/nginx/sites-available/plane /etc/nginx/sites-enabled/plane
-    nginx -t && systemctl reload nginx
+        ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
+        nginx -t && systemctl reload nginx
+    fi
+
+    echo "[14/15] Setup Cron for renewal..."
+    notify_webhook "provisioning" "provisioning" "Setup Cron for renewal..."
+         
+    # Setup cron for renewal (runs daily and reloads nginx on change)
+    (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
 
     # ========== FINAL CHECKS ==========
-    echo "[11/15] Performing verification..."
-    notify_webhook "provisioning" "verification" "Checking Plane container and SSL"
-    if ! docker ps | grep -q "plane"; then
-        echo "ERROR: Plane container not running!"
-        notify_webhook "failed" "verification" "Plane container not running"
-        exit 1
-    fi
+    echo "[15/15] Final verification..."
+    notify_webhook "provisioning" "verification" "Performing verification checks"
+
     if ! nginx -t; then
-        echo "ERROR: Nginx configuration failed"
+        echo "ERROR: nginx config test failed"
         notify_webhook "failed" "verification" "Nginx config test failed"
         exit 1
     fi
-    if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
-        echo "ERROR: SSL certificate missing!"
-        notify_webhook "failed" "verification" "SSL cert missing"
+
+    if [ -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+        HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://__DOMAIN__ || echo "000")
+        echo "HTTPS check returned: $HTTPS_RESPONSE"
+        if [ "$HTTPS_RESPONSE" != "200" ]; then
+            notify_webhook "warning" "verification" "HTTPS check returned $HTTPS_RESPONSE"
+        else
+            notify_webhook "provisioning" "verification" "HTTPS OK"
+        fi
+    fi
+
+    # Test and apply the new config
+    if nginx -t; then
+        systemctl reload nginx
+        echo "✅ Nginx configuration test passed"
+        notify_webhook "success" "verification" "✅ Nginx configuration test passed"
+    else
+        echo "❌ Nginx configuration test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
         exit 1
     fi
 
     echo "✅ Plane setup complete!"
-    notify_webhook "completed" "finished" "Plane deployment succeeded"
+    notify_webhook "provisioning" "provisioning" "✅ Plane deployment succeeded"
 
+    #wait 60 seconds until everything is fully ready 
+    sleep 60
+                                      
     cat <<EOF_SUMMARY
 =============================================
 🔗 Access URL: https://__DOMAIN__
