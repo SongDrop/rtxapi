@@ -479,6 +479,8 @@ EOF_SSL
         exit 1
     fi
 
+    #wait 30 seconds until everything is fully ready 
+    sleep 30
 
     cat <<EOF_FINAL
 =============================================
