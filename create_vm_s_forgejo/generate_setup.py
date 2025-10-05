@@ -356,6 +356,8 @@ EOF
 
    # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
     echo "[18/20] Configuring nginx reverse proxy with SSL..."
+    notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
+
     rm -f /etc/nginx/sites-enabled/default
     rm -f /etc/nginx/sites-available/forgejo
 
@@ -389,9 +391,9 @@ EOF_TEMP
     if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
         echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
         systemctl start nginx || true
-        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
+        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__" || true
     fi
-                                      
+
     # Fail-safe check
     if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
         echo "⚠️ SSL certificate not found! Continuing without SSL..."
