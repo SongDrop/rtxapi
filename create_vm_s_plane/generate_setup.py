@@ -168,7 +168,22 @@ def generate_setup(
     # Navigate to Plane directory
     cd "$DATA_DIR" || { echo "❌ ERROR: Could not enter $DATA_DIR"; exit 1; }
 
-    # Generate secure passwords and keys
+    # ========== Clone Plane Repository ==========
+    if [ ! -d "plane" ]; then
+        echo "📦 Cloning the official Plane repository..."
+        if ! git clone https://github.com/makeplane/plane.git; then
+            echo "❌ Failed to clone Plane repository"
+            notify_webhook "failed" "plane_clone" "Failed to clone Plane repository"
+            exit 1
+        fi
+    else
+        echo "✅ Plane repository already exists, pulling latest changes..."
+        cd plane && git pull origin main && cd ..
+    fi
+
+    cd plane || { echo "❌ ERROR: Plane directory not found"; exit 1; }
+
+    # ========== Generate Secure Credentials ==========
     POSTGRES_USER=plane
     POSTGRES_DB=plane
     POSTGRES_PASSWORD=$(openssl rand -base64 32)
@@ -176,115 +191,117 @@ def generate_setup(
     RABBITMQ_PASSWORD=$(openssl rand -base64 32)
     MINIO_PASSWORD=$(openssl rand -base64 32)
     SECRET_KEY=$(openssl rand -hex 32)
-    MACHINE_SIGNATURE=$(openssl rand -hex 32)
 
-    # Export variables so they are available in subshells (fixes "unbound variable" errors)
-    export POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD RABBITMQ_USER RABBITMQ_PASSWORD MINIO_PASSWORD SECRET_KEY MACHINE_SIGNATURE
+    export POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD RABBITMQ_USER RABBITMQ_PASSWORD MINIO_PASSWORD SECRET_KEY
 
-    # Create .env file
+    # ========== Create .env Files ==========
+    echo "🛠️ Generating .env configuration files..."
+
+    # Root .env
     cat > .env <<EOF
-# Database Configuration
 POSTGRES_USER=${POSTGRES_USER}
-POSTGRES_DB=${POSTGRES_DB}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB}
-
-# Redis
-VALKEY_URL=redis://plane-redis:6379/
-
-# RabbitMQ
-CELERY_BROKER_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@plane-mq:5672/plane
-RABBITMQ_USER=${RABBITMQ_USER}
-RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
-RABBITMQ_VHOST=plane
-
-# MinIO/S3
+POSTGRES_DB=${POSTGRES_DB}
+PGDATA=/var/lib/postgresql/data
+REDIS_HOST=plane-redis
+REDIS_PORT=6379
 AWS_ACCESS_KEY_ID=plane
 AWS_SECRET_ACCESS_KEY=${MINIO_PASSWORD}
 AWS_S3_BUCKET_NAME=uploads
 AWS_S3_ENDPOINT_URL=http://plane-minio:9000
 AWS_REGION=us-east-1
-
-# Application
-SECRET_KEY=${SECRET_KEY}
-WEB_URL=http://${DOMAIN:-localhost}
-DEBUG=0
-
-# CORS
-CORS_ALLOWED_ORIGINS=http://${DOMAIN:-localhost}
-
-# File upload
 FILE_SIZE_LIMIT=52428800
-
-# Gunicorn Workers
-GUNICORN_WORKERS=3
-WEB_CONCURRENCY=3
-
-# Email (optional)
-EMAIL_HOST=
-EMAIL_HOST_USER=
-EMAIL_HOST_PASSWORD=
-EMAIL_PORT=587
-EMAIL_USE_TLS=1
-EMAIL_FROM=noreply@${DOMAIN:-localhost}
-
-# Machine signature
-MACHINE_SIGNATURE=${MACHINE_SIGNATURE}
-
-# Nginx port for proxy
-NGINX_PORT=80
+DOCKERIZED=1
+USE_MINIO=1
+NGINX_PORT=8080
 EOF
 
-    # Copy .env to apps/api for Docker builds
-    mkdir -p apps/api
-    cp .env apps/api/.env
+    # /apiserver/.env
+    mkdir -p apiserver
+    cat > apiserver/.env <<EOF
+DEBUG=0
+CORS_ALLOWED_ORIGINS=http://${DOMAIN:-localhost}
+SENTRY_DSN=
+SENTRY_ENVIRONMENT=production
+POSTGRES_USER=${POSTGRES_USER}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_HOST=plane-db
+POSTGRES_DB=${POSTGRES_DB}
+POSTGRES_PORT=5432
+DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+REDIS_HOST=plane-redis
+REDIS_PORT=6379
+REDIS_URL=redis://plane-redis:6379/
+AWS_ACCESS_KEY_ID=plane
+AWS_SECRET_ACCESS_KEY=${MINIO_PASSWORD}
+AWS_S3_ENDPOINT_URL=http://plane-minio:9000
+AWS_S3_BUCKET_NAME=uploads
+FILE_SIZE_LIMIT=52428800
+USE_MINIO=1
+NGINX_PORT=8080
+WEB_URL=http://${DOMAIN:-localhost}
+GUNICORN_WORKERS=3
+SECRET_KEY=${SECRET_KEY}
+EOF
 
-    # Download docker-compose.yml
-    COMPOSE_URL="https://raw.githubusercontent.com/makeplane/plane/a2d9e70a83062902346d7e143dd1e6ed3df81ae7/docker-compose.yml"
-    echo "📥 Downloading Plane docker-compose.yml..."
+    # /web/.env
+    mkdir -p web
+    cat > web/.env <<EOF
+NEXT_PUBLIC_API_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_ADMIN_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_ADMIN_BASE_PATH=/god-mode
+NEXT_PUBLIC_SPACE_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_SPACE_BASE_PATH=/spaces
+EOF
+
+    # /space/.env
+    mkdir -p space
+    cat > space/.env <<EOF
+NEXT_PUBLIC_API_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_WEB_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_SPACE_BASE_PATH=/spaces
+EOF
+
+    # /admin/.env
+    mkdir -p admin
+    cat > admin/.env <<EOF
+NEXT_PUBLIC_API_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_ADMIN_BASE_PATH=/god-mode
+NEXT_PUBLIC_WEB_BASE_URL=http://${DOMAIN:-localhost}
+EOF
+
+    # ========== Download docker-compose.yml ==========
+    COMPOSE_URL="https://raw.githubusercontent.com/makeplane/plane/main/docker-compose.yml"
+    echo "📥 Downloading docker-compose.yml..."
     if ! curl -fsSL -o docker-compose.yml "$COMPOSE_URL"; then
         echo "❌ Failed to download docker-compose.yml"
         notify_webhook "failed" "plane_compose_download" "Failed to download docker-compose.yml"
         exit 1
     fi
-
-    # Comment out internal proxy to avoid port conflicts
-    echo "🔧 Commenting out internal proxy service..."
-    awk '
-    /^[ ]*proxy:/ {print "#"$0; in_proxy=1; next}
-    in_proxy && /^[^ ]/ {in_proxy=0}
-    in_proxy {print "#"$0; next}
-    {print}
-    ' docker-compose.yml > docker-compose.tmp && mv docker-compose.tmp docker-compose.yml
-    echo "✅ docker-compose.yml ready and proxy commented out"
-
-    # Pre-create required volumes/directories
-    mkdir -p "$DATA_DIR"/{pgdata,redisdata,rabbitmq_data,uploads}
-    chown -R 1000:1000 "$DATA_DIR"
+    echo "✅ docker-compose.yml downloaded successfully"
 
     # ========== Start Infrastructure ==========
     echo "🚀 Starting Plane infrastructure (DB, Redis, MQ, MinIO)..."
-    notify_webhook "provisioning" "plane_infra_start" "Starting database and services"
+    notify_webhook "provisioning" "plane_infra_start" "Starting Plane infrastructure"
 
     if ! docker compose up -d plane-db plane-redis plane-mq plane-minio; then
         echo "❌ Failed to start infrastructure"
-        notify_webhook "failed" "plane_infra" "Failed to start database and services"
+        notify_webhook "failed" "plane_infra" "Failed to start database and dependencies"
         exit 1
     fi
 
-    # Wait for Postgres to be ready
-    echo "⏳ Waiting for Postgres to accept connections..."
+    echo "⏳ Waiting for PostgreSQL to be ready..."
     until docker exec plane-db pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; do
         sleep 5
     done
-    echo "✅ Postgres ready"
+    echo "✅ PostgreSQL is ready"
 
-    # ========== Run Database Migrations ==========
-    echo "🗃️ Running database migrations..."
+    # ========== Run Migrations ==========
+    echo "🗃️ Running Plane database migrations..."
     notify_webhook "provisioning" "plane_migrations" "Running database migrations"
 
     if ! docker compose run --rm migrator; then
-        echo "⚠️ Migration failed on first attempt, retrying in 5s..."
+        echo "⚠️ Migration failed on first attempt, retrying..."
         sleep 5
         if ! docker compose run --rm migrator; then
             echo "❌ Database migrations failed"
@@ -292,10 +309,10 @@ EOF
             exit 1
         fi
     fi
-    echo "✅ Database migrations completed"
+    echo "✅ Database migrations completed successfully"
 
-    # ========== Start Application Services ==========
-    echo "🚀 Starting Plane application services..."
+    # ========== Start Application ==========
+    echo "🚀 Starting all Plane services..."
     notify_webhook "provisioning" "plane_app_start" "Starting Plane application"
 
     if ! docker compose up -d; then
@@ -304,14 +321,14 @@ EOF
         exit 1
     fi
 
-    # ========== Wait for API Readiness ==========
+    # ========== Verify API Health ==========
     API_CONTAINER=$(docker compose ps -q api)
     READY_TIMEOUT=600
     SLEEP_INTERVAL=10
     elapsed=0
     READY=false
 
-    echo "⏳ Waiting for Plane API to become ready..."
+    echo "⏳ Waiting for Plane API to become responsive..."
     while [ $elapsed -lt $READY_TIMEOUT ]; do
         if docker exec "$API_CONTAINER" curl -f -s http://localhost:8000/api/ >/dev/null 2>&1; then
             READY=true
@@ -323,20 +340,18 @@ EOF
     done
 
     if [ "$READY" = false ]; then
-        echo "❌ Plane API did not become ready in $READY_TIMEOUT seconds"
-        docker compose ps
+        echo "❌ Plane API did not become ready in time"
         docker compose logs api --tail=50
-        notify_webhook "failed" "plane_readiness" "Plane failed to become ready - check logs"
+        notify_webhook "failed" "plane_readiness" "Plane API failed to start"
         exit 1
     fi
 
-    echo "✅ Plane is running and responsive"
-    notify_webhook "provisioning" "plane_healthy" "✅ Plane is running and responsive"
+    echo "✅ Plane is fully running and responsive!"
+    notify_webhook "provisioning" "plane_healthy" "Plane is live and healthy"
 
     # Show final container status
     docker compose ps
-    echo "=== Final container status ==="
-    docker compose ps
+
 
     # ========== FIREWALL ==========
     echo "[8/15] Configuring firewall..."
@@ -344,6 +359,9 @@ EOF
     ufw allow 22/tcp
     ufw allow 80/tcp
     ufw allow 443/tcp
+    ufw allow 8080/tcp
+    ufw allow 5432/tcp
+    ufw allow 6379/tcp                               
     ufw allow "$PORT"/tcp
     ufw --force enable
 
