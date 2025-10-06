@@ -161,7 +161,7 @@ def generate_setup(
     notify_webhook "provisioning" "directory_ready" "Plane directory created successfully"
     sleep 5
 
-     # ========== PLANE INSTALL ==========
+    # ========== PLANE INSTALL ==========
     echo "[7/15] Installing Plane with Docker Compose..."
     notify_webhook "provisioning" "plane_install" "Setting up Plane with Docker Compose"
     sleep 5
@@ -230,21 +230,36 @@ MACHINE_SIGNATURE=${MACHINE_SIGNATURE}
 NGINX_PORT=80
 EOF
 
-    # Download docker-compose.yml
-    if ! curl -fsSL -o docker-compose.yml "https://raw.githubusercontent.com/makeplane/plane/master/deploy/selfhost/docker-compose.yml"; then
-        echo "❌ Failed to download docker-compose.yml"
-        notify_webhook "failed" "plane_compose_download" "Failed to download docker-compose.yml"
-        exit 1
+    # Create apps/api/.env (required for Plane's docker-compose builds)
+    mkdir -p apps/api
+    cp .env apps/api/.env
+
+    # Download the current stable docker-compose.yml from Plane repo
+    COMPOSE_URL="https://raw.githubusercontent.com/makeplane/plane/a2d9e70a83062902346d7e143dd1e6ed3df81ae7/docker-compose.yml"
+
+    echo "📥 Downloading Plane docker-compose.yml..."
+    if ! curl -fsSL -o docker-compose.yml "$COMPOSE_URL"; then
+    echo "❌ Failed to download docker-compose.yml from $COMPOSE_URL"
+    notify_webhook "failed" "plane_compose_download" "Failed to download docker-compose.yml"
+    exit 1
     fi
+
+    # Comment out the internal proxy service block to avoid port conflicts with external Nginx
+    echo "🔧 Commenting out internal proxy service..."
+    sed -i '/^ *proxy:/,/^[^ ]/ s/^/#/' docker-compose.yml
+
+    # Confirm change for debugging
+    echo "✅ docker-compose.yml downloaded and proxy commented out"
+    head -n 20 docker-compose.yml | grep -A2 proxy || true
 
     echo "🚀 Starting Plane infrastructure..."
     notify_webhook "provisioning" "plane_infra_start" "Starting database and services"
 
     # Step 1: Start infrastructure services
     if ! docker compose up -d plane-db plane-redis plane-mq plane-minio; then
-        echo "❌ Failed to start Plane infrastructure"
-        notify_webhook "failed" "plane_infra" "Failed to start database and services"
-        exit 1
+    echo "❌ Failed to start Plane infrastructure"
+    notify_webhook "failed" "plane_infra" "Failed to start database and services"
+    exit 1
     fi
 
     echo "⏳ Waiting for infrastructure to be ready..."
@@ -253,24 +268,23 @@ EOF
     # Step 2: Run database migrations
     echo "🗃️ Running database migrations..."
     notify_webhook "provisioning" "plane_migrations" "Running database migrations"
-    
     if ! docker compose run --rm migrator; then
-        echo "❌ Database migrations failed"
-        notify_webhook "failed" "plane_migrations" "Database migrations failed"
-        exit 1
+    echo "❌ Database migrations failed"
+    notify_webhook "failed" "plane_migrations" "Database migrations failed"
+    exit 1
     fi
 
     echo "✅ Database migrations completed"
     sleep 10
 
-    # Step 3: Start all application services
+    # Step 3: Start all application services (proxy disabled externally)
     echo "🚀 Starting Plane application services..."
     notify_webhook "provisioning" "plane_app_start" "Starting Plane application"
 
     if ! docker compose up -d; then
-        echo "❌ Failed to start Plane application services"
-        notify_webhook "failed" "plane_app_start" "Failed to start Plane application"
-        exit 1
+    echo "❌ Failed to start Plane application services"
+    notify_webhook "failed" "plane_app_start" "Failed to start Plane application"
+    exit 1
     fi
 
     echo "⏳ Waiting for Plane to become ready..."
@@ -283,43 +297,40 @@ EOF
 
     # Wait for key services to be responsive
     while [ $elapsed -lt $READY_TIMEOUT ]; do
-        # Check if API is responding through the proxy
-        if curl -f -s http://localhost:80/api/ > /dev/null 2>&1; then
-            echo "✅ Plane API is responding"
-            READY=true
-            break
-        fi
-        
-        # Check container status
-        running_containers=$(docker compose ps --services --filter "status=running" | wc -l)
-        total_containers=$(docker compose ps --services | wc -l)
-        
-        echo "   Containers running: $running_containers/$total_containers (elapsed ${elapsed}s)"
-        
-        sleep $SLEEP_INTERVAL
-        elapsed=$((elapsed + SLEEP_INTERVAL))
+    # Check if API is responding through localhost
+    if curl -f -s http://localhost:80/api/ > /dev/null 2>&1; then
+        echo "✅ Plane API is responding"
+        READY=true
+        break
+    fi
+    # Check container status
+    running_containers=$(docker compose ps --services --filter "status=running" | wc -l)
+    total_containers=$(docker compose ps --services | wc -l)
+    echo "   Containers running: $running_containers/$total_containers (elapsed ${elapsed}s)"
+    sleep $SLEEP_INTERVAL
+    elapsed=$((elapsed + SLEEP_INTERVAL))
     done
 
     if [ "$READY" = false ]; then
-        echo "❌ Plane failed to become ready in $READY_TIMEOUT seconds"
-        echo "=== Container status ==="
-        docker compose ps
-        echo "=== API logs ==="
-        docker compose logs api --tail=50
-        echo "=== Proxy logs ==="
-        docker compose logs proxy --tail=30
-        notify_webhook "failed" "plane_readiness" "Plane failed to become ready - check logs"
-        exit 1
+    echo "❌ Plane failed to become ready in $READY_TIMEOUT seconds"
+    echo "=== Container status ==="
+    docker compose ps
+    echo "=== API logs ==="
+    docker compose logs api --tail=50
+    echo "=== Proxy logs ==="
+    docker compose logs proxy --tail=30
+    notify_webhook "failed" "plane_readiness" "Plane failed to become ready - check logs"
+    exit 1
     fi
 
     echo "✅ Plane is running and responsive"
     notify_webhook "provisioning" "plane_healthy" "✅ Plane is running and responsive"
-    
+
     # Show final status
     echo "=== Final container status ==="
     docker compose ps
-    
     sleep 5
+
 
     # ========== FIREWALL ==========
     echo "[8/15] Configuring firewall..."
