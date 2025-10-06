@@ -142,7 +142,7 @@ def generate_setup(
     fi
 
     echo "✅ Docker installed and running"
-    notify_webhook "provisioning" "docker_ready" "Docker installed successfully"
+    notify_webhook "provisioning" "docker_ready" "✅ Docker installed successfully"
     sleep 5
 
     # ========== PLANE DIRECTORY SETUP ==========
@@ -158,15 +158,15 @@ def generate_setup(
     chown -R 1000:1000 "$DATA_DIR"
     cd "$DATA_DIR"
     echo "✅ Plane directory ready"
-    notify_webhook "provisioning" "directory_ready" "Plane directory created successfully"
+    notify_webhook "provisioning" "directory_ready" "✅ Plane directory created successfully"
     sleep 5
 
-    # ========== PLANE INSTALL ==========
+   # ========== PLANE INSTALL ==========
     echo "[7/15] Installing Plane with Docker Compose..."
     notify_webhook "provisioning" "plane_install" "Setting up Plane with Docker Compose"
     sleep 5
 
-    # Navigate to Plane directory (already created earlier)
+    # Navigate to Plane directory
     cd "$DATA_DIR"
 
     # Generate secure passwords
@@ -176,7 +176,7 @@ def generate_setup(
     SECRET_KEY=$(openssl rand -hex 32)
     MACHINE_SIGNATURE=$(openssl rand -hex 32)
 
-    # Create .env file with all required variables
+    # Create .env file
     cat > .env <<EOF
 # Database Configuration
 POSTGRES_USER=plane
@@ -230,101 +230,98 @@ MACHINE_SIGNATURE=${MACHINE_SIGNATURE}
 NGINX_PORT=80
 EOF
 
-    # Create apps/api/.env (required for Plane's docker-compose builds)
+    # Copy .env to apps/api (required for Docker builds)
     mkdir -p apps/api
     cp .env apps/api/.env
 
-    # Download the current stable docker-compose.yml from Plane repo
+    # Download docker-compose.yml
     COMPOSE_URL="https://raw.githubusercontent.com/makeplane/plane/a2d9e70a83062902346d7e143dd1e6ed3df81ae7/docker-compose.yml"
-
     echo "📥 Downloading Plane docker-compose.yml..."
     if ! curl -fsSL -o docker-compose.yml "$COMPOSE_URL"; then
-    echo "❌ Failed to download docker-compose.yml from $COMPOSE_URL"
-    notify_webhook "failed" "plane_compose_download" "Failed to download docker-compose.yml"
-    exit 1
+        echo "❌ Failed to download docker-compose.yml"
+        notify_webhook "failed" "plane_compose_download" "Failed to download docker-compose.yml"
+        exit 1
     fi
 
-    # Comment out the internal proxy service block to avoid port conflicts with external Nginx
+    # Comment out internal proxy to avoid port conflicts
     echo "🔧 Commenting out internal proxy service..."
-    sed -i '/^ *proxy:/,/^[^ ]/ s/^/#/' docker-compose.yml
+    awk '
+    /^[ ]*proxy:/ {print "#"$0; in_proxy=1; next}
+    in_proxy && /^[^ ]/ {in_proxy=0}
+    in_proxy {print "#"$0; next}
+    {print}
+    ' docker-compose.yml > docker-compose.tmp && mv docker-compose.tmp docker-compose.yml
 
-    # Confirm change for debugging
-    echo "✅ docker-compose.yml downloaded and proxy commented out"
-    head -n 20 docker-compose.yml | grep -A2 proxy || true
+    echo "✅ docker-compose.yml ready and proxy commented out"
+
+    # Pre-create required volumes/directories
+    mkdir -p "$DATA_DIR"/{pgdata,redisdata,rabbitmq_data,uploads}
+    chown -R 1000:1000 "$DATA_DIR"
 
     echo "🚀 Starting Plane infrastructure..."
     notify_webhook "provisioning" "plane_infra_start" "Starting database and services"
 
-    # Step 1: Start infrastructure services
+    # Start infrastructure services
     if ! docker compose up -d plane-db plane-redis plane-mq plane-minio; then
-    echo "❌ Failed to start Plane infrastructure"
-    notify_webhook "failed" "plane_infra" "Failed to start database and services"
-    exit 1
+        echo "❌ Failed to start infrastructure"
+        notify_webhook "failed" "plane_infra" "Failed to start database and services"
+        exit 1
     fi
 
     echo "⏳ Waiting for infrastructure to be ready..."
     sleep 30
 
-    # Step 2: Run database migrations
+    # Run database migrations
     echo "🗃️ Running database migrations..."
     notify_webhook "provisioning" "plane_migrations" "Running database migrations"
     if ! docker compose run --rm migrator; then
-    echo "❌ Database migrations failed"
-    notify_webhook "failed" "plane_migrations" "Database migrations failed"
-    exit 1
+        echo "❌ Database migrations failed"
+        notify_webhook "failed" "plane_migrations" "Database migrations failed"
+        exit 1
     fi
-
     echo "✅ Database migrations completed"
     sleep 10
 
-    # Step 3: Start all application services (proxy disabled externally)
+    # Start all other application services (proxy disabled)
     echo "🚀 Starting Plane application services..."
     notify_webhook "provisioning" "plane_app_start" "Starting Plane application"
-
     if ! docker compose up -d; then
-    echo "❌ Failed to start Plane application services"
-    notify_webhook "failed" "plane_app_start" "Failed to start Plane application"
-    exit 1
+        echo "❌ Failed to start application services"
+        notify_webhook "failed" "plane_app_start" "Failed to start Plane application"
+        exit 1
     fi
 
-    echo "⏳ Waiting for Plane to become ready..."
-    notify_webhook "provisioning" "plane_readiness" "Waiting for Plane to become healthy"
-
-    READY_TIMEOUT=600   # 10 minutes
+    # Wait for API container readiness
+    API_CONTAINER=$(docker compose ps -q api)
+    READY_TIMEOUT=600
     SLEEP_INTERVAL=10
     elapsed=0
     READY=false
 
-    # Wait for key services to be responsive
+    echo "⏳ Waiting for Plane API to become ready..."
     while [ $elapsed -lt $READY_TIMEOUT ]; do
-    # Check if API is responding through localhost
-    if curl -f -s http://localhost:80/api/ > /dev/null 2>&1; then
-        echo "✅ Plane API is responding"
-        READY=true
-        break
-    fi
-    # Check container status
-    running_containers=$(docker compose ps --services --filter "status=running" | wc -l)
-    total_containers=$(docker compose ps --services | wc -l)
-    echo "   Containers running: $running_containers/$total_containers (elapsed ${elapsed}s)"
-    sleep $SLEEP_INTERVAL
-    elapsed=$((elapsed + SLEEP_INTERVAL))
+        if docker exec "$API_CONTAINER" curl -f -s http://localhost:8000/api/ >/dev/null 2>&1; then
+            READY=true
+            break
+        fi
+        echo "   Waiting for API... (${elapsed}s elapsed)"
+        sleep $SLEEP_INTERVAL
+        elapsed=$((elapsed + SLEEP_INTERVAL))
     done
 
     if [ "$READY" = false ]; then
-    echo "❌ Plane failed to become ready in $READY_TIMEOUT seconds"
-    echo "=== Container status ==="
-    docker compose ps
-    echo "=== API logs ==="
-    docker compose logs api --tail=50
-    echo "=== Proxy logs ==="
-    docker compose logs proxy --tail=30
-    notify_webhook "failed" "plane_readiness" "Plane failed to become ready - check logs"
-    exit 1
+        echo "❌ Plane API did not become ready in $READY_TIMEOUT seconds"
+        docker compose ps
+        docker compose logs api --tail=50
+        notify_webhook "failed" "plane_readiness" "Plane failed to become ready - check logs"
+        exit 1
     fi
 
     echo "✅ Plane is running and responsive"
     notify_webhook "provisioning" "plane_healthy" "✅ Plane is running and responsive"
+
+    # Show container status
+    docker compose ps
 
     # Show final status
     echo "=== Final container status ==="
