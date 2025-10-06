@@ -44,7 +44,7 @@ image_reference = {
     'exactVersion': '24.04.202409120'
 }
 
-PORTS_TO_OPEN = [22, 80, 443, 8000, 3000, 8889, 8890, 7088, 8088]
+PORTS_TO_OPEN = [22, 80, 443, 8000, 3000, 8889, 8890, 7088, 8088, 1194]
 
 class bcolors:
     HEADER = '\033[95m'
@@ -365,7 +365,7 @@ async def provision_vm_background(
         # Generate and upload setup script
         print_info("Generating installation setup script...")
         sh_script = generate_setup.generate_setup(
-            fqdn, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT
+            fqdn, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, hook_url,location,resource_group
         )
         record_name = subdomain.rstrip('.') if subdomain else '@'
         a_records = [record_name]
