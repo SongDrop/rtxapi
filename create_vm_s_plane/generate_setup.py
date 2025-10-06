@@ -161,107 +161,164 @@ def generate_setup(
     notify_webhook "provisioning" "directory_ready" "Plane directory created successfully"
     sleep 5
 
-    #   ========== PLANE INSTALL ==========
-    echo "[7/15] Downloading and installing Plane..."
-    notify_webhook "provisioning" "plane_install" "Downloading Plane setup script"
+     # ========== PLANE INSTALL ==========
+    echo "[7/15] Installing Plane with Docker Compose..."
+    notify_webhook "provisioning" "plane_install" "Setting up Plane with Docker Compose"
     sleep 5
 
-    if ! curl -fsSL -o setup.sh "https://github.com/makeplane/plane/releases/latest/download/setup.sh"; then
-        echo "❌ Failed to download Plane setup script"
-        notify_webhook "failed" "plane_setup_download" "Failed to download Plane setup.sh"
-        exit 1
-    fi
-    chmod +x setup.sh
+    # Navigate to Plane directory (already created earlier)
+    cd "$DATA_DIR"
 
-    echo "🚀 Running Plane installer..."
-    if ! ./setup.sh <<EOF
-1
-8
+    # Generate secure passwords
+    POSTGRES_PASSWORD=$(openssl rand -base64 32)
+    RABBITMQ_PASSWORD=$(openssl rand -base64 32)
+    MINIO_PASSWORD=$(openssl rand -base64 32)
+    SECRET_KEY=$(openssl rand -hex 32)
+    MACHINE_SIGNATURE=$(openssl rand -hex 32)
+
+    # Create .env file with all required variables
+    cat > .env <<EOF
+# Database Configuration
+POSTGRES_USER=plane
+POSTGRES_DB=plane
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+DATABASE_URL=postgresql://plane:${POSTGRES_PASSWORD}@plane-db:5432/plane
+
+# Redis
+VALKEY_URL=redis://plane-redis:6379/
+
+# RabbitMQ
+CELERY_BROKER_URL=amqp://plane:${RABBITMQ_PASSWORD}@plane-mq:5672/plane
+RABBITMQ_USER=plane
+RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+RABBITMQ_VHOST=plane
+
+# MinIO/S3
+AWS_ACCESS_KEY_ID=plane
+AWS_SECRET_ACCESS_KEY=${MINIO_PASSWORD}
+AWS_S3_BUCKET_NAME=uploads
+AWS_S3_ENDPOINT_URL=http://plane-minio:9000
+AWS_REGION=us-east-1
+
+# Application
+SECRET_KEY=${SECRET_KEY}
+WEB_URL=https://${DOMAIN}
+DEBUG=0
+
+# CORS
+CORS_ALLOWED_ORIGINS=https://${DOMAIN}
+
+# File upload
+FILE_SIZE_LIMIT=52428800
+
+# Gunicorn Workers
+GUNICORN_WORKERS=3
+WEB_CONCURRENCY=3
+
+# Email (optional)
+EMAIL_HOST=
+EMAIL_HOST_USER=
+EMAIL_HOST_PASSWORD=
+EMAIL_PORT=587
+EMAIL_USE_TLS=1
+EMAIL_FROM=noreply@${DOMAIN}
+
+# Machine signature
+MACHINE_SIGNATURE=${MACHINE_SIGNATURE}
+
+# Nginx port for proxy
+NGINX_PORT=80
 EOF
-    then
-        echo "❌ Plane installation failed"
-        notify_webhook "failed" "plane_install_run" "Plane setup script failed"
+
+    # Download docker-compose.yml
+    if ! curl -fsSL -o docker-compose.yml "https://raw.githubusercontent.com/makeplane/plane/master/deploy/selfhost/docker-compose.yml"; then
+        echo "❌ Failed to download docker-compose.yml"
+        notify_webhook "failed" "plane_compose_download" "Failed to download docker-compose.yml"
         exit 1
     fi
 
-    echo "✅ Plane installation completed"
-    notify_webhook "provisioning" "plane_install_complete" "Plane installed successfully"
-    sleep 5
+    echo "🚀 Starting Plane infrastructure..."
+    notify_webhook "provisioning" "plane_infra_start" "Starting database and services"
 
-    # ========== PLANE SERVICE START ==========
-    echo "[8/15] Starting Plane services..."
-    notify_webhook "provisioning" "plane_start" "Starting Plane containers"
-    sleep 5
-
-    if ! ./setup.sh <<EOF
-2
-8
-EOF
-    then
-        echo "❌ Failed to start Plane services"
-        notify_webhook "failed" "plane_start" "Plane services failed to start"
+    # Step 1: Start infrastructure services
+    if ! docker compose up -d plane-db plane-redis plane-mq plane-minio; then
+        echo "❌ Failed to start Plane infrastructure"
+        notify_webhook "failed" "plane_infra" "Failed to start database and services"
         exit 1
     fi
 
-    echo "⏳ Waiting for Plane containers to become ready..."
-    notify_webhook "provisioning" "plane_readiness" "Waiting for Plane containers to become healthy"
+    echo "⏳ Waiting for infrastructure to be ready..."
+    sleep 30
+
+    # Step 2: Run database migrations
+    echo "🗃️ Running database migrations..."
+    notify_webhook "provisioning" "plane_migrations" "Running database migrations"
+    
+    if ! docker compose run --rm migrator; then
+        echo "❌ Database migrations failed"
+        notify_webhook "failed" "plane_migrations" "Database migrations failed"
+        exit 1
+    fi
+
+    echo "✅ Database migrations completed"
+    sleep 10
+
+    # Step 3: Start all application services
+    echo "🚀 Starting Plane application services..."
+    notify_webhook "provisioning" "plane_app_start" "Starting Plane application"
+
+    if ! docker compose up -d; then
+        echo "❌ Failed to start Plane application services"
+        notify_webhook "failed" "plane_app_start" "Failed to start Plane application"
+        exit 1
+    fi
+
+    echo "⏳ Waiting for Plane to become ready..."
+    notify_webhook "provisioning" "plane_readiness" "Waiting for Plane to become healthy"
 
     READY_TIMEOUT=600   # 10 minutes
-    SLEEP_INTERVAL=5
+    SLEEP_INTERVAL=10
     elapsed=0
     READY=false
 
-    # Ensure container appears
-    echo "⏳ Waiting for Plane containers to appear..."
-    while ! docker ps -a --format '{{.Names}}' | grep -iq plane; do
-        sleep $SLEEP_INTERVAL
-        elapsed=$((elapsed + SLEEP_INTERVAL))
-        if [ $elapsed -ge $READY_TIMEOUT ]; then
-            echo "❌ Timeout waiting for Plane containers"
-            notify_webhook "failed" "plane_start" "Timeout waiting for Plane containers to start"
-            docker ps -a
-            exit 1
-        fi
-    done
-
-    # Reset timer for health checks
-    elapsed=0
-
-    echo "🔎 Checking Plane container health..."
+    # Wait for key services to be responsive
     while [ $elapsed -lt $READY_TIMEOUT ]; do
-        plane_containers=$(docker ps --filter "name=plane" --format '{{.Names}}')
-        all_healthy=true
-
-        for container in $plane_containers; do
-            state=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "unknown")
-            health=$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo "no-health")
-            echo "   -> $container: state=$state, health=$health (elapsed ${elapsed}s)"
-
-            if [ "$state" != "running" ] || { [ "$health" != "healthy" ] && [ "$health" != "no-health" ]; }; then
-                all_healthy=false
-                break
-            fi
-        done
-
-        if [ "$all_healthy" = true ]; then
+        # Check if API is responding through the proxy
+        if curl -f -s http://localhost:80/api/ > /dev/null 2>&1; then
+            echo "✅ Plane API is responding"
             READY=true
             break
         fi
-
+        
+        # Check container status
+        running_containers=$(docker compose ps --services --filter "status=running" | wc -l)
+        total_containers=$(docker compose ps --services | wc -l)
+        
+        echo "   Containers running: $running_containers/$total_containers (elapsed ${elapsed}s)"
+        
         sleep $SLEEP_INTERVAL
         elapsed=$((elapsed + SLEEP_INTERVAL))
     done
 
     if [ "$READY" = false ]; then
         echo "❌ Plane failed to become ready in $READY_TIMEOUT seconds"
-        docker ps -a
-        docker compose logs --tail=500 || true
-        notify_webhook "failed" "plane_readiness" "Plane containers failed to become healthy"
+        echo "=== Container status ==="
+        docker compose ps
+        echo "=== API logs ==="
+        docker compose logs api --tail=50
+        echo "=== Proxy logs ==="
+        docker compose logs proxy --tail=30
+        notify_webhook "failed" "plane_readiness" "Plane failed to become ready - check logs"
         exit 1
     fi
 
-    echo "✅ Plane is running and healthy"
-    notify_webhook "provisioning" "plane_healthy" "✅ Plane is running and healthy"
+    echo "✅ Plane is running and responsive"
+    notify_webhook "provisioning" "plane_healthy" "✅ Plane is running and responsive"
+    
+    # Show final status
+    echo "=== Final container status ==="
+    docker compose ps
+    
     sleep 5
 
     # ========== FIREWALL ==========
@@ -342,7 +399,7 @@ server {
     client_max_body_size 100M;
 
     location / {
-        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_pass http://127.0.0.1:80;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -356,7 +413,7 @@ server {
 }
 EOF_SSL
 
-        ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
+        ln -sf /etc/nginx/sites-available/plane /etc/nginx/sites-enabled/plane
         nginx -t && systemctl reload nginx
     fi
 
