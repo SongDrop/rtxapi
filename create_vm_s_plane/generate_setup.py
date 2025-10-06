@@ -161,13 +161,12 @@ def generate_setup(
     notify_webhook "provisioning" "directory_ready" "✅ Plane directory created successfully"
     sleep 5
 
-   # ========== PLANE INSTALL ==========
+    # ========== PLANE INSTALL ==========
     echo "[7/15] Installing Plane with Docker Compose..."
     notify_webhook "provisioning" "plane_install" "Setting up Plane with Docker Compose"
-    sleep 5
 
     # Navigate to Plane directory
-    cd "$DATA_DIR"
+    cd "$DATA_DIR" || { echo "ERROR: Could not enter $DATA_DIR"; exit 1; }
 
     # Generate secure passwords
     POSTGRES_PASSWORD=$(openssl rand -base64 32)
@@ -202,11 +201,11 @@ AWS_REGION=us-east-1
 
 # Application
 SECRET_KEY=${SECRET_KEY}
-WEB_URL=https://${DOMAIN}
+WEB_URL=http://${DOMAIN:-localhost}
 DEBUG=0
 
 # CORS
-CORS_ALLOWED_ORIGINS=https://${DOMAIN}
+CORS_ALLOWED_ORIGINS=http://${DOMAIN:-localhost}
 
 # File upload
 FILE_SIZE_LIMIT=52428800
@@ -221,7 +220,7 @@ EMAIL_HOST_USER=
 EMAIL_HOST_PASSWORD=
 EMAIL_PORT=587
 EMAIL_USE_TLS=1
-EMAIL_FROM=noreply@${DOMAIN}
+EMAIL_FROM=noreply@${DOMAIN:-localhost}
 
 # Machine signature
 MACHINE_SIGNATURE=${MACHINE_SIGNATURE}
@@ -258,40 +257,49 @@ EOF
     mkdir -p "$DATA_DIR"/{pgdata,redisdata,rabbitmq_data,uploads}
     chown -R 1000:1000 "$DATA_DIR"
 
-    echo "🚀 Starting Plane infrastructure..."
+    # ========== Start Infrastructure ==========
+    echo "🚀 Starting Plane infrastructure (DB, Redis, MQ, MinIO)..."
     notify_webhook "provisioning" "plane_infra_start" "Starting database and services"
 
-    # Start infrastructure services
     if ! docker compose up -d plane-db plane-redis plane-mq plane-minio; then
         echo "❌ Failed to start infrastructure"
         notify_webhook "failed" "plane_infra" "Failed to start database and services"
         exit 1
     fi
 
-    echo "⏳ Waiting for infrastructure to be ready..."
-    sleep 30
+    # Wait for Postgres to be ready
+    echo "⏳ Waiting for Postgres to accept connections..."
+    until docker exec plane-db pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; do
+        sleep 5
+    done
+    echo "✅ Postgres ready"
 
-    # Run database migrations
+    # ========== Run Database Migrations ==========
     echo "🗃️ Running database migrations..."
     notify_webhook "provisioning" "plane_migrations" "Running database migrations"
+
     if ! docker compose run --rm migrator; then
-        echo "❌ Database migrations failed"
-        notify_webhook "failed" "plane_migrations" "Database migrations failed"
-        exit 1
+        echo "⚠️ Migration failed on first attempt, retrying in 5s..."
+        sleep 5
+        if ! docker compose run --rm migrator; then
+            echo "❌ Database migrations failed"
+            notify_webhook "failed" "plane_migrations" "Database migrations failed"
+            exit 1
+        fi
     fi
     echo "✅ Database migrations completed"
-    sleep 10
 
-    # Start all other application services (proxy disabled)
+    # ========== Start Application Services ==========
     echo "🚀 Starting Plane application services..."
     notify_webhook "provisioning" "plane_app_start" "Starting Plane application"
+
     if ! docker compose up -d; then
         echo "❌ Failed to start application services"
         notify_webhook "failed" "plane_app_start" "Failed to start Plane application"
         exit 1
     fi
 
-    # Wait for API container readiness
+    # ========== Wait for API Readiness ==========
     API_CONTAINER=$(docker compose ps -q api)
     READY_TIMEOUT=600
     SLEEP_INTERVAL=10
@@ -320,13 +328,11 @@ EOF
     echo "✅ Plane is running and responsive"
     notify_webhook "provisioning" "plane_healthy" "✅ Plane is running and responsive"
 
-    # Show container status
+    # Show final container status
     docker compose ps
-
-    # Show final status
     echo "=== Final container status ==="
     docker compose ps
-    sleep 5
+
 
 
     # ========== FIREWALL ==========
