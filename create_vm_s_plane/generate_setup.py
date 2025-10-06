@@ -30,7 +30,7 @@ def generate_setup(
         "__DNS_HOOK_SCRIPT__": DNS_HOOK_SCRIPT,
         "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
         "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
-        "__PLANE_DOCKER_COMPOSE__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
+        "__PLANE_DOCKER_COMPOSE__": "https://raw.githubusercontent.com/makeplane/plane/refs/heads/preview/docker-compose.yml",
     }
 
     # ========== BASE TEMPLATE ==========
@@ -282,7 +282,7 @@ EOF
         exit 1
     fi
     
-                                      echo "✅ docker-compose.yml downloaded successfully"
+    echo "✅ docker-compose.yml downloaded successfully"
     notify_webhook "failed" "plane_compose_downloaded" "docker-compose.yml downloaded successfully"
     sleep 5
 
