@@ -166,29 +166,35 @@ def generate_setup(
     notify_webhook "provisioning" "plane_install" "Setting up Plane with Docker Compose"
 
     # Navigate to Plane directory
-    cd "$DATA_DIR" || { echo "ERROR: Could not enter $DATA_DIR"; exit 1; }
+    cd "$DATA_DIR" || { echo "❌ ERROR: Could not enter $DATA_DIR"; exit 1; }
 
-    # Generate secure passwords
+    # Generate secure passwords and keys
+    POSTGRES_USER=plane
+    POSTGRES_DB=plane
     POSTGRES_PASSWORD=$(openssl rand -base64 32)
+    RABBITMQ_USER=plane
     RABBITMQ_PASSWORD=$(openssl rand -base64 32)
     MINIO_PASSWORD=$(openssl rand -base64 32)
     SECRET_KEY=$(openssl rand -hex 32)
     MACHINE_SIGNATURE=$(openssl rand -hex 32)
 
+    # Export variables so they are available in subshells (fixes "unbound variable" errors)
+    export POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD RABBITMQ_USER RABBITMQ_PASSWORD MINIO_PASSWORD SECRET_KEY MACHINE_SIGNATURE
+
     # Create .env file
     cat > .env <<EOF
 # Database Configuration
-POSTGRES_USER=plane
-POSTGRES_DB=plane
+POSTGRES_USER=${POSTGRES_USER}
+POSTGRES_DB=${POSTGRES_DB}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-DATABASE_URL=postgresql://plane:${POSTGRES_PASSWORD}@plane-db:5432/plane
+DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB}
 
 # Redis
 VALKEY_URL=redis://plane-redis:6379/
 
 # RabbitMQ
-CELERY_BROKER_URL=amqp://plane:${RABBITMQ_PASSWORD}@plane-mq:5672/plane
-RABBITMQ_USER=plane
+CELERY_BROKER_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@plane-mq:5672/plane
+RABBITMQ_USER=${RABBITMQ_USER}
 RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
 RABBITMQ_VHOST=plane
 
@@ -229,7 +235,7 @@ MACHINE_SIGNATURE=${MACHINE_SIGNATURE}
 NGINX_PORT=80
 EOF
 
-    # Copy .env to apps/api (required for Docker builds)
+    # Copy .env to apps/api for Docker builds
     mkdir -p apps/api
     cp .env apps/api/.env
 
@@ -250,7 +256,6 @@ EOF
     in_proxy {print "#"$0; next}
     {print}
     ' docker-compose.yml > docker-compose.tmp && mv docker-compose.tmp docker-compose.yml
-
     echo "✅ docker-compose.yml ready and proxy commented out"
 
     # Pre-create required volumes/directories
@@ -332,8 +337,6 @@ EOF
     docker compose ps
     echo "=== Final container status ==="
     docker compose ps
-
-
 
     # ========== FIREWALL ==========
     echo "[8/15] Configuring firewall..."
