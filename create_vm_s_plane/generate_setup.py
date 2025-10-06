@@ -184,6 +184,9 @@ def generate_setup(
 
     cd plane || { echo "❌ ERROR: Plane directory not found"; exit 1; }
 
+    notify_webhook "provisioning" "plane_cloned" "📦 Cloning the official Plane done"
+
+    sleep 5
     # ========== Generate Secure Credentials ==========
     POSTGRES_USER=plane
     POSTGRES_DB=plane
@@ -278,7 +281,10 @@ EOF
         notify_webhook "failed" "plane_compose_download" "Failed to download docker-compose.yml"
         exit 1
     fi
-    echo "✅ docker-compose.yml downloaded successfully"
+    
+                                      echo "✅ docker-compose.yml downloaded successfully"
+    notify_webhook "failed" "plane_compose_downloaded" "docker-compose.yml downloaded successfully"
+    sleep 5
 
     # ========== Start Infrastructure ==========
     echo "🚀 Starting Plane infrastructure (DB, Redis, MQ, MinIO)..."
