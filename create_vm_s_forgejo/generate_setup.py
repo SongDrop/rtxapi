@@ -479,8 +479,46 @@ EOF_SSL
         exit 1
     fi
 
-    #wait 30 seconds until everything is fully ready 
-    sleep 30
+    # =================== POST-PROVISIONING GIT LFS CHECK ===================
+    echo "[99/99] Checking Git LFS installation and configuration..."
+    notify_webhook "provisioning" "git_lfs_check" "Starting Git LFS verification"
+
+    GIT_LFS_STATUS="ok"
+
+    # 1️⃣ Check if git-lfs command exists
+    if ! command -v git-lfs >/dev/null 2>&1; then
+        GIT_LFS_STATUS="missing"
+        notify_webhook "failed" "git_lfs_check" "Git LFS command not found on host"
+    else
+        notify_webhook "provisioning" "git_lfs_check" "Git LFS command found: $(git lfs version)"
+    fi
+
+    # 2️⃣ Check if git-lfs is initialized
+    if ! git lfs env >/dev/null 2>&1; then
+        GIT_LFS_STATUS="not_initialized"
+        notify_webhook "warning" "git_lfs_check" "Git LFS not initialized. Run 'git lfs install'."
+    else
+        notify_webhook "provisioning" "git_lfs_check" "Git LFS initialized successfully"
+    fi
+
+    # 3️⃣ Check Forgejo container for MAX_FILE_SIZE
+    LFS_MAX_BYTES=$(docker compose exec -T server printenv FORGEJO__lfs__MAX_FILE_SIZE 2>/dev/null || echo "not_set")
+    if [[ "$LFS_MAX_BYTES" == "not_set" ]]; then
+        GIT_LFS_STATUS="env_missing"
+        notify_webhook "warning" "git_lfs_check" "FORGEJO__lfs__MAX_FILE_SIZE not set inside container"
+    else
+        notify_webhook "provisioning" "git_lfs_check" "Forgejo LFS max file size inside container: $LFS_MAX_BYTES bytes"
+    fi
+
+    # 4️⃣ Final webhook summary
+    if [[ "$GIT_LFS_STATUS" == "ok" ]]; then
+        notify_webhook "success" "git_lfs_check" "✅ Git LFS is installed, initialized, and configured properly"
+    else
+        notify_webhook "failed" "git_lfs_check" "❌ Git LFS check failed: $GIT_LFS_STATUS"
+    fi
+
+    #wait 50 seconds until everything is fully ready 
+    sleep 50
 
     cat <<EOF_FINAL
 =============================================
