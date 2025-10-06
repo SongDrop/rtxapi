@@ -30,6 +30,7 @@ def generate_setup(
         "__DNS_HOOK_SCRIPT__": DNS_HOOK_SCRIPT,
         "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
         "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
+        "__PLANE_DOCKER_COMPOSE__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
     }
 
     # ========== BASE TEMPLATE ==========
@@ -271,9 +272,8 @@ NEXT_PUBLIC_WEB_BASE_URL=http://${DOMAIN:-localhost}
 EOF
 
     # ========== Download docker-compose.yml ==========
-    COMPOSE_URL="https://raw.githubusercontent.com/makeplane/plane/main/docker-compose.yml"
     echo "📥 Downloading docker-compose.yml..."
-    if ! curl -fsSL -o docker-compose.yml "$COMPOSE_URL"; then
+    if ! curl -fsSL -o docker-compose.yml "__PLANE_DOCKER_COMPOSE__"; then
         echo "❌ Failed to download docker-compose.yml"
         notify_webhook "failed" "plane_compose_download" "Failed to download docker-compose.yml"
         exit 1
@@ -555,6 +555,7 @@ JSON_EOF
     # Replace SSL configuration URLs
     final = final.replace("__LET_OPTIONS_URL__", tokens["__LET_OPTIONS_URL__"])
     final = final.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
+    final = final.replace("__PLANE_DOCKER_COMPOSE__", tokens["__PLANE_DOCKER_COMPOSE__"])
 
     # Replace CERTBOT_CRON token
     certbot_cron = "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'"
