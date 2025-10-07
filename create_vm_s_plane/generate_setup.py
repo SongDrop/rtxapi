@@ -188,7 +188,7 @@ def generate_setup(
 
     sleep 5
                                       
-       # ========== Generate Secure Credentials ==========
+    # ========== Generate Secure Credentials ==========
     POSTGRES_USER=plane
     POSTGRES_DB=plane
     POSTGRES_PASSWORD=$(openssl rand -base64 32)
@@ -321,10 +321,12 @@ EOF
             exit 1
         else
             echo "✅ $service started successfully"
-            notify_webhook "provisioning" "${service}_ready" "$service is up and running"
+            notify_webhook "provisioning" "${service}_ready" "$service is running"
         fi
+        sleep 3
     done
 
+    # ========== Wait for PostgreSQL and Redis to be ready ==========
     echo "⏳ Waiting for PostgreSQL to be ready..."
     MAX_WAIT=60
     count=0
@@ -332,48 +334,67 @@ EOF
         sleep 5
         count=$((count + 1))
         if [ $count -ge $MAX_WAIT ]; then
-            echo "❌ PostgreSQL failed to become ready within $((MAX_WAIT * 5)) seconds"
+            echo "❌ PostgreSQL failed to become ready within $((MAX_WAIT*5)) seconds"
             docker compose logs plane-db --tail=50
             notify_webhook "failed" "postgres_timeout" "PostgreSQL failed to start"
             exit 1
         fi
-        echo "   Still waiting for PostgreSQL... ($((count * 5))s)"
+        echo "   Still waiting for PostgreSQL... ($((count*5))s)"
     done
     echo "✅ PostgreSQL is ready"
+    notify_webhook "provisioning" "postgres_ready" "PostgreSQL is ready"
+
+    echo "⏳ Waiting for Redis to be ready..."
+    count=0
+    until docker exec plane-redis redis-cli ping >/dev/null 2>&1; do
+        sleep 2
+        count=$((count + 1))
+        if [ $count -ge $MAX_WAIT ]; then
+            echo "❌ Redis failed to become ready within $((MAX_WAIT*2)) seconds"
+            docker compose logs plane-redis --tail=50
+            notify_webhook "failed" "redis_timeout" "Redis failed to start"
+            exit 1
+        fi
+    done
+    echo "✅ Redis is ready"
+    notify_webhook "provisioning" "redis_ready" "Redis is ready"
 
     # ========== Run Migrations ==========
     echo "🗃️ Running Plane database migrations..."
-    notify_webhook "provisioning" "plane_migrations" "Running database migrations"
+    notify_webhook "provisioning" "plane_migrations_start" "Starting database migrations"
 
     if ! docker compose run --rm migrator; then
         echo "⚠️ Migration failed on first attempt, retrying..."
         sleep 10
         if ! docker compose run --rm migrator; then
             echo "❌ Database migrations failed after retry"
-            docker compose logs --tail=50
-            notify_webhook "failed" "plane_migrations" "Database migrations failed"
+            docker compose logs migrator --tail=50
+            notify_webhook "failed" "plane_migrations_failed" "Database migrations failed"
             exit 1
         fi
     fi
     echo "✅ Database migrations completed successfully"
+    notify_webhook "provisioning" "plane_migrations_success" "Database migrations finished"
 
     # ========== Start Application Services ==========
-    echo "🚀 Starting all Plane application services..."
+    echo "🚀 Starting Plane application services..."
     notify_webhook "provisioning" "plane_app_start" "Starting Plane application services"
 
-    # Start remaining services (excluding infrastructure and proxy)
     APPLICATION_SERVICES=("api" "web" "admin" "space" "worker" "beat-worker" "live")
 
     for service in "${APPLICATION_SERVICES[@]}"; do
         echo "🚀 Starting $service..."
+        notify_webhook "provisioning" "${service}_start" "Starting $service container"
         if ! docker compose up -d "$service"; then
             echo "❌ Failed to start $service"
             notify_webhook "failed" "${service}_failed" "Failed to start $service"
             docker compose logs "$service" --tail=30
-            # Continue with other services instead of exiting immediately
+            # Continue with other services
         else
             echo "✅ $service started successfully"
+            notify_webhook "provisioning" "${service}_ready" "$service is running"
         fi
+        sleep 3
     done
 
     # ========== Verify API Health ==========
@@ -387,7 +408,7 @@ EOF
 
     while [ $elapsed -lt $READY_TIMEOUT ]; do
         if docker compose ps api | grep -q "Up" && \
-           curl -f -s http://localhost:8000/api/ >/dev/null 2>&1; then
+        curl -f -s http://localhost:8000/api/ >/dev/null 2>&1; then
             READY=true
             break
         fi
@@ -410,6 +431,7 @@ EOF
     # Show final container status
     echo "📊 Final container status:"
     docker compose ps
+
 
 
     # ========== FIREWALL ==========

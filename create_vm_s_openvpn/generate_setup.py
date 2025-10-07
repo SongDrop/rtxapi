@@ -280,8 +280,16 @@ def generate_setup(
     notify_webhook "provisioning" "firewall" "Setting up UFW firewall rules"
 
     ufw allow 22/tcp
-    ufw allow 1194/tcp
     ufw allow "$VPN_PORT/$PROTOCOL"
+
+    # IncrediBuild coordination ports
+    ufw allow 8080/tcp
+    ufw allow 8081/tcp  
+    ufw allow 8732/tcp
+    ufw allow 8733/tcp
+    ufw allow 8085/tcp
+    ufw allow 8086/tcp
+
     ufw --force enable
 
     echo "✅ Firewall configured"
