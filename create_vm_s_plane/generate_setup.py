@@ -396,129 +396,154 @@ def generate_setup(
     # ==========================================================
     echo "🛠️ Updating .env files with secure credentials and domain..."
 
-    # We're already in the cloned plane directory, update existing .env files
-    # Update the main .env file if it exists
-    if [ -f ".env" ]; then
-        sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env
-        sed -i "s/^RABBITMQ_PASSWORD=.*/RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD/" .env
-        sed -i "s/^AWS_SECRET_ACCESS_KEY=.*/AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD/" .env
-        echo "✅ Updated main .env file with secure credentials"
+    # -----------------------------
+    # Update root .env (infrastructure)
+    # -----------------------------
+    ROOT_ENV=".env"
+    if [ -f "$ROOT_ENV" ]; then
+        sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" "$ROOT_ENV"
+        sed -i "s/^RABBITMQ_PASSWORD=.*/RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD/" "$ROOT_ENV"
+        sed -i "s/^AWS_SECRET_ACCESS_KEY=.*/AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD/" "$ROOT_ENV"
+        echo "✅ Updated root $ROOT_ENV with secure credentials"
     else
-        # Create main .env if it doesn't exist
-        cat > ".env" <<EOF
-POSTGRES_USER=$POSTGRES_USER
-POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-POSTGRES_DB=$POSTGRES_DB
-PGDATA=/var/lib/postgresql/data
-REDIS_HOST=plane-redis
-REDIS_PORT=6379
-AWS_ACCESS_KEY_ID=plane
-AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
-AWS_S3_BUCKET_NAME=uploads
-AWS_S3_ENDPOINT_URL=http://plane-minio:9000
-AWS_REGION=us-east-1
+        cat > "$ROOT_ENV" <<EOF
+# Database Settings
+POSTGRES_USER="$POSTGRES_USER"
+POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+POSTGRES_DB="$POSTGRES_DB"
+PGDATA="/var/lib/postgresql/data"
+
+# Redis Settings
+REDIS_HOST="plane-redis"
+REDIS_PORT="6379"
+
+# RabbitMQ Settings
+RABBITMQ_HOST="plane-mq"
+RABBITMQ_PORT="5672"
+RABBITMQ_USER="$RABBITMQ_USER"
+RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD"
+RABBITMQ_VHOST="$RABBITMQ_VHOST"
+LISTEN_HTTP_PORT=80
+LISTEN_HTTPS_PORT=443
+
+# AWS Settings
+AWS_REGION="us-east-1"
+AWS_ACCESS_KEY_ID="plane"
+AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD"
+AWS_S3_BUCKET_NAME="uploads"
+AWS_S3_ENDPOINT_URL="http://plane-minio:9000"
+
+# Misc
 FILE_SIZE_LIMIT=52428800
 DOCKERIZED=1
 USE_MINIO=1
-NGINX_PORT=8080
-RABBITMQ_USER=$RABBITMQ_USER
-RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD
-RABBITMQ_VHOST=$RABBITMQ_VHOST
-LISTEN_HTTP_PORT=8080
-LISTEN_HTTPS_PORT=8443
 EOF
-        echo "✅ Created main .env file"
+        echo "✅ Created root $ROOT_ENV"
     fi
 
-    # Update apiserver/.env
-    if [ -f "apiserver/.env" ]; then
-        sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" apiserver/.env
-        sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$SECRET_KEY/" apiserver/.env
-        sed -i "s|^CORS_ALLOWED_ORIGINS=.*|CORS_ALLOWED_ORIGINS=http://$DOMAIN|" apiserver/.env
-        sed -i "s|^WEB_URL=.*|WEB_URL=http://$DOMAIN|" apiserver/.env
-        echo "✅ Updated apiserver/.env file"
-    else
-        mkdir -p apiserver
-        cat > "apiserver/.env" <<EOF
+    # -----------------------------
+    # Update apps/api/.env (backend)
+    # -----------------------------
+    API_ENV="apps/api/.env"
+    mkdir -p "apps/api"
+    cat > "$API_ENV" <<EOF
+# Backend settings
 DEBUG=0
-CORS_ALLOWED_ORIGINS=http://$DOMAIN
-SENTRY_DSN=
-SENTRY_ENVIRONMENT=production
-POSTGRES_USER=$POSTGRES_USER
-POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-POSTGRES_HOST=plane-db
-POSTGRES_DB=$POSTGRES_DB
+CORS_ALLOWED_ORIGINS="http://$DOMAIN,http://$DOMAIN:3001,http://$DOMAIN:3002,http://$DOMAIN:3100"
+
+# Database
+POSTGRES_USER="$POSTGRES_USER"
+POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+POSTGRES_HOST="plane-db"
+POSTGRES_DB="$POSTGRES_DB"
 POSTGRES_PORT=5432
 DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@plane-db:\$POSTGRES_PORT/\$POSTGRES_DB
-REDIS_HOST=plane-redis
-REDIS_PORT=6379
+
+# Redis
+REDIS_HOST="plane-redis"
+REDIS_PORT="6379"
 REDIS_URL=redis://plane-redis:6379/
-AWS_ACCESS_KEY_ID=plane
-AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
-AWS_S3_ENDPOINT_URL=http://plane-minio:9000
-AWS_S3_BUCKET_NAME=uploads
+
+# RabbitMQ
+RABBITMQ_HOST="plane-mq"
+RABBITMQ_PORT="5672"
+RABBITMQ_USER="$RABBITMQ_USER"
+RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD"
+RABBITMQ_VHOST="$RABBITMQ_VHOST"
+
+# AWS
+AWS_REGION="us-east-1"
+AWS_ACCESS_KEY_ID="plane"
+AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD"
+AWS_S3_ENDPOINT_URL="http://plane-minio:9000"
+AWS_S3_BUCKET_NAME="uploads"
+
+# Misc
 FILE_SIZE_LIMIT=52428800
 USE_MINIO=1
-NGINX_PORT=8080
-WEB_URL=http://$DOMAIN
+WEB_URL="http://$DOMAIN"
 GUNICORN_WORKERS=3
-SECRET_KEY=$SECRET_KEY
+SECRET_KEY="$SECRET_KEY"
+MINIO_ENDPOINT_SSL=0
+API_KEY_RATE_LIMIT="60/minute"
 EOF
-        echo "✅ Created apiserver/.env file"
-    fi
+    echo "✅ Created/updated $API_ENV"
 
-    # Update web/.env
-    if [ -f "web/.env" ]; then
-        sed -i "s|^NEXT_PUBLIC_API_BASE_URL=.*|NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN|" web/.env
-        sed -i "s|^NEXT_PUBLIC_ADMIN_BASE_URL=.*|NEXT_PUBLIC_ADMIN_BASE_URL=http://$DOMAIN|" web/.env
-        sed -i "s|^NEXT_PUBLIC_SPACE_BASE_URL=.*|NEXT_PUBLIC_SPACE_BASE_URL=http://$DOMAIN|" web/.env
-        echo "✅ Updated web/.env file"
-    else
-        mkdir -p web
-        cat > "web/.env" <<EOF
-NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
-NEXT_PUBLIC_ADMIN_BASE_URL=http://$DOMAIN
-NEXT_PUBLIC_ADMIN_BASE_PATH=/god-mode
-NEXT_PUBLIC_SPACE_BASE_URL=http://$DOMAIN
-NEXT_PUBLIC_SPACE_BASE_PATH=/spaces
+    # -----------------------------
+    # Update apps/web/.env (frontend)
+    # -----------------------------
+    WEB_ENV="apps/web/.env"
+    mkdir -p "apps/web"
+    cat > "$WEB_ENV" <<EOF
+NEXT_PUBLIC_API_BASE_URL="http://$DOMAIN:8000"
+NEXT_PUBLIC_WEB_BASE_URL="http://$DOMAIN:3000"
+NEXT_PUBLIC_ADMIN_BASE_URL="http://$DOMAIN:3001"
+NEXT_PUBLIC_ADMIN_BASE_PATH="/god-mode"
+NEXT_PUBLIC_SPACE_BASE_URL="http://$DOMAIN:3002"
+NEXT_PUBLIC_SPACE_BASE_PATH="/spaces"
+NEXT_PUBLIC_LIVE_BASE_URL="http://$DOMAIN:3100"
+NEXT_PUBLIC_LIVE_BASE_PATH="/live"
 EOF
-        echo "✅ Created web/.env file"
-    fi
+    echo "✅ Created/updated $WEB_ENV"
 
-    # Update space/.env
-    if [ -f "space/.env" ]; then
-        sed -i "s|^NEXT_PUBLIC_API_BASE_URL=.*|NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN|" space/.env
-        sed -i "s|^NEXT_PUBLIC_WEB_BASE_URL=.*|NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN|" space/.env
-        echo "✅ Updated space/.env file"
-    else
-        mkdir -p space
-        cat > "space/.env" <<EOF
-NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
-NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN
-NEXT_PUBLIC_SPACE_BASE_PATH=/spaces
+    # -----------------------------
+    # Update apps/space/.env
+    # -----------------------------
+    SPACE_ENV="apps/space/.env"
+    mkdir -p "apps/space"
+    cat > "$SPACE_ENV" <<EOF
+NEXT_PUBLIC_API_BASE_URL="http://$DOMAIN:8000"
+NEXT_PUBLIC_WEB_BASE_URL="http://$DOMAIN:3000"
+NEXT_PUBLIC_ADMIN_BASE_URL="http://$DOMAIN:3001"
+NEXT_PUBLIC_ADMIN_BASE_PATH="/god-mode"
+NEXT_PUBLIC_SPACE_BASE_URL="http://$DOMAIN:3002"
+NEXT_PUBLIC_SPACE_BASE_PATH="/spaces"
+NEXT_PUBLIC_LIVE_BASE_URL="http://$DOMAIN:3100"
+NEXT_PUBLIC_LIVE_BASE_PATH="/live"
 EOF
-        echo "✅ Created space/.env file"
-    fi
+    echo "✅ Created/updated $SPACE_ENV"
 
-    # Update admin/.env
-    if [ -f "admin/.env" ]; then
-        sed -i "s|^NEXT_PUBLIC_API_BASE_URL=.*|NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN|" admin/.env
-        sed -i "s|^NEXT_PUBLIC_WEB_BASE_URL=.*|NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN|" admin/.env
-        echo "✅ Updated admin/.env file"
-    else
-        mkdir -p admin
-        cat > "admin/.env" <<EOF
-NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
-NEXT_PUBLIC_ADMIN_BASE_PATH=/god-mode
-NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN
+    # -----------------------------
+    # Update apps/admin/.env
+    # -----------------------------
+    ADMIN_ENV="apps/admin/.env"
+    mkdir -p "apps/admin"
+    cat > "$ADMIN_ENV" <<EOF
+NEXT_PUBLIC_API_BASE_URL="http://$DOMAIN:8000"
+NEXT_PUBLIC_WEB_BASE_URL="http://$DOMAIN:3000"
+NEXT_PUBLIC_ADMIN_BASE_URL="http://$DOMAIN:3001"
+NEXT_PUBLIC_ADMIN_BASE_PATH="/god-mode"
+NEXT_PUBLIC_SPACE_BASE_URL="http://$DOMAIN:3002"
+NEXT_PUBLIC_SPACE_BASE_PATH="/spaces"
+NEXT_PUBLIC_LIVE_BASE_URL="http://$DOMAIN:3100"
+NEXT_PUBLIC_LIVE_BASE_PATH="/live"
 EOF
-        echo "✅ Created admin/.env file"
-    fi
+    echo "✅ Created/updated $ADMIN_ENV"
 
     echo "✅ All .env files updated/created successfully"
     notify_webhook "provisioning" "env_files_ready" "✅ Environment files ready with secure credentials"
     sleep 5
-
+                                      
     # ========== Use existing docker-compose.yml from cloned repo ==========
     echo "📁 Using docker-compose.yml from cloned Plane repository..."
     notify_webhook "provisioning" "compose_setup" "Setting up Docker Compose from cloned repo"
@@ -805,15 +830,30 @@ EOF
     # ========== FIREWALL ==========
     echo "[8/15] Configuring firewall..."
     notify_webhook "provisioning" "firewall" "Setting up UFW"
+
+    # SSH access
     ufw allow 22/tcp
     ufw allow 80/tcp
     ufw allow 443/tcp
-    ufw allow 8080/tcp
-    ufw allow 5432/tcp
-    ufw allow 6379/tcp  
-    ufw allow 9090/tcp                             
+    ufw allow 8080/tcp   # Alternate HTTP (if proxy disabled)
+    ufw allow 8443/tcp   # Alternate HTTPS (if proxy disabled)
+    ufw allow 3000/tcp   # web (frontend)
+    ufw allow 3001/tcp   # admin
+    ufw allow 3002/tcp   # space
+    ufw allow 3100/tcp   # live
+    ufw allow 8000/tcp   # api
+    ufw allow 5432/tcp   # PostgreSQL
+    ufw allow 6379/tcp   # Redis
+    ufw allow 5672/tcp   # RabbitMQ
+    ufw allow 15672/tcp  # RabbitMQ Management UI
+    ufw allow 9000/tcp   # MinIO API
+    ufw allow 9090/tcp   # MinIO Console
     ufw allow "$PORT"/tcp
     ufw --force enable
+                                      
+    echo "✅ Firewall configured — all Plane service ports allowed"
+    notify_webhook "provisioning" "firewall_ready" "✅ UFW configured with all required Plane ports"
+
 
     # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
     echo "[18/20] Configuring nginx reverse proxy with SSL..."
