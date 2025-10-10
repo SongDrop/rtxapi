@@ -593,19 +593,22 @@ EOF
     echo "🔍 Preparing Docker volume directories and ensuring permissions..."
     notify_webhook "provisioning" "volume_prep" "Preparing data volumes for Plane services"
 
-    # Ensure base Plane directory exists
-    mkdir -p "$PLANE_DIR/plane/pgdata"
-    mkdir -p "$PLANE_DIR/plane/redisdata"
-    mkdir -p "$PLANE_DIR/plane/miniodata"
+    # Use host directories for persistent storage
+    mkdir -p "$PLANE_DIR/plane/pgdata" \
+            "$PLANE_DIR/plane/redisdata" \
+            "$PLANE_DIR/plane/miniodata"
 
-    # Set proper permissions for PostgreSQL, Redis, MinIO
     # PostgreSQL container runs as UID 999 (postgres)
-    # Redis container usually runs as UID 1001
+    chown -R 999:999 "$PLANE_DIR/plane/pgdata"
+    chmod -R 755 "$PLANE_DIR/plane/pgdata"
+
+    # Redis container runs as UID 1001
+    chown -R 1001:1001 "$PLANE_DIR/plane/redisdata"
+    chmod -R 755 "$PLANE_DIR/plane/redisdata"
+
     # MinIO runs as UID 1000
-    chown -R 999:999 "$PLANE_DIR/plane/pgdata" || true
-    chown -R 1001:1001 "$PLANE_DIR/plane/redisdata" || true
-    chown -R 1000:1000 "$PLANE_DIR/plane/miniodata" || true
-    chmod -R 755 "$PLANE_DIR/plane"
+    chown -R 1000:1000 "$PLANE_DIR/plane/miniodata"
+    chmod -R 755 "$PLANE_DIR/plane/miniodata"
 
     # Confirm directory status
     echo "🔍 Checking data directories:"
@@ -617,7 +620,15 @@ EOF
     # ==========================================================
     export COMPOSE_ENV_FILE="$PLANE_DIR/.env"
 
-    # If docker-compose version supports it, use --env-file explicitly
+    # Use host directory mapping in docker-compose.yml for PGDATA
+    # If using named volume 'pgdata', ensure the volume is empty and writable
+    # Example docker-compose.yml snippet for host directory mapping:
+    # plane-db:
+    #   volumes:
+    #     - $PLANE_DIR/plane/pgdata:/var/lib/postgresql/data
+    #   env_file:
+    #     - $PLANE_DIR/.env
+
     DOCKER_COMPOSE_CMD="docker compose --env-file $PLANE_DIR/.env"
     if ! docker compose version &>/dev/null; then
         DOCKER_COMPOSE_CMD="docker-compose --env-file $PLANE_DIR/.env"
@@ -625,6 +636,8 @@ EOF
 
     echo "✅ Volume directories prepared and permissions adjusted"
     notify_webhook "provisioning" "volume_ready" "✅ Data directories ready for containers"
+    
+    sleep 5
 
     # ========== Start Infrastructure ==========
     echo "[8/15] Starting Plane infrastructure (DB, Redis, MQ, MinIO)..."
