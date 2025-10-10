@@ -815,7 +815,7 @@ EOF
     ufw allow "$PORT"/tcp
     ufw --force enable
 
-   # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
+    # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
     echo "[18/20] Configuring nginx reverse proxy with SSL..."
     notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
 

@@ -1,6 +1,6 @@
 import textwrap
 
-def generate_bytestash_setup(
+def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
@@ -10,7 +10,7 @@ def generate_bytestash_setup(
     ALLOW_EMBED_WEBSITE="",
     location="",
     resource_group="",
-    UPLOAD_SIZE_MB=1024
+    UPLOAD_SIZE_MB=256
 ):
     """
     Returns a full 15-step Bytestash provisioning script in your style.
@@ -56,8 +56,9 @@ def generate_bytestash_setup(
 
     # Generate JWT secret without openssl
     if [ -z "$BYTESTASH_JWT_SECRET" ]; then
-    BYTESTASH_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p)
+        BYTESTASH_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p)
     fi
+    
     echo "[0/15] JWT secret generated"
     notify_webhook "provisioning" "jwt_generated" "JWT secret generated"
     sleep 5
@@ -65,19 +66,19 @@ def generate_bytestash_setup(
     # --- Step 1: Validate Inputs ---
     echo "[1/15] Validating inputs..."
     notify_webhook "provisioning" "validation" "Validating domain and port"
-    sleep 5
+   
     if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-    echo "ERROR: Invalid domain format: $DOMAIN"
-    notify_webhook "failed" "validation" "Invalid domain format: $DOMAIN"
-    exit 1
+        echo "ERROR: Invalid domain format: $DOMAIN"
+        notify_webhook "failed" "validation" "Invalid domain format: $DOMAIN"
+        exit 1
     fi
+    
     if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
-    echo "ERROR: Invalid port number: $PORT"
-    notify_webhook "failed" "validation" "Invalid port: $PORT"
-    exit 1
+        echo "ERROR: Invalid port number: $PORT"
+        notify_webhook "failed" "validation" "Invalid port: $PORT"
+        exit 1
     fi
-    sleep 5
-
+    
     # --- Step 2: System dependencies ---
     echo "[2/15] Installing system dependencies..."
     notify_webhook "provisioning" "system_dependencies" "Installing base packages"
@@ -85,36 +86,102 @@ def generate_bytestash_setup(
     apt-get update -q
     apt-get upgrade -y -q
     apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq make ufw xxd docker.io docker-compose
+
+    # ========== DOCKER INSTALLATION ==========
+    echo "[4/15] Installing Docker..."
+    notify_webhook "provisioning" "docker_install" "Installing Docker engine"
     sleep 5
 
-    # --- Step 3: Create directories ---
+    # Ensure prerequisites exist
+    apt-get install -y -q ca-certificates curl gnupg lsb-release || {
+        notify_webhook "failed" "docker_prereq" "Failed to install Docker prerequisites"
+        exit 1
+    }
+
+    # Remove old versions (ignore errors)
+    apt-get remove -y docker docker-engine docker.io containerd runc >/dev/null 2>&1 || true
+
+    # Setup Docker’s official GPG key
+    mkdir -p /etc/apt/keyrings
+    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
+        echo "❌ Failed to download Docker GPG key"
+        notify_webhook "failed" "docker_gpg" "Failed to download Docker GPG key"
+        exit 1
+    fi
+    chmod a+r /etc/apt/keyrings/docker.gpg
+
+    ARCH=$(dpkg --print-architecture)
+    CODENAME=$(lsb_release -cs)
+    echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list
+
+    # Update and install Docker with retries
+    for i in {1..3}; do
+        if apt-get update -q && apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+            break
+        fi
+        echo "⚠️ Docker install attempt $i failed; retrying..."
+        sleep 5
+        [ $i -eq 3 ] && {
+            echo "❌ Docker installation failed after 3 attempts"
+            notify_webhook "failed" "docker_install" "Docker install failed after 3 attempts"
+            exit 1
+        }
+    done
+
+    # Enable and start Docker
+    systemctl enable docker
+    systemctl start docker
+
+    # Verify Docker works
+    if ! docker info >/dev/null 2>&1; then
+        echo "❌ Docker daemon did not start correctly"
+        notify_webhook "failed" "docker_daemon" "Docker daemon failed to start"
+        journalctl -u docker --no-pager | tail -n 50 || true
+        exit 1
+    fi
+
+    echo "✅ Docker installed and running"
+    notify_webhook "provisioning" "docker_ready" "✅ Docker installed successfully"
+    sleep 5
+                                      
+    # ========== BYTESTASH DIRECTORY SETUP ==========
     echo "[3/15] Creating Bytestash directories..."
     notify_webhook "provisioning" "directories" "Creating Bytestash directories"
-    mkdir -p "$BYTESTASH_DIR"/{data,config,ssl}
-    chown -R 1000:1000 "$BYTESTASH_DIR"
-    sleep 5
 
+    mkdir -p "$BYTESTASH_DIR" || {
+        echo "ERROR: Failed to create Plane data directory"
+        notify_webhook "failed" "directory_creation" "Failed to create Plane directory"
+        exit 1
+    }
+    chown -R 1000:1000 "$BYTESTASH_DIR"
+    cd "$BYTESTASH_DIR"
+    echo "✅ Bytestash directory ready"
+    notify_webhook "provisioning" "directory_ready" "✅ Bytestash directory created successfully"
+    
+    sleep 5
+                                      
     # --- Step 4: Docker Compose ---
     echo "[4/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose" "Creating docker-compose.yml"
+                                      
     cat > "$BYTESTASH_DIR/docker-compose.yml" <<EOF
 version: "3.8"
-services:
-bytestash:
-image: bytestash/bytestash:latest
-container_name: bytestash
-restart: always
-environment:
-    - BYTESTASH_ADMIN_EMAIL=$ADMIN_EMAIL
-    - BYTESTASH_ADMIN_PASSWORD=$ADMIN_PASSWORD
-    - BYTESTASH_JWT_SECRET=$BYTESTASH_JWT_SECRET
-    - BYTESTASH_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
-volumes:
-    - ./data:/data
-    - ./config:/config
-    - ./ssl:/ssl
-ports:
-    - "$PORT:8080"
+    services:
+      bytestash:
+        image: bytestash/bytestash:latest
+        container_name: bytestash
+        restart: always
+        environment:
+          - BYTESTASH_ADMIN_EMAIL=$ADMIN_EMAIL
+          - BYTESTASH_ADMIN_PASSWORD=$ADMIN_PASSWORD
+          - BYTESTASH_JWT_SECRET=$BYTESTASH_JWT_SECRET
+          - BYTESTASH_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
+        volumes:
+          - ./data:/data
+          - ./config:/config
+          - ./ssl:/ssl
+        ports:
+          - "$PORT:8080"
 EOF
     sleep 5
 
@@ -123,38 +190,52 @@ EOF
     notify_webhook "provisioning" "container_start" "Starting Bytestash container"
     cd "$BYTESTASH_DIR"
     docker-compose up -d
+                                      
+    echo "✅ Docker Compose configured"
     sleep 5
 
-    # --- Step 6: Configure firewall ---
-    echo "[6/15] Configuring firewall..."
-    notify_webhook "provisioning" "firewall" "Setting up firewall rules"
+    # ========== FIREWALL ==========
+    echo "[8/15] Configuring firewall..."
+    notify_webhook "provisioning" "firewall" "Setting up UFW"
     ufw allow 22/tcp
     ufw allow 80/tcp
     ufw allow 443/tcp
+    ufw allow 8080/tcp
+    ufw allow 5432/tcp
+    ufw allow 6379/tcp  
+    ufw allow 9090/tcp                             
     ufw allow "$PORT"/tcp
     ufw --force enable
-    sleep 5
 
-    # --- Step 7: Nginx setup ---
-    echo "[7/15] Configuring Nginx reverse proxy..."
-    notify_webhook "provisioning" "nginx" "Setting up Nginx"
+   
+    # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
+    echo "[18/20] Configuring nginx reverse proxy with SSL..."
+    notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
+
     rm -f /etc/nginx/sites-enabled/default
-    cat > /etc/nginx/sites-available/bytestash <<'EOF_NGINX'
-server {
-listen 80;
-server_name __DOMAIN__;
-location / {
-    proxy_pass http://127.0.0.1:__PORT__;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-}
-}
-EOF_NGINX
-                                      
-    ln -sf /etc/nginx/sites-available/bytestash /etc/nginx/sites-enabled/bytestash
-    nginx -t && systemctl reload nginx
-    sleep 5
+    rm -f /etc/nginx/sites-available/plane
 
+    # Download Let's Encrypt recommended configs
+    mkdir -p /etc/letsencrypt
+    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf
+    curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
+
+    # Temporary HTTP server for certbot validation
+    cat > /etc/nginx/sites-available/plane <<'EOF_TEMP'
+server {
+    listen 80;
+    server_name __DOMAIN__;
+    root /var/www/html;
+
+    location / {
+        return 200 'Certbot validation ready';
+        add_header Content-Type text/plain;
+    }
+}
+EOF_TEMP
+
+    ln -sf /etc/nginx/sites-available/plane /etc/nginx/sites-enabled/plane
+    nginx -t && systemctl restart nginx
 
     # Create webroot for certbot
     mkdir -p /var/www/html
@@ -164,9 +245,9 @@ EOF_NGINX
     #certbot --nginx -d "__DOMAIN__" --staging --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
     # Attempt to obtain SSL certificate
     if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
-    echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
-    systemctl start nginx || true
-    certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__" || true
+        echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
+        systemctl start nginx || true
+        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__" || true
     fi
 
     # Fail-safe check
@@ -177,14 +258,14 @@ EOF_NGINX
         echo "✅ SSL certificate obtained"
         notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
 
-    # Replace nginx config for HTTPS proxy only if SSL exists
-    cat > /etc/nginx/sites-available/forgejo <<'EOF_SSL'
-    server {
+        # Replace nginx config for HTTPS proxy only if SSL exists
+        cat > /etc/nginx/sites-available/plane <<'EOF_SSL'
+server {
     listen 80;
     server_name __DOMAIN__;
     return 301 https://$host$request_uri;
-    }
-    server {
+}
+server {
     listen 443 ssl http2;
     server_name __DOMAIN__;
 
@@ -193,10 +274,10 @@ EOF_NGINX
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    client_max_body_size __MAX_UPLOAD_SIZE_MB__;
+    client_max_body_size 100M;
 
     location / {
-        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_pass http://127.0.0.1:80;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -207,42 +288,55 @@ EOF_NGINX
         proxy_buffering off;
         proxy_request_buffering off;
     }
-    }
-    EOF_SSL
+}
+EOF_SSL
 
-    ln -sf /etc/nginx/sites-available/forgejo /etc/nginx/sites-enabled/forgejo
-    nginx -t && systemctl reload nginx
+        ln -sf /etc/nginx/sites-available/plane /etc/nginx/sites-enabled/plane
+        nginx -t && systemctl reload nginx
     fi
-
 
     echo "[14/15] Setup Cron for renewal..."
     notify_webhook "provisioning" "provisioning" "Setup Cron for renewal..."
-        
+         
     # Setup cron for renewal (runs daily and reloads nginx on change)
     (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
 
+    # ========== FINAL CHECKS ==========
+    echo "[15/15] Final verification..."
+    notify_webhook "provisioning" "verification" "Performing verification checks"
 
-    # --- Step 9: Health check ---
-    echo "[9/15] Checking container health..."
-    notify_webhook "provisioning" "health_check" "Checking container status"
-    READY_TIMEOUT=300
-    SLEEP_INTERVAL=5
-    elapsed=0
-    while [ $elapsed -lt $READY_TIMEOUT ]; do
-    state=$(docker inspect -f '{{.State.Status}}' bytestash 2>/dev/null || echo "unknown")
-    if [ "$state" = "running" ]; then
-        break
+    if ! nginx -t; then
+        echo "ERROR: nginx config test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
+        exit 1
     fi
-    sleep $SLEEP_INTERVAL
-    elapsed=$((elapsed + SLEEP_INTERVAL))
-    done
-    if [ "$state" != "running" ]; then
-    echo "ERROR: Bytestash container not running!"
-    docker logs bytestash --tail=50
-    notify_webhook "failed" "container_health" "Bytestash container not running"
-    exit 1
+
+    if [ -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+        HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://__DOMAIN__ || echo "000")
+        echo "HTTPS check returned: $HTTPS_RESPONSE"
+        if [ "$HTTPS_RESPONSE" != "200" ]; then
+            notify_webhook "warning" "verification" "HTTPS check returned $HTTPS_RESPONSE"
+        else
+            notify_webhook "provisioning" "verification" "HTTPS OK"
+        fi
     fi
-    sleep 5
+
+    # Test and apply the new config
+    if nginx -t; then
+        systemctl reload nginx
+        echo "✅ Nginx configuration test passed"
+        notify_webhook "provisioning" "verification" "✅ Nginx configuration test passed"
+    else
+        echo "❌ Nginx configuration test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
+        exit 1
+    fi
+
+    echo "✅ Bytestash setup complete!"
+    notify_webhook "provisioning" "provisioning" "✅ Bytestash deployment succeeded"
+
+    #wait 60 seconds until everything is fully ready 
+    sleep 60
 
     # --- Step 10: Wait for readiness (HTTP probe) ---
     echo "[10/15] Waiting for Bytestash readiness..."
@@ -263,43 +357,7 @@ EOF_NGINX
     exit 1
     fi
     sleep 5
-
-    # --- Step 11: Setup Cron for SSL renewal ---
-    echo "[11/15] Setting up SSL renewal cron..."
-    notify_webhook "provisioning" "cron" "Setting up SSL renewal cron"
-    (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
-    sleep 1
-
-    # --- Step 12: Logging completion ---
-    echo "[12/15] Logging completion..."
-    notify_webhook "provisioning" "completed" "Bytestash container deployed and ready"
-    sleep 5
-
-    # --- Step 13: Display access info ---
-    echo "[13/15] Access details:"
-    echo "URL: https://__DOMAIN__"
-    echo "Admin email: $ADMIN_EMAIL"
-    notify_webhook "provisioning" "access_info" "Displayed access info"
-    sleep 1
-
-    # Test and apply the new config
-    if nginx -t; then
-    systemctl reload nginx
-    echo "✅ Nginx configuration test passed"
-    notify_webhook "success" "verification" "✅ Nginx configuration test passed"
-    else
-    echo "❌ Nginx configuration test failed"
-    notify_webhook "failed" "verification" "Nginx config test failed"
-    exit 1
-    fi
-                                        
-    # --- Step 14: Test Nginx SSL ---
-    echo "[14/15] Testing Nginx SSL..."
-    HTTPS_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://__DOMAIN__)
-    echo "HTTPS returned: $HTTPS_CODE"
-    notify_webhook "provisioning" "ssl_test" "HTTPS returned $HTTPS_CODE"
-    sleep 5
-
+ 
     # --- Step 15: Final summary ---
     echo "[15/15] Bytestash provisioning complete!"
     notify_webhook "provisioning" "bytestash_installed" "✅ Bytestash setup completed successfully"
