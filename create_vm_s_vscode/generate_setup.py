@@ -255,6 +255,16 @@ def generate_setup(
     echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > /etc/apt/sources.list.d/hashicorp.list || true
     apt-get update -q && apt-get install -y -q terraform || true
 
+    # ========== INSTALL & CONFIGURE GIT-LFS ==========
+    echo "[11a/20] Installing Git LFS..."
+    echo "📦 Installing Git LFS and tracking video game assets..."
+    notify_webhook "provisioning" "git_lfs" "Installing Git LFS"
+
+    apt-get install -y git-lfs
+    git lfs install
+
+    sleep 5
+                                                           
     # ========== INSTALL & CONFIGURE CODE-SERVER ==========
     echo "[12/20] Installing code-server..."
     notify_webhook "provisioning" "code_server" "Installing code-server"

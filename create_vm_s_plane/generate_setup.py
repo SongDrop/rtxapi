@@ -392,22 +392,20 @@ def generate_setup(
     sleep 5
 
     # ==========================================================
-    # 🧱 Create .env Files (with permission and path checks)
+    # 🧱 Update .env Files from cloned repository with our credentials
     # ==========================================================
-    PLANE_DIR="/opt/plane"
-    echo "🛠️ Generating .env files under $PLANE_DIR ..."
+    echo "🛠️ Updating .env files with secure credentials and domain..."
 
-    mkdir -p "$PLANE_DIR" "$PLANE_DIR"/{apiserver,web,space,admin}
-    chmod -R 755 "$PLANE_DIR"
-
-    if [ ! -w "$PLANE_DIR" ]; then
-        echo "❌ ERROR: Cannot write to $PLANE_DIR"
-        notify_webhook "failed" "env_permission_denied" "Missing write permission in $PLANE_DIR"
-        exit 1
-    fi
-
-    # Root .env
-    cat > "$PLANE_DIR/.env" <<EOF
+    # We're already in the cloned plane directory, update existing .env files
+    # Update the main .env file if it exists
+    if [ -f ".env" ]; then
+        sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" .env
+        sed -i "s/^RABBITMQ_PASSWORD=.*/RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD/" .env
+        sed -i "s/^AWS_SECRET_ACCESS_KEY=.*/AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD/" .env
+        echo "✅ Updated main .env file with secure credentials"
+    else
+        # Create main .env if it doesn't exist
+        cat > ".env" <<EOF
 POSTGRES_USER=$POSTGRES_USER
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 POSTGRES_DB=$POSTGRES_DB
@@ -429,9 +427,19 @@ RABBITMQ_VHOST=$RABBITMQ_VHOST
 LISTEN_HTTP_PORT=8080
 LISTEN_HTTPS_PORT=8443
 EOF
+        echo "✅ Created main .env file"
+    fi
 
-    # apiserver/.env
-    cat > "$PLANE_DIR/apiserver/.env" <<EOF
+    # Update apiserver/.env
+    if [ -f "apiserver/.env" ]; then
+        sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" apiserver/.env
+        sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$SECRET_KEY/" apiserver/.env
+        sed -i "s|^CORS_ALLOWED_ORIGINS=.*|CORS_ALLOWED_ORIGINS=http://$DOMAIN|" apiserver/.env
+        sed -i "s|^WEB_URL=.*|WEB_URL=http://$DOMAIN|" apiserver/.env
+        echo "✅ Updated apiserver/.env file"
+    else
+        mkdir -p apiserver
+        cat > "apiserver/.env" <<EOF
 DEBUG=0
 CORS_ALLOWED_ORIGINS=http://$DOMAIN
 SENTRY_DSN=
@@ -456,87 +464,78 @@ WEB_URL=http://$DOMAIN
 GUNICORN_WORKERS=3
 SECRET_KEY=$SECRET_KEY
 EOF
+        echo "✅ Created apiserver/.env file"
+    fi
 
-    # web/.env
-    cat > "$PLANE_DIR/web/.env" <<EOF
+    # Update web/.env
+    if [ -f "web/.env" ]; then
+        sed -i "s|^NEXT_PUBLIC_API_BASE_URL=.*|NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN|" web/.env
+        sed -i "s|^NEXT_PUBLIC_ADMIN_BASE_URL=.*|NEXT_PUBLIC_ADMIN_BASE_URL=http://$DOMAIN|" web/.env
+        sed -i "s|^NEXT_PUBLIC_SPACE_BASE_URL=.*|NEXT_PUBLIC_SPACE_BASE_URL=http://$DOMAIN|" web/.env
+        echo "✅ Updated web/.env file"
+    else
+        mkdir -p web
+        cat > "web/.env" <<EOF
 NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_ADMIN_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_ADMIN_BASE_PATH=/god-mode
 NEXT_PUBLIC_SPACE_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_SPACE_BASE_PATH=/spaces
 EOF
+        echo "✅ Created web/.env file"
+    fi
 
-    # space/.env
-    cat > "$PLANE_DIR/space/.env" <<EOF
+    # Update space/.env
+    if [ -f "space/.env" ]; then
+        sed -i "s|^NEXT_PUBLIC_API_BASE_URL=.*|NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN|" space/.env
+        sed -i "s|^NEXT_PUBLIC_WEB_BASE_URL=.*|NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN|" space/.env
+        echo "✅ Updated space/.env file"
+    else
+        mkdir -p space
+        cat > "space/.env" <<EOF
 NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_SPACE_BASE_PATH=/spaces
 EOF
+        echo "✅ Created space/.env file"
+    fi
 
-    # admin/.env
-    cat > "$PLANE_DIR/admin/.env" <<EOF
+    # Update admin/.env
+    if [ -f "admin/.env" ]; then
+        sed -i "s|^NEXT_PUBLIC_API_BASE_URL=.*|NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN|" admin/.env
+        sed -i "s|^NEXT_PUBLIC_WEB_BASE_URL=.*|NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN|" admin/.env
+        echo "✅ Updated admin/.env file"
+    else
+        mkdir -p admin
+        cat > "admin/.env" <<EOF
 NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_ADMIN_BASE_PATH=/god-mode
 NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN
 EOF
+        echo "✅ Created admin/.env file"
+    fi
 
-    echo "✅ All .env files created successfully under $PLANE_DIR"
-    notify_webhook "provisioning" "env_files_ready" "✅ Environment files created successfully"
+    echo "✅ All .env files updated/created successfully"
+    notify_webhook "provisioning" "env_files_ready" "✅ Environment files ready with secure credentials"
     sleep 5
 
-    # ========== Download docker-compose.yml ==========
-    echo "📥 Downloading docker-compose.yml..."
-    notify_webhook "provisioning" "compose_download" "Downloading Docker Compose configuration"
+    # ========== Use existing docker-compose.yml from cloned repo ==========
+    echo "📁 Using docker-compose.yml from cloned Plane repository..."
+    notify_webhook "provisioning" "compose_setup" "Setting up Docker Compose from cloned repo"
 
-    # Debug current directory and permissions
-    echo "🔍 Current directory: $(pwd)"
-    echo "🔍 Directory permissions: $(ls -ld .)"
-    echo "🔍 Files in directory:"
-    ls -la
-
-    # Test if we can write to current directory
-    echo "🔍 Testing write permissions..."
-    if ! touch test_download.permission 2>/dev/null; then
-        echo "❌ ERROR: Cannot write to current directory $(pwd)"
-        notify_webhook "failed" "write_permission_denied" "Cannot write to current directory for docker-compose.yml"
-        exit 1
-    fi
-    rm -f test_download.permission
-
-    echo "🔍 Testing URL: __PLANE_DOCKER_COMPOSE__"
-    if ! curl -I "__PLANE_DOCKER_COMPOSE__" &>/dev/null; then
-        echo "❌ ERROR: Cannot access the docker-compose URL"
-        echo "🔍 Testing network connectivity..."
-        curl -I "https://raw.githubusercontent.com" || echo "❌ Cannot reach GitHub"
-        notify_webhook "failed" "url_inaccessible" "Cannot access docker-compose.yml URL"
-        exit 1
-    fi
-
-    echo "🔍 Downloading docker-compose.yml..."
-    if ! curl -fsSL -o docker-compose.yml "__PLANE_DOCKER_COMPOSE__"; then
-        echo "❌ Failed to download docker-compose.yml from __PLANE_DOCKER_COMPOSE__"
-        echo "🔍 Testing URL accessibility with verbose output..."
-        curl -v "__PLANE_DOCKER_COMPOSE__" 2>&1 | head -20 || true
-        echo "🔍 Disk space:"
-        df -h .
-        echo "🔍 Memory:"
-        free -h
-        notify_webhook "failed" "compose_download_failed" "Cannot download docker-compose.yml - check network and disk space"
-        exit 1
-    fi
-
+    # Check if docker-compose.yml exists in the cloned repo
     if [ ! -f "docker-compose.yml" ]; then
-        echo "❌ docker-compose.yml was not created"
-        echo "🔍 Current directory contents after download attempt:"
-        ls -la
-        notify_webhook "failed" "compose_missing" "docker-compose.yml file missing after download"
+        echo "❌ docker-compose.yml not found in cloned repository"
+        echo "🔍 Looking for docker-compose files:"
+        find . -name "*docker-compose*" -type f | head -10
+        notify_webhook "failed" "compose_missing" "docker-compose.yml not found in cloned repo"
         exit 1
     fi
 
-    echo "✅ docker-compose.yml downloaded successfully ($(wc -l < docker-compose.yml) lines)"
+    echo "✅ Using existing docker-compose.yml from cloned repository ($(wc -l < docker-compose.yml) lines)"
     echo "🔍 First 10 lines of docker-compose.yml:"
     head -10 docker-compose.yml
-    notify_webhook "provisioning" "compose_downloaded" "✅ Docker Compose file downloaded successfully"
+    notify_webhook "provisioning" "compose_ready" "✅ Docker Compose file ready from repository"
 
     sleep 5
 
@@ -593,49 +592,35 @@ EOF
     echo "🔍 Preparing Docker volume directories and ensuring permissions..."
     notify_webhook "provisioning" "volume_prep" "Preparing data volumes for Plane services"
 
-    # Use host directories for persistent storage
-    mkdir -p "$PLANE_DIR/plane/pgdata" \
-            "$PLANE_DIR/plane/redisdata" \
-            "$PLANE_DIR/plane/miniodata"
+    # Use current directory for persistent storage (we're already in /opt/plane/plane)
+    mkdir -p pgdata redisdata miniodata rabbitmqdata
 
-    # PostgreSQL container runs as UID 999 (postgres)
-    chown -R 999:999 "$PLANE_DIR/plane/pgdata"
-    chmod -R 755 "$PLANE_DIR/plane/pgdata"
-
-    # Redis container runs as UID 1001
-    chown -R 1001:1001 "$PLANE_DIR/plane/redisdata"
-    chmod -R 755 "$PLANE_DIR/plane/redisdata"
-
-    # MinIO runs as UID 1000
-    chown -R 1000:1000 "$PLANE_DIR/plane/miniodata"
-    chmod -R 755 "$PLANE_DIR/plane/miniodata"
+    # Set proper permissions
+    chown -R 999:999 pgdata
+    chown -R 1001:1001 redisdata
+    chown -R 1000:1000 miniodata
+    chmod -R 755 pgdata redisdata miniodata rabbitmqdata
 
     # Confirm directory status
     echo "🔍 Checking data directories:"
-    ls -ld "$PLANE_DIR/plane"/* || true
-    df -h "$PLANE_DIR" || true
+    ls -ld ./*data 2>/dev/null || true
+    df -h . || true
+
+    echo "✅ Volume directories prepared in current Plane directory"
+    notify_webhook "provisioning" "volume_ready" "✅ Data directories ready for containers"
+    
+    sleep 5
 
     # ==========================================================
-    # 🧩 Ensure docker-compose uses correct environment file
+    # 🧩 Ensure docker-compose uses correct environment
     # ==========================================================
-    export COMPOSE_ENV_FILE="$PLANE_DIR/.env"
-
-    # Use host directory mapping in docker-compose.yml for PGDATA
-    # If using named volume 'pgdata', ensure the volume is empty and writable
-    # Example docker-compose.yml snippet for host directory mapping:
-    # plane-db:
-    #   volumes:
-    #     - $PLANE_DIR/plane/pgdata:/var/lib/postgresql/data
-    #   env_file:
-    #     - $PLANE_DIR/.env
-
-    DOCKER_COMPOSE_CMD="docker compose --env-file $PLANE_DIR/.env"
+    # We're already in the plane directory with all .env files, use simple docker compose
+    DOCKER_COMPOSE_CMD="docker compose"
     if ! docker compose version &>/dev/null; then
-        DOCKER_COMPOSE_CMD="docker-compose --env-file $PLANE_DIR/.env"
+        DOCKER_COMPOSE_CMD="docker-compose"
     fi
 
-    echo "✅ Volume directories prepared and permissions adjusted"
-    notify_webhook "provisioning" "volume_ready" "✅ Data directories ready for containers"
+    echo "✅ Docker Compose configured to use current directory .env files"
     
     sleep 5
 
@@ -661,7 +646,7 @@ EOF
             echo "❌ Failed to start $service"
             notify_webhook "failed" "service_failed" "Failed to start: $service"
             echo "🔍 Checking $service logs:"
-            docker compose logs "$service" --tail=20
+            $DOCKER_COMPOSE_CMD logs "$service" --tail=20
             exit 1
         else
             echo "✅ $service started successfully"
@@ -679,12 +664,12 @@ EOF
 
     MAX_WAIT=60
     count=0
-    until docker exec plane-db pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; do
+    until $DOCKER_COMPOSE_CMD exec plane-db pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; do
         sleep 5
         count=$((count + 1))
         if [ $count -ge $MAX_WAIT ]; then
             echo "❌ PostgreSQL failed to become ready within $((MAX_WAIT*5)) seconds"
-            docker compose logs plane-db --tail=30
+            $DOCKER_COMPOSE_CMD logs plane-db --tail=30
             notify_webhook "failed" "postgres_timeout" "PostgreSQL startup timeout"
             exit 1
         fi
@@ -700,12 +685,12 @@ EOF
     notify_webhook "provisioning" "redis_wait" "Waiting for Redis to become ready"
 
     count=0
-    until docker exec plane-redis redis-cli ping >/dev/null 2>&1; do
+    until $DOCKER_COMPOSE_CMD exec plane-redis redis-cli ping >/dev/null 2>&1; do
         sleep 5
         count=$((count + 1))
         if [ $count -ge $MAX_WAIT ]; then
             echo "❌ Redis failed to become ready within $((MAX_WAIT*2)) seconds"
-            docker compose logs plane-redis --tail=30
+            $DOCKER_COMPOSE_CMD logs plane-redis --tail=30
             notify_webhook "failed" "redis_timeout" "Redis startup timeout"
             exit 1
         fi
@@ -717,14 +702,14 @@ EOF
     echo "[9/15] Running Plane database migrations..."
     notify_webhook "provisioning" "migrations_start" "Starting database migrations"
 
-    if ! docker compose run --rm migrator; then
+    if ! $DOCKER_COMPOSE_CMD run --rm migrator; then
         echo "⚠️ Migration failed on first attempt, retrying..."
         notify_webhook "warning" "migrations_retry" "First migration attempt failed, retrying..."
         sleep 10
         
-        if ! docker compose run --rm migrator; then
+        if ! $DOCKER_COMPOSE_CMD run --rm migrator; then
             echo "❌ Database migrations failed after retry"
-            docker compose logs migrator --tail=30
+            $DOCKER_COMPOSE_CMD logs migrator --tail=30
             notify_webhook "failed" "migrations_failed" "Database migrations failed after retry"
             exit 1
         fi
@@ -751,10 +736,10 @@ EOF
             continue
         fi
 
-        if ! docker compose up -d "$service"; then
+        if ! $DOCKER_COMPOSE_CMD up -d "$service"; then
             echo "❌ Failed to start $service"
             notify_webhook "failed" "app_service_failed" "Failed to start: $service"
-            docker compose logs "$service" --tail=20
+            $DOCKER_COMPOSE_CMD logs "$service" --tail=20
             FAILED_SERVICES+=("$service")
             # Continue with other services instead of exiting
         else
