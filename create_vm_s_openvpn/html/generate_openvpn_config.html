@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>OpenVPN Config Generator</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            background: #f7f9fc;
+            color: #333;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            text-align: center;
+            overflow-x: hidden;
+        }
+
+        .container {
+            background: #fff;
+            padding: clamp(16px, 3vw, 32px);
+            max-width: 600px;
+            width: min(90%, 600px);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            margin-top: 20px;
+        }
+
+        img {
+            display: block;
+            width: min(100%, 512px);
+            height: auto;
+            aspect-ratio: 512 / 250;
+            object-fit: contain;
+            margin: 0 auto 20px;
+        }
+
+        h1 {
+            font-size: clamp(1.4rem, 2.2vw + 1rem, 1.8rem);
+            margin: 0 0 10px;
+            color: #e67300;
+        }
+
+        p {
+            margin: 0 0 20px;
+            font-size: clamp(0.95rem, 1.2vw + 0.8rem, 1rem);
+            color: #555;
+        }
+
+        .status {
+            margin-top: 20px;
+            font-size: clamp(1rem, 1.5vw + 0.8rem, 1.1rem);
+            font-weight: bold;
+            color: #e67300;
+        }
+
+        .form-group {
+            text-align: left;
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #444;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+
+        button {
+            background: #e67300;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            background: #d16200;
+        }
+
+        .advanced-toggle {
+            margin-top: 15px;
+            color: #e67300;
+            text-decoration: underline;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .advanced-options {
+            display: none;
+            text-align: left;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <img src="https://i.postimg.cc/0NjS2rN8/Open-VPN-Logo.jpg" alt="OpenVPN Logo">
+        <h1>OpenVPN Configuration Generator</h1>
+        <p>Generate a custom OpenVPN configuration file for your VPN connection.</p>
+
+        <div class="form-group">
+            <label for="server">VPN Server Address</label>
+            <input type="text" id="server" placeholder="vpn.example.com or 192.168.1.1">
+        </div>
+
+        <div class="form-group">
+            <label for="port">Port</label>
+            <input type="number" id="port" value="1194">
+        </div>
+
+        <div class="form-group">
+            <label for="protocol">Protocol</label>
+            <select id="protocol">
+                <option value="udp">UDP</option>
+                <option value="tcp">TCP</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="auth">Authentication</label>
+            <select id="auth">
+                <option value="SHA1">SHA1</option>
+                <option value="SHA256">SHA256</option>
+                <option value="SHA512">SHA512</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="cipher">Cipher</label>
+            <select id="cipher">
+                <option value="AES-256-CBC">AES-256-CBC</option>
+                <option value="AES-128-CBC">AES-128-CBC</option>
+                <option value="BF-CBC">Blowfish CBC</option>
+            </select>
+        </div>
+
+        <div class="advanced-toggle" id="toggle-advanced">Show Advanced Options</div>
+
+        <div class="advanced-options" id="advanced-options">
+            <div class="form-group">
+                <label for="dev">Device Type</label>
+                <select id="dev">
+                    <option value="tun">TUN (routing)</option>
+                    <option value="tap">TAP (bridging)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="resolv-retry">Resolve Retry</label>
+                <select id="resolv-retry">
+                    <option value="infinite">Infinite</option>
+                    <option value="60">60 seconds</option>
+                    <option value="30">30 seconds</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="redirect-gateway">Redirect Gateway</label>
+                <select id="redirect-gateway">
+                    <option value="def1">Yes (def1)</option>
+                    <option value="">No</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="comp-lzo">Compression</label>
+                <select id="comp-lzo">
+                    <option value="comp-lzo">Enabled</option>
+                    <option value="">Disabled</option>
+                </select>
+            </div>
+        </div>
+
+        <button id="generate-btn">Generate OpenVPN Config</button>
+
+        <div id="status" class="status">Fill in the form and click "Generate" to create your config file.</div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const toggleAdvanced = document.getElementById('toggle-advanced');
+            const advancedOptions = document.getElementById('advanced-options');
+            const generateBtn = document.getElementById('generate-btn');
+            const status = document.getElementById('status');
+
+            // Toggle advanced options
+            toggleAdvanced.addEventListener('click', function () {
+                if (advancedOptions.style.display === 'block') {
+                    advancedOptions.style.display = 'none';
+                    toggleAdvanced.textContent = 'Show Advanced Options';
+                } else {
+                    advancedOptions.style.display = 'block';
+                    toggleAdvanced.textContent = 'Hide Advanced Options';
+                }
+            });
+
+            // Handle URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const server = urlParams.get('server');
+            const port = urlParams.get('port');
+            const protocol = urlParams.get('protocol');
+            const configName = urlParams.get('name');
+
+            if (server) {
+                document.getElementById('server').value = server;
+            }
+
+            if (port) {
+                document.getElementById('port').value = port;
+            }
+
+            if (protocol) {
+                document.getElementById('protocol').value = protocol;
+            }
+
+            // Generate config
+            generateBtn.addEventListener('click', function () {
+                const server = document.getElementById('server').value;
+                const port = document.getElementById('port').value;
+                const protocol = document.getElementById('protocol').value;
+                const auth = document.getElementById('auth').value;
+                const cipher = document.getElementById('cipher').value;
+                const dev = document.getElementById('dev').value;
+                const resolvRetry = document.getElementById('resolv-retry').value;
+                const redirectGateway = document.getElementById('redirect-gateway').value;
+                const compLzo = document.getElementById('comp-lzo').value;
+
+                if (!server) {
+                    status.textContent = "❌ Please enter a VPN server address!";
+                    return;
+                }
+
+                // Generate the OpenVPN config content
+                const configContent = generateOpenVPNConfig({
+                    server,
+                    port,
+                    protocol,
+                    auth,
+                    cipher,
+                    dev,
+                    resolvRetry,
+                    redirectGateway,
+                    compLzo
+                });
+
+                // Create and download the file
+                const blob = new Blob([configContent], { type: "application/x-openvpn-profile" });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = (configName ? configName : "openvpn-config") + ".ovpn";
+                link.click();
+
+                status.textContent = "✅ Your OpenVPN config file is downloading...";
+            });
+
+            function generateOpenVPNConfig(params) {
+                return `# OpenVPN Client Configuration
+# Generated by OpenVPN Config Generator
+
+client
+dev ${params.dev}
+proto ${params.protocol}
+remote ${params.server} ${params.port}
+resolv-retry ${params.resolvRetry}
+nobind
+persist-key
+persist-tun
+remote-cert-tls server
+cipher ${params.cipher}
+auth ${params.auth}
+verb 3
+${params.redirectGateway ? `redirect-gateway ${params.redirectGateway}` : ''}
+${params.compLzo ? params.compLzo : ''}
+
+# Uncomment the following line if you're having connection issues
+# mute-replay-warnings
+
+# Additional security settings
+auth-nocache
+tls-version-min 1.2
+
+# Uncomment to route all traffic through VPN
+# redirect-gateway def1
+
+# Uncomment to add DNS servers
+# dhcp-option DNS 8.8.8.8
+# dhcp-option DNS 8.8.4.4
+
+# Certificate and key data would go here
+# <ca>
+# </ca>
+#
+# <cert>
+# </cert>
+#
+# <key>
+# </key>
+`;
+            }
+        });
+    </script>
+</body>
+
+</html>

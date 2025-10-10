@@ -586,6 +586,45 @@ EOF
     echo "✅ Docker Compose configuration completed"
     notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration completed"
     sleep 5
+    
+    # ==========================================================
+    # 🧹 Ensure database and volume directories exist and are writable
+    # ==========================================================
+    echo "🔍 Preparing Docker volume directories and ensuring permissions..."
+    notify_webhook "provisioning" "volume_prep" "Preparing data volumes for Plane services"
+
+    # Ensure base Plane directory exists
+    mkdir -p "$PLANE_DIR/plane/pgdata"
+    mkdir -p "$PLANE_DIR/plane/redisdata"
+    mkdir -p "$PLANE_DIR/plane/miniodata"
+
+    # Set proper permissions for PostgreSQL, Redis, MinIO
+    # PostgreSQL container runs as UID 999 (postgres)
+    # Redis container usually runs as UID 1001
+    # MinIO runs as UID 1000
+    chown -R 999:999 "$PLANE_DIR/plane/pgdata" || true
+    chown -R 1001:1001 "$PLANE_DIR/plane/redisdata" || true
+    chown -R 1000:1000 "$PLANE_DIR/plane/miniodata" || true
+    chmod -R 755 "$PLANE_DIR/plane"
+
+    # Confirm directory status
+    echo "🔍 Checking data directories:"
+    ls -ld "$PLANE_DIR/plane"/* || true
+    df -h "$PLANE_DIR" || true
+
+    # ==========================================================
+    # 🧩 Ensure docker-compose uses correct environment file
+    # ==========================================================
+    export COMPOSE_ENV_FILE="$PLANE_DIR/.env"
+
+    # If docker-compose version supports it, use --env-file explicitly
+    DOCKER_COMPOSE_CMD="docker compose --env-file $PLANE_DIR/.env"
+    if ! docker compose version &>/dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose --env-file $PLANE_DIR/.env"
+    fi
+
+    echo "✅ Volume directories prepared and permissions adjusted"
+    notify_webhook "provisioning" "volume_ready" "✅ Data directories ready for containers"
 
     # ========== Start Infrastructure ==========
     echo "[8/15] Starting Plane infrastructure (DB, Redis, MQ, MinIO)..."
@@ -605,7 +644,7 @@ EOF
             continue
         fi
 
-        if ! docker compose up -d "$service"; then
+        if ! $DOCKER_COMPOSE_CMD up -d "$service"; then
             echo "❌ Failed to start $service"
             notify_webhook "failed" "service_failed" "Failed to start: $service"
             echo "🔍 Checking $service logs:"
