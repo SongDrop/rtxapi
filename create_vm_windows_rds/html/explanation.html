@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Windows WebRDS Setup Script Explanation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+
+        h1,
+        h2,
+        h3 {
+            color: #004080;
+        }
+
+        code {
+            background-color: #eee;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        pre {
+            background-color: #eee;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+
+        ul {
+            margin: 10px 0 10px 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Windows WebRDS Setup Script Explanation</h1>
+
+    <p>This PowerShell setup script performs a comprehensive setup and configuration on a Windows machine, primarily to
+        prepare it for WebRDS installation and system/user debloating. Below is a detailed breakdown of its
+        functionality:</p>
+
+    <h2>1. Admin Privileges Check</h2>
+    <ul>
+        <li>Checks if the script is running with Administrator privileges.</li>
+        <li>If not, relaunches itself as Administrator using <code>Start-Process</code> with elevated permissions.</li>
+    </ul>
+
+    <h2>2. Webhook Notifications</h2>
+    <ul>
+        <li>Defines <code>Notify-Webhook</code> to send JSON-formatted status updates to a webhook URL.</li>
+        <li>Each payload includes:
+            <ul>
+                <li><code>vm_name</code>: Computer name</li>
+                <li><code>status</code>: e.g., "provisioning", "info", "failed"</li>
+                <li><code>timestamp</code>: UTC time</li>
+                <li><code>details</code>: Step name and message</li>
+            </ul>
+        </li>
+        <li>Used throughout the script to report progress or failures.</li>
+    </ul>
+
+    <h2>3. Logging</h2>
+    <ul>
+        <li>Creates a log directory at <code>C:\Program Files\Logs</code>.</li>
+        <li>Logs key events, including script start, helper script creation, scheduled task registration, and
+            completion.</li>
+    </ul>
+
+    <h2>4. Registry Helper Function</h2>
+    <ul>
+        <li><code>Set-RegistryValue</code> safely sets registry keys and values.</li>
+        <li>Creates paths if they don’t exist.</li>
+        <li>Logs failures without stopping the script.</li>
+    </ul>
+
+    <h2>5. System Cleanup & Debloat (HKLM + SYSTEM)</h2>
+    <ul>
+        <li>Modifies registry keys to:
+            <ul>
+                <li>Disable OOBE (Out-of-Box Experience) prompts</li>
+                <li>Disable Cortana and privacy popups</li>
+                <li>Disable auto-updates and telemetry collection</li>
+                <li>Configure networks as Private</li>
+            </ul>
+        </li>
+        <li>Stops and disables unnecessary services like <code>WSearch</code>, <code>DiagTrack</code>, and
+            <code>WerSvc</code>.
+        </li>
+        <li>Forces all network profiles to Private to improve security.</li>
+    </ul>
+
+    <h2>6. User Cleanup & Debloat (HKCU)</h2>
+    <ul>
+        <li>Iterates over all user profiles with <code>NTUSER.DAT</code>.</li>
+        <li>Disables:
+            <ul>
+                <li>Lock screen features</li>
+                <li>First-run experiences for OneDrive, Xbox, GameBar, Office</li>
+                <li>Windows Store auto-downloads</li>
+                <li>Push notifications</li>
+            </ul>
+        </li>
+    </ul>
+
+    <h2>7. Post-Reboot Helper Script</h2>
+    <ul>
+        <li>Created at <code>C:\ProgramData\PostHyperVSetup.ps1</code>.</li>
+        <li>Tasks include:
+            <ul>
+                <li>Enforcing network profiles as Private</li>
+                <li>Disabling Network Discovery firewall rules</li>
+                <li>Stopping and disabling discovery-related services</li>
+                <li>Updating <code>NetworkList</code> registry categories</li>
+                <li>Self-cleanup by unregistering scheduled task and deleting itself</li>
+            </ul>
+        </li>
+        <li>Scheduled to run at next startup as SYSTEM.</li>
+    </ul>
+
+    <h2>8. Scheduled Task</h2>
+    <ul>
+        <li>Registers a scheduled task to run the helper script once at startup.</li>
+        <li>Ensures post-reboot tasks are applied like network enforcement and Hyper-V setup completion.</li>
+    </ul>
+
+    <h2>9. WebRDS Installation</h2>
+    <ul>
+        <li>Installs WebRDS for browser-based Windows streaming.</li>
+        <li>Optionally includes a domain in the SSL certificate if <code>$env:RDS_DOMAIN</code> is set.</li>
+        <li>Uses conditional logic to generate either a domain-bound or computer-only self-signed SSL certificate.</li>
+    </ul>
+
+    <h2>10. Completion</h2>
+    <ul>
+        <li>Extends unused C:\ drive space automatically if available.</li>
+        <li>Writes a final log entry with setup completion timestamp.</li>
+        <li>Fully automated: combines system hardening, debloating, network configuration, and low-latency streaming
+            setup.</li>
+    </ul>
+
+    <hr>
+    <p><strong>Summary:</strong> This script is designed for automated Windows provisioning. It prepares the machine by
+        disabling telemetry and unnecessary services, applying system and user-level debloat, configuring network
+        privacy, and installing WebRDS with a post-reboot helper. All actions are logged and optionally reported to a
+        webhook for monitoring.</p>
+
+</body>
+
+</html>
