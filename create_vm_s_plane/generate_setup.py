@@ -272,51 +272,51 @@ def generate_setup(
 
     sleep 5
 
-    # ========== Generate Secure Credentials ==========
+    # ==========================================================
+    # 🔐 Generate Secure Credentials
+    # ==========================================================
     echo "🔐 Generating secure credentials..."
     notify_webhook "provisioning" "credentials_generation" "Creating secure passwords and keys"
 
-    POSTGRES_USER=plane
-    POSTGRES_DB=plane
-    
-    # Comprehensive OpenSSL verification
+    # ----------------------------------------------------------
+    # Verify OpenSSL availability
+    # ----------------------------------------------------------
     echo "🔍 Verifying OpenSSL installation and functionality..."
+    OPENSSL_WORKING=false
     if command -v openssl &> /dev/null; then
-        echo "✅ OpenSSL is installed: $(openssl version)"
-        
-        # Test OpenSSL random generation capabilities
-        echo "🔍 Testing OpenSSL random number generation..."
-        if openssl rand -base64 10 > /dev/null 2>&1; then
-            echo "✅ OpenSSL rand command is working"
+        echo "✅ OpenSSL found: $(openssl version)"
+        if openssl rand -base64 10 &>/dev/null; then
+            echo "✅ OpenSSL rand command works"
             OPENSSL_WORKING=true
         else
-            echo "⚠️ OpenSSL rand command failed, using fallback methods"
-            OPENSSL_WORKING=false
-            notify_webhook "warning" "openssl_rand_failed" "OpenSSL rand failed, using fallback methods"
-        fi
-        
-        # Test entropy availability
-        echo "🔍 Checking system entropy..."
-        ENTROPY_AVAILABLE=$(cat /proc/sys/kernel/random/entropy_avail 2>/dev/null || echo "unknown")
-        echo "System entropy available: $ENTROPY_AVAILABLE"
-        
-        if [ "$ENTROPY_AVAILABLE" != "unknown" ] && [ "$ENTROPY_AVAILABLE" -lt 100 ]; then
-            echo "⚠️ Low system entropy ($ENTROPY_AVAILABLE), this may affect OpenSSL performance"
-            notify_webhook "warning" "low_entropy" "Low system entropy detected: $ENTROPY_AVAILABLE"
+            echo "⚠️ OpenSSL rand test failed — will use fallback"
+            notify_webhook "warning" "openssl_rand_failed" "OpenSSL rand test failed"
         fi
     else
-        echo "⚠️ OpenSSL not found in PATH, using fallback methods"
-        OPENSSL_WORKING=false
-        notify_webhook "warning" "openssl_missing" "OpenSSL not found, using /dev/urandom fallback"
+        echo "⚠️ OpenSSL not installed — will use fallback"
+        notify_webhook "warning" "openssl_missing" "OpenSSL not found in PATH"
     fi
 
-    # Function to generate secure random data with comprehensive fallbacks
+    # ----------------------------------------------------------
+    # Check entropy availability (informational)
+    # ----------------------------------------------------------
+    if [ -r /proc/sys/kernel/random/entropy_avail ]; then
+        ENTROPY=$(cat /proc/sys/kernel/random/entropy_avail)
+        echo "🔍 System entropy: $ENTROPY"
+        if [ "$ENTROPY" -lt 100 ]; then
+            echo "⚠️ Low entropy detected ($ENTROPY) — may slow crypto ops"
+            notify_webhook "warning" "low_entropy" "Low entropy: $ENTROPY"
+        fi
+    fi
+
+    # ----------------------------------------------------------
+    # Secure random generation helper
+    # ----------------------------------------------------------
     generate_secure_random() {
-        local type="$1"  # "base64" or "hex"
-        local length="$2"
+        local type="$1"   # base64 | hex
+        local length="$2" # bytes
         local result=""
-        
-        # Method 1: Try OpenSSL if available and working
+
         if [ "$OPENSSL_WORKING" = true ]; then
             if [ "$type" = "hex" ]; then
                 result=$(openssl rand -hex "$length" 2>/dev/null || true)
@@ -324,104 +324,90 @@ def generate_setup(
                 result=$(openssl rand -base64 "$length" 2>/dev/null | tr -d '\n' || true)
             fi
         fi
-        
-        # Method 2: Use /dev/urandom directly if OpenSSL failed or not available
+
+        # Fallback: /dev/urandom
         if [ -z "$result" ] || [ ${#result} -lt $((length/2)) ]; then
-            echo "   Using /dev/urandom fallback"
+            echo "⚙️ Using /dev/urandom fallback for $type ($length bytes)"
             if [ "$type" = "hex" ]; then
-                result=$(head -c "$length" /dev/urandom | xxd -ps -c "$length" 2>/dev/null | tr -d '\n' | head -c $((length*2)) || true)
+                result=$(head -c "$length" /dev/urandom | xxd -p -c "$length" | tr -d '\n')
             else
-                result=$(head -c "$length" /dev/urandom | base64 2>/dev/null | tr -d '\n' | head -c $((length*2)) || true)
+                result=$(head -c "$length" /dev/urandom | base64 | tr -d '\n' | head -c $((length*2)))
             fi
         fi
-        
-        # Method 3: Ultimate fallback - mixed methods
-        if [ -z "$result" ] || [ ${#result} -lt $((length/2)) ]; then
-            echo "   Using mixed fallback method"
-            if [ "$type" = "hex" ]; then
-                result=$( (date +%s%N; cat /proc/uptime; ps aux) | sha256sum | head -c $((length*2)) || echo "fallback$(date +%s)$RANDOM" )
-            else
-                result=$( (date +%s%N; cat /proc/uptime; ps aux) | base64 | tr -d '\n' | head -c $((length*2)) || echo "fallback$(date +%s)$RANDOM" )
-            fi
+
+        # Final fallback
+        if [ -z "$result" ]; then
+            result="$(date +%s%N | sha256sum | head -c $((length*2)))"
         fi
-        
+
         echo "$result"
     }
 
-    # Generate credentials using the robust function
-    echo "🔐 Generating PostgreSQL password..."
-    POSTGRES_PASSWORD=$(generate_secure_random "base64" 32)
-    
-    echo "🔐 Generating RabbitMQ password..."
-    RABBITMQ_PASSWORD=$(generate_secure_random "base64" 32)
-    
-    RABBITMQ_USER=plane
-    RABBITMQ_VHOST=plane
-    
-    echo "🔐 Generating MinIO password..."
-    MINIO_PASSWORD=$(generate_secure_random "base64" 32)
-    
-    echo "🔐 Generating secret key..."
-    SECRET_KEY=$(generate_secure_random "hex" 32)
+    # ----------------------------------------------------------
+    # Generate credentials
+    # ----------------------------------------------------------
+    POSTGRES_USER="plane"
+    POSTGRES_DB="plane"
+    RABBITMQ_USER="plane"
+    RABBITMQ_VHOST="plane"
 
-    # Enhanced validation with detailed reporting
+    POSTGRES_PASSWORD=$(generate_secure_random base64 32)
+    RABBITMQ_PASSWORD=$(generate_secure_random base64 32)
+    MINIO_PASSWORD=$(generate_secure_random base64 32)
+    SECRET_KEY=$(generate_secure_random hex 32)
+
+    # ----------------------------------------------------------
+    # Validate credentials
+    # ----------------------------------------------------------
     echo "🔍 Validating generated credentials..."
     VALIDATION_FAILED=false
-    
-    if [ -z "$POSTGRES_PASSWORD" ] || [ ${#POSTGRES_PASSWORD} -lt 20 ]; then
-        echo "❌ PostgreSQL password validation failed"
-        echo "   Length: ${#POSTGRES_PASSWORD}, Value: ${POSTGRES_PASSWORD:0:10}..."
-        VALIDATION_FAILED=true
-    fi
-    
-    if [ -z "$RABBITMQ_PASSWORD" ] || [ ${#RABBITMQ_PASSWORD} -lt 20 ]; then
-        echo "❌ RabbitMQ password validation failed" 
-        echo "   Length: ${#RABBITMQ_PASSWORD}, Value: ${RABBITMQ_PASSWORD:0:10}..."
-        VALIDATION_FAILED=true
-    fi
-    
-    if [ -z "$MINIO_PASSWORD" ] || [ ${#MINIO_PASSWORD} -lt 20 ]; then
-        echo "❌ MinIO password validation failed"
-        echo "   Length: ${#MINIO_PASSWORD}, Value: ${MINIO_PASSWORD:0:10}..."
-        VALIDATION_FAILED=true
-    fi
-    
-    if [ -z "$SECRET_KEY" ] || [ ${#SECRET_KEY} -lt 40 ]; then
-        echo "❌ Secret key validation failed"
-        echo "   Length: ${#SECRET_KEY}, Value: ${SECRET_KEY:0:10}..."
-        VALIDATION_FAILED=true
-    fi
+
+    validate_length() {
+        local name="$1"
+        local value="$2"
+        local minlen="$3"
+        if [ -z "$value" ] || [ ${#value} -lt "$minlen" ]; then
+            echo "❌ $name too short (${#value} chars)"
+            VALIDATION_FAILED=true
+        fi
+    }
+
+    validate_length "PostgreSQL password" "$POSTGRES_PASSWORD" 20
+    validate_length "RabbitMQ password" "$RABBITMQ_PASSWORD" 20
+    validate_length "MinIO password" "$MINIO_PASSWORD" 20
+    validate_length "Secret key" "$SECRET_KEY" 40
 
     if [ "$VALIDATION_FAILED" = true ]; then
-        echo "❌ ERROR: One or more credentials failed validation"
-        echo "🔍 Final credential status:"
-        echo "   PostgreSQL: ${#POSTGRES_PASSWORD} chars"
-        echo "   RabbitMQ: ${#RABBITMQ_PASSWORD} chars"
-        echo "   MinIO: ${#MINIO_PASSWORD} chars"
-        echo "   Secret Key: ${#SECRET_KEY} chars"
-        notify_webhook "failed" "credentials_validation_failed" "Credential validation failed - system entropy issue?"
+        echo "❌ ERROR: One or more generated credentials failed validation"
+        notify_webhook "failed" "credentials_validation_failed" "Credential validation failed (entropy or OpenSSL issue)"
         exit 1
     fi
 
-    export POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD RABBITMQ_USER RABBITMQ_PASSWORD RABBITMQ_VHOST MINIO_PASSWORD SECRET_KEY
-    
-    echo "✅ Secure credentials generated successfully"
-    echo "   Method used: $([ "$OPENSSL_WORKING" = true ] && echo "OpenSSL" || echo "Fallback")"
-    echo "   PostgreSQL: ${POSTGRES_USER}/*** (${#POSTGRES_PASSWORD} chars)"
-    echo "   RabbitMQ: ${RABBITMQ_USER}/*** (${#RABBITMQ_PASSWORD} chars)"
-    echo "   MinIO: plane/*** (${#MINIO_PASSWORD} chars)"
-    echo "   Secret Key: *** (${#SECRET_KEY} chars)"
-                                       
-    notify_webhook "provisioning" "credentials_ready" "✅ All credentials and keys generated successfully using $([ "$OPENSSL_WORKING" = true ] && echo "OpenSSL" || echo "fallback methods")"
+    export POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD \
+        RABBITMQ_USER RABBITMQ_PASSWORD RABBITMQ_VHOST \
+        MINIO_PASSWORD SECRET_KEY
+
+    echo "✅ Credentials generated successfully using $([ "$OPENSSL_WORKING" = true ] && echo "OpenSSL" || echo "fallback")"
+    notify_webhook "provisioning" "credentials_ready" "✅ All credentials generated successfully"
     sleep 5
-                                                                     
-    # ========== Create .env Files ==========
-    echo "🛠️ Generating .env configuration files..."
-    notify_webhook "provisioning" "env_setup" "Creating environment configuration files"
+
+    # ==========================================================
+    # 🧱 Create .env Files (with permission and path checks)
+    # ==========================================================
+    PLANE_DIR="/opt/plane"
+    echo "🛠️ Generating .env files under $PLANE_DIR ..."
+
+    mkdir -p "$PLANE_DIR" "$PLANE_DIR"/{apiserver,web,space,admin}
+    chmod -R 755 "$PLANE_DIR"
+
+    if [ ! -w "$PLANE_DIR" ]; then
+        echo "❌ ERROR: Cannot write to $PLANE_DIR"
+        notify_webhook "failed" "env_permission_denied" "Missing write permission in $PLANE_DIR"
+        exit 1
+    fi
 
     # Root .env
-    echo "📝 Creating root .env file..."
-    cat > .env <<EOF
+    cat > "$PLANE_DIR/.env" <<EOF
 POSTGRES_USER=$POSTGRES_USER
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 POSTGRES_DB=$POSTGRES_DB
@@ -444,16 +430,8 @@ LISTEN_HTTP_PORT=8080
 LISTEN_HTTPS_PORT=8443
 EOF
 
-    if [ ! -f ".env" ]; then
-        echo "❌ ERROR: Failed to create root .env file"
-        notify_webhook "failed" "env_creation_failed" "Root .env file creation failed"
-        exit 1
-    fi
-
-    # /apiserver/.env
-    echo "📝 Creating apiserver/.env file..."
-    mkdir -p apiserver
-cat > apiserver/.env <<EOF
+    # apiserver/.env
+    cat > "$PLANE_DIR/apiserver/.env" <<EOF
 DEBUG=0
 CORS_ALLOWED_ORIGINS=http://$DOMAIN
 SENTRY_DSN=
@@ -463,7 +441,7 @@ POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 POSTGRES_HOST=plane-db
 POSTGRES_DB=$POSTGRES_DB
 POSTGRES_PORT=5432
-DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@plane-db:$POSTGRES_PORT/$POSTGRES_DB
+DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@plane-db:\$POSTGRES_PORT/\$POSTGRES_DB
 REDIS_HOST=plane-redis
 REDIS_PORT=6379
 REDIS_URL=redis://plane-redis:6379/
@@ -479,10 +457,8 @@ GUNICORN_WORKERS=3
 SECRET_KEY=$SECRET_KEY
 EOF
 
-    # /web/.env
-    echo "📝 Creating web/.env file..."
-    mkdir -p web
-    cat > web/.env <<EOF
+    # web/.env
+    cat > "$PLANE_DIR/web/.env" <<EOF
 NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_ADMIN_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_ADMIN_BASE_PATH=/god-mode
@@ -490,28 +466,23 @@ NEXT_PUBLIC_SPACE_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_SPACE_BASE_PATH=/spaces
 EOF
 
-    # /space/.env
-    echo "📝 Creating space/.env file..."
-    mkdir -p space
-    cat > space/.env <<EOF
+    # space/.env
+    cat > "$PLANE_DIR/space/.env" <<EOF
 NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_SPACE_BASE_PATH=/spaces
 EOF
 
-    # /admin/.env
-    echo "📝 Creating admin/.env file..."
-    mkdir -p admin
-    cat > admin/.env <<EOF
+    # admin/.env
+    cat > "$PLANE_DIR/admin/.env" <<EOF
 NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_ADMIN_BASE_PATH=/god-mode
 NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN
 EOF
 
+    echo "✅ All .env files created successfully under $PLANE_DIR"
+    notify_webhook "provisioning" "env_files_ready" "✅ Environment files created successfully"
     sleep 5
-    echo "✅ All .env files created successfully"
-    notify_webhook "provisioning" "env_files_ready" "✅ All environment configuration files created"
-
 
     # ========== Download docker-compose.yml ==========
     echo "📥 Downloading docker-compose.yml..."
@@ -567,7 +538,7 @@ EOF
     head -10 docker-compose.yml
     notify_webhook "provisioning" "compose_downloaded" "✅ Docker Compose file downloaded successfully"
 
-    sleep 2
+    sleep 5
 
     # ========== Fix Docker Compose File ==========
     echo "🔧 Adjusting docker-compose.yml for standalone deployment..."
@@ -614,7 +585,7 @@ EOF
 
     echo "✅ Docker Compose configuration completed"
     notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration completed"
-    sleep 2
+    sleep 5
 
     # ========== Start Infrastructure ==========
     echo "[8/15] Starting Plane infrastructure (DB, Redis, MQ, MinIO)..."
