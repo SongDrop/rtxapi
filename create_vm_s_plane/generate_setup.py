@@ -204,7 +204,7 @@ def generate_setup(
             exit 1
         fi
         echo "✅ Plane repository cloned successfully"
-        notify_webhook "success" "plane_cloned" "✅ Repository cloned successfully"
+        notify_webhook "provisioning" "plane_cloned" "✅ Repository cloned successfully"
     else
         echo "✅ Plane repository already exists, checking for updates..."
         notify_webhook "provisioning" "plane_update" "Checking for repository updates"
@@ -213,7 +213,7 @@ def generate_setup(
             cd plane
             if git pull origin main; then
                 echo "✅ Repository updated successfully"
-                notify_webhook "success" "plane_updated" "✅ Repository updated successfully"
+                notify_webhook "provisioning" "plane_updated" "✅ Repository updated successfully"
             else
                 echo "⚠️ Could not update repository, continuing with existing version"
                 notify_webhook "warning" "plane_update_failed" "Git pull failed, using existing code"
@@ -257,7 +257,7 @@ def generate_setup(
     echo "✅ Successfully entered Plane directory: $(pwd)"
     echo "🔍 Contents of Plane directory:"
     ls -la
-    notify_webhook "success" "plane_directory_ready" "✅ In Plane directory, starting configuration"
+    notify_webhook "provisioning" "plane_directory_ready" "✅ In Plane directory, starting configuration"
 
     # Verify we can write to this directory
     echo "🔍 Testing write permissions..."
@@ -509,46 +509,93 @@ EOF
     echo "✅ All .env files created successfully"
     notify_webhook "provisioning" "env_files_ready" "✅ All environment configuration files created"
 
-    # ========== Download docker-compose.yml ==========
+       # ========== Download docker-compose.yml ==========
     echo "📥 Downloading docker-compose.yml..."
     notify_webhook "provisioning" "compose_download" "Downloading Docker Compose configuration"
 
-    # Debug current directory
+    # Debug current directory and permissions
     echo "🔍 Current directory: $(pwd)"
-    echo "🔍 Files in directory: $(ls -la)"
+    echo "🔍 Directory permissions: $(ls -ld .)"
+    echo "🔍 Files in directory:"
+    ls -la
 
+    # Test if we can write to current directory
+    echo "🔍 Testing write permissions..."
+    if ! touch test_download.permission 2>/dev/null; then
+        echo "❌ ERROR: Cannot write to current directory $(pwd)"
+        notify_webhook "failed" "write_permission_denied" "Cannot write to current directory for docker-compose.yml"
+        exit 1
+    fi
+    rm -f test_download.permission
+
+    echo "🔍 Testing URL: __PLANE_DOCKER_COMPOSE__"
+    if ! curl -I "__PLANE_DOCKER_COMPOSE__" &>/dev/null; then
+        echo "❌ ERROR: Cannot access the docker-compose URL"
+        echo "🔍 Testing network connectivity..."
+        curl -I "https://raw.githubusercontent.com" || echo "❌ Cannot reach GitHub"
+        notify_webhook "failed" "url_inaccessible" "Cannot access docker-compose.yml URL"
+        exit 1
+    fi
+
+    echo "🔍 Downloading docker-compose.yml..."
     if ! curl -fsSL -o docker-compose.yml "__PLANE_DOCKER_COMPOSE__"; then
         echo "❌ Failed to download docker-compose.yml from __PLANE_DOCKER_COMPOSE__"
-        echo "🔍 Testing URL accessibility..."
-        curl -I "__PLANE_DOCKER_COMPOSE__" || true
-        notify_webhook "failed" "compose_download_failed" "Cannot download docker-compose.yml - URL or network issue"
+        echo "🔍 Testing URL accessibility with verbose output..."
+        curl -v "__PLANE_DOCKER_COMPOSE__" 2>&1 | head -20 || true
+        echo "🔍 Disk space:"
+        df -h .
+        echo "🔍 Memory:"
+        free -h
+        notify_webhook "failed" "compose_download_failed" "Cannot download docker-compose.yml - check network and disk space"
         exit 1
     fi
 
     if [ ! -f "docker-compose.yml" ]; then
         echo "❌ docker-compose.yml was not created"
+        echo "🔍 Current directory contents after download attempt:"
+        ls -la
         notify_webhook "failed" "compose_missing" "docker-compose.yml file missing after download"
         exit 1
     fi
 
     echo "✅ docker-compose.yml downloaded successfully ($(wc -l < docker-compose.yml) lines)"
+    echo "🔍 First 10 lines of docker-compose.yml:"
+    head -10 docker-compose.yml
     notify_webhook "provisioning" "compose_downloaded" "✅ Docker Compose file downloaded successfully"
 
-     2
+    sleep 2
 
     # ========== Fix Docker Compose File ==========
     echo "🔧 Adjusting docker-compose.yml for standalone deployment..."
     notify_webhook "provisioning" "compose_adjustment" "Modifying Docker Compose for standalone setup"
 
+    # Verify we can read and modify the file
+    echo "🔍 Verifying docker-compose.yml permissions..."
+    if [ ! -r "docker-compose.yml" ] || [ ! -w "docker-compose.yml" ]; then
+        echo "❌ ERROR: Cannot read or write docker-compose.yml"
+        echo "🔍 File permissions: $(ls -l docker-compose.yml)"
+        notify_webhook "failed" "compose_permission_denied" "Cannot modify docker-compose.yml - permission issue"
+        exit 1
+    fi
+
     # Create backup before modification
+    echo "🔍 Creating backup of docker-compose.yml..."
     cp docker-compose.yml docker-compose.yml.backup
+    if [ ! -f "docker-compose.yml.backup" ]; then
+        echo "❌ ERROR: Failed to create backup file"
+        notify_webhook "failed" "backup_failed" "Failed to create docker-compose.yml backup"
+        exit 1
+    fi
 
     # Disable proxy service to avoid port conflicts with host nginx
+    echo "🔍 Checking for proxy service in docker-compose.yml..."
     if grep -q "proxy:" docker-compose.yml; then
         echo "🔧 Disabling proxy service to avoid port conflicts..."
         if sed -i.bak 's/^  proxy:/  # proxy:/' docker-compose.yml && \
            sed -i 's/^    container_name: proxy/#     container_name: proxy/' docker-compose.yml; then
             echo "✅ Disabled proxy service to avoid port conflicts"
+            echo "🔍 Verification - proxy lines should be commented:"
+            grep -E "^(  # proxy:|#     container_name: proxy)" docker-compose.yml || echo "⚠️ Could not find commented proxy lines"
             notify_webhook "provisioning" "proxy_disabled" "✅ Proxy service disabled successfully"
         else
             echo "⚠️ Could not disable proxy service, continuing anyway"
@@ -563,7 +610,7 @@ EOF
 
     echo "✅ Docker Compose configuration completed"
     notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration completed"
-    sleep 5
+    sleep 2
 
     # ========== Start Infrastructure ==========
     echo "[8/15] Starting Plane infrastructure (DB, Redis, MQ, MinIO)..."
