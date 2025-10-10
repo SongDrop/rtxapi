@@ -167,113 +167,252 @@ def generate_setup(
     echo "[7/15] Installing Plane with Docker Compose..."
     notify_webhook "provisioning" "plane_install" "Setting up Plane with Docker Compose"
 
-    # Navigate to Plane directory
+    # Navigate to Plane directory with absolute path
+    echo "🔍 Navigating to Plane directory: $DATA_DIR"
     cd "$DATA_DIR" || { 
         echo "❌ ERROR: Could not enter $DATA_DIR"
+        echo "🔍 Current directory: $(pwd)"
+        echo "🔍 Directory contents:"
+        ls -la "$DATA_DIR" 2>/dev/null || echo "Cannot list directory"
         notify_webhook "failed" "directory_access" "Cannot access Plane data directory"
         exit 1
     }
 
-    # Clone or update Plane repository
+    # Clone or update Plane repository with better error handling
     if [ ! -d "plane" ]; then
         echo "📦 Cloning the official Plane repository..."
         notify_webhook "provisioning" "plane_clone_start" "📦 Cloning Plane repository from GitHub"
         
+        # Check if we have git and network access
+        if ! command -v git &> /dev/null; then
+            echo "❌ ERROR: git command not found"
+            notify_webhook "failed" "git_missing" "git is not installed"
+            exit 1
+        fi
+        
+        if ! timeout 10 git ls-remote https://github.com/makeplane/plane.git &>/dev/null; then
+            echo "❌ ERROR: Cannot reach GitHub repository"
+            notify_webhook "failed" "network_error" "Cannot access GitHub - check network connectivity"
+            exit 1
+        fi
+        
         if ! git clone https://github.com/makeplane/plane.git; then
             echo "❌ Failed to clone Plane repository"
-            notify_webhook "failed" "plane_clone_failed" "Git clone failed - check network and repository URL"
+            echo "🔍 Checking disk space:"
+            df -h .
+            notify_webhook "failed" "plane_clone_failed" "Git clone failed - check disk space and network"
             exit 1
         fi
         echo "✅ Plane repository cloned successfully"
-        notify_webhook "provisioning" "plane_cloned" "✅ Repository cloned successfully"
+        notify_webhook "success" "plane_cloned" "✅ Repository cloned successfully"
     else
-        echo "✅ Plane repository already exists, pulling latest changes..."
-        notify_webhook "provisioning" "plane_update" "Pulling latest changes from repository"
+        echo "✅ Plane repository already exists, checking for updates..."
+        notify_webhook "provisioning" "plane_update" "Checking for repository updates"
         
-        cd plane && git pull origin main && cd .. || {
-            echo "⚠️ Could not update repository, continuing with existing version"
-            notify_webhook "warning" "plane_update_failed" "Git pull failed, using existing code"
-        }
+        if [ -d "plane" ]; then
+            cd plane
+            if git pull origin main; then
+                echo "✅ Repository updated successfully"
+                notify_webhook "success" "plane_updated" "✅ Repository updated successfully"
+            else
+                echo "⚠️ Could not update repository, continuing with existing version"
+                notify_webhook "warning" "plane_update_failed" "Git pull failed, using existing code"
+            fi
+            cd ..
+        else
+            echo "❌ ERROR: plane directory disappeared"
+            notify_webhook "failed" "directory_disappeared" "plane directory missing after check"
+            exit 1
+        fi
     fi
 
     # Enter plane directory with comprehensive error handling
     echo "🔍 Verifying Plane directory structure..."
     if [ ! -d "plane" ]; then
         echo "❌ ERROR: Plane directory not found after clone/update"
+        echo "🔍 Current directory: $(pwd)"
+        echo "🔍 Directory contents:"
+        ls -la
         notify_webhook "failed" "directory_missing" "Plane directory does not exist"
+        exit 1
+    fi
+
+    # Check directory permissions
+    echo "🔍 Checking plane directory permissions..."
+    if [ ! -r "plane" ] || [ ! -x "plane" ]; then
+        echo "❌ ERROR: Insufficient permissions to access plane directory"
+        echo "🔍 Permissions: $(ls -ld plane)"
+        notify_webhook "failed" "permission_denied" "Cannot access plane directory - permission issue"
         exit 1
     fi
 
     cd plane || {
         echo "❌ ERROR: Cannot enter plane directory"
+        echo "🔍 Current directory: $(pwd)"
+        echo "🔍 plane directory info: $(ls -ld plane)"
         notify_webhook "failed" "directory_access" "Cannot cd into plane directory - permission issue?"
         exit 1
     }
 
     echo "✅ Successfully entered Plane directory: $(pwd)"
-    notify_webhook "provisioning" "plane_directory_ready" "✅ In Plane directory, starting configuration"
+    echo "🔍 Contents of Plane directory:"
+    ls -la
+    notify_webhook "success" "plane_directory_ready" "✅ In Plane directory, starting configuration"
+
+    # Verify we can write to this directory
+    echo "🔍 Testing write permissions..."
+    if ! touch write_test.file 2>/dev/null; then
+        echo "❌ ERROR: Cannot write to Plane directory - permission denied"
+        notify_webhook "failed" "write_permission_denied" "Cannot write to Plane directory"
+        exit 1
+    fi
+    rm -f write_test.file
 
     sleep 5
 
-    # ========== Generate Secure Credentials ==========
+       # ========== Generate Secure Credentials ==========
     echo "🔐 Generating secure credentials..."
     notify_webhook "provisioning" "credentials_generation" "Creating secure passwords and keys"
 
     POSTGRES_USER=plane
     POSTGRES_DB=plane
     
-    # Use multiple methods to generate credentials - skip OpenSSL verification
-    echo "🔐 Generating PostgreSQL password..."
+    # Comprehensive OpenSSL verification
+    echo "🔍 Verifying OpenSSL installation and functionality..."
     if command -v openssl &> /dev/null; then
-        POSTGRES_PASSWORD=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
+        echo "✅ OpenSSL is installed: $(openssl version)"
+        
+        # Test OpenSSL random generation capabilities
+        echo "🔍 Testing OpenSSL random number generation..."
+        if openssl rand -base64 10 > /dev/null 2>&1; then
+            echo "✅ OpenSSL rand command is working"
+            OPENSSL_WORKING=true
+        else
+            echo "⚠️ OpenSSL rand command failed, using fallback methods"
+            OPENSSL_WORKING=false
+            notify_webhook "warning" "openssl_rand_failed" "OpenSSL rand failed, using fallback methods"
+        fi
+        
+        # Test entropy availability
+        echo "🔍 Checking system entropy..."
+        ENTROPY_AVAILABLE=$(cat /proc/sys/kernel/random/entropy_avail 2>/dev/null || echo "unknown")
+        echo "   System entropy available: $ENTROPY_AVAILABLE"
+        
+        if [ "$ENTROPY_AVAILABLE" != "unknown" ] && [ "$ENTROPY_AVAILABLE" -lt 100 ]; then
+            echo "⚠️ Low system entropy ($ENTROPY_AVAILABLE), this may affect OpenSSL performance"
+            notify_webhook "warning" "low_entropy" "Low system entropy detected: $ENTROPY_AVAILABLE"
+        fi
     else
-        POSTGRES_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
+        echo "⚠️ OpenSSL not found in PATH, using fallback methods"
+        OPENSSL_WORKING=false
+        notify_webhook "warning" "openssl_missing" "OpenSSL not found, using /dev/urandom fallback"
     fi
+
+    # Function to generate secure random data with comprehensive fallbacks
+    generate_secure_random() {
+        local type="$1"  # "base64" or "hex"
+        local length="$2"
+        local result=""
+        
+        # Method 1: Try OpenSSL if available and working
+        if [ "$OPENSSL_WORKING" = true ]; then
+            if [ "$type" = "hex" ]; then
+                result=$(openssl rand -hex "$length" 2>/dev/null || true)
+            else
+                result=$(openssl rand -base64 "$length" 2>/dev/null | tr -d '\n' || true)
+            fi
+        fi
+        
+        # Method 2: Use /dev/urandom directly if OpenSSL failed or not available
+        if [ -z "$result" ] || [ ${#result} -lt $((length/2)) ]; then
+            echo "   Using /dev/urandom fallback"
+            if [ "$type" = "hex" ]; then
+                result=$(head -c "$length" /dev/urandom | xxd -ps -c "$length" 2>/dev/null | tr -d '\n' | head -c $((length*2)) || true)
+            else
+                result=$(head -c "$length" /dev/urandom | base64 2>/dev/null | tr -d '\n' | head -c $((length*2)) || true)
+            fi
+        fi
+        
+        # Method 3: Ultimate fallback - mixed methods
+        if [ -z "$result" ] || [ ${#result} -lt $((length/2)) ]; then
+            echo "   Using mixed fallback method"
+            if [ "$type" = "hex" ]; then
+                result=$( (date +%s%N; cat /proc/uptime; ps aux) | sha256sum | head -c $((length*2)) || echo "fallback$(date +%s)$RANDOM" )
+            else
+                result=$( (date +%s%N; cat /proc/uptime; ps aux) | base64 | tr -d '\n' | head -c $((length*2)) || echo "fallback$(date +%s)$RANDOM" )
+            fi
+        fi
+        
+        echo "$result"
+    }
+
+    # Generate credentials using the robust function
+    echo "🔐 Generating PostgreSQL password..."
+    POSTGRES_PASSWORD=$(generate_secure_random "base64" 32)
     
     echo "🔐 Generating RabbitMQ password..."
-    if command -v openssl &> /dev/null; then
-        RABBITMQ_PASSWORD=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
-    else
-        RABBITMQ_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
-    fi
+    RABBITMQ_PASSWORD=$(generate_secure_random "base64" 32)
     
     RABBITMQ_USER=plane
     RABBITMQ_VHOST=plane
     
     echo "🔐 Generating MinIO password..."
-    if command -v openssl &> /dev/null; then
-        MINIO_PASSWORD=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
-    else
-        MINIO_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
-    fi
+    MINIO_PASSWORD=$(generate_secure_random "base64" 32)
     
     echo "🔐 Generating secret key..."
-    if command -v openssl &> /dev/null; then
-        SECRET_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -ps -c 32 | tr -d '\n')
-    else
-        SECRET_KEY=$(head -c 32 /dev/urandom | xxd -ps -c 32 | tr -d '\n')
+    SECRET_KEY=$(generate_secure_random "hex" 32)
+
+    # Enhanced validation with detailed reporting
+    echo "🔍 Validating generated credentials..."
+    VALIDATION_FAILED=false
+    
+    if [ -z "$POSTGRES_PASSWORD" ] || [ ${#POSTGRES_PASSWORD} -lt 20 ]; then
+        echo "❌ PostgreSQL password validation failed"
+        echo "   Length: ${#POSTGRES_PASSWORD}, Value: ${POSTGRES_PASSWORD:0:10}..."
+        VALIDATION_FAILED=true
+    fi
+    
+    if [ -z "$RABBITMQ_PASSWORD" ] || [ ${#RABBITMQ_PASSWORD} -lt 20 ]; then
+        echo "❌ RabbitMQ password validation failed" 
+        echo "   Length: ${#RABBITMQ_PASSWORD}, Value: ${RABBITMQ_PASSWORD:0:10}..."
+        VALIDATION_FAILED=true
+    fi
+    
+    if [ -z "$MINIO_PASSWORD" ] || [ ${#MINIO_PASSWORD} -lt 20 ]; then
+        echo "❌ MinIO password validation failed"
+        echo "   Length: ${#MINIO_PASSWORD}, Value: ${MINIO_PASSWORD:0:10}..."
+        VALIDATION_FAILED=true
+    fi
+    
+    if [ -z "$SECRET_KEY" ] || [ ${#SECRET_KEY} -lt 40 ]; then
+        echo "❌ Secret key validation failed"
+        echo "   Length: ${#SECRET_KEY}, Value: ${SECRET_KEY:0:10}..."
+        VALIDATION_FAILED=true
     fi
 
-    # Final validation - ensure we have credentials of reasonable length
-    if [ -z "$POSTGRES_PASSWORD" ] || [ ${#POSTGRES_PASSWORD} -lt 20 ] || \
-       [ -z "$SECRET_KEY" ] || [ ${#SECRET_KEY} -lt 40 ]; then
-        echo "❌ ERROR: Failed to generate secure credentials"
-        echo "   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:0:10}... (${#POSTGRES_PASSWORD} chars)"
-        echo "   SECRET_KEY: ${SECRET_KEY:0:10}... (${#SECRET_KEY} chars)"
-        notify_webhook "failed" "credentials_failed" "Failed to generate secure credentials - low entropy?"
+    if [ "$VALIDATION_FAILED" = true ]; then
+        echo "❌ ERROR: One or more credentials failed validation"
+        echo "🔍 Final credential status:"
+        echo "   PostgreSQL: ${#POSTGRES_PASSWORD} chars"
+        echo "   RabbitMQ: ${#RABBITMQ_PASSWORD} chars"
+        echo "   MinIO: ${#MINIO_PASSWORD} chars"
+        echo "   Secret Key: ${#SECRET_KEY} chars"
+        notify_webhook "failed" "credentials_validation_failed" "Credential validation failed - system entropy issue?"
         exit 1
     fi
 
     export POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD RABBITMQ_USER RABBITMQ_PASSWORD RABBITMQ_VHOST MINIO_PASSWORD SECRET_KEY
     
     echo "✅ Secure credentials generated successfully"
+    echo "   Method used: $([ "$OPENSSL_WORKING" = true ] && echo "OpenSSL" || echo "Fallback")"
     echo "   PostgreSQL: ${POSTGRES_USER}/*** (${#POSTGRES_PASSWORD} chars)"
     echo "   RabbitMQ: ${RABBITMQ_USER}/*** (${#RABBITMQ_PASSWORD} chars)"
     echo "   MinIO: plane/*** (${#MINIO_PASSWORD} chars)"
     echo "   Secret Key: *** (${#SECRET_KEY} chars)"
-    
-    notify_webhook "provisioning" "credentials_ready" "✅ All credentials and keys generated successfully"
-
+                                       
+    notify_webhook "provisioning" "credentials_ready" "✅ All credentials and keys generated successfully using $([ "$OPENSSL_WORKING" = true ] && echo "OpenSSL" || echo "fallback methods")"
+    sleep 5
+                                                                     
     # ========== Create .env Files ==========
     echo "🛠️ Generating .env configuration files..."
     notify_webhook "provisioning" "env_setup" "Creating environment configuration files"
@@ -395,7 +534,7 @@ EOF
     echo "✅ docker-compose.yml downloaded successfully ($(wc -l < docker-compose.yml) lines)"
     notify_webhook "provisioning" "compose_downloaded" "✅ Docker Compose file downloaded successfully"
 
-    sleep 2
+     2
 
     # ========== Fix Docker Compose File ==========
     echo "🔧 Adjusting docker-compose.yml for standalone deployment..."
@@ -424,7 +563,7 @@ EOF
 
     echo "✅ Docker Compose configuration completed"
     notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration completed"
-    sleep 2
+    sleep 5
 
     # ========== Start Infrastructure ==========
     echo "[8/15] Starting Plane infrastructure (DB, Redis, MQ, MinIO)..."
@@ -454,7 +593,7 @@ EOF
             echo "✅ $service started successfully"
             notify_webhook "provisioning" "service_ready" "✅ Container running: $service"
         fi
-        sleep 3
+        sleep 5
     done
 
     echo "✅ All infrastructure services started"
@@ -488,7 +627,7 @@ EOF
 
     count=0
     until docker exec plane-redis redis-cli ping >/dev/null 2>&1; do
-        sleep 2
+        sleep 5
         count=$((count + 1))
         if [ $count -ge $MAX_WAIT ]; then
             echo "❌ Redis failed to become ready within $((MAX_WAIT*2)) seconds"
@@ -548,7 +687,7 @@ EOF
             echo "✅ $service started successfully"
             notify_webhook "provisioning" "app_service_ready" "✅ Application service running: $service"
         fi
-        sleep 3
+        sleep 5
     done
 
     # Report on any failed services
