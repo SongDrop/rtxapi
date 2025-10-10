@@ -270,7 +270,7 @@ def generate_setup(
 
     sleep 5
 
-       # ========== Generate Secure Credentials ==========
+    # ========== Generate Secure Credentials ==========
     echo "🔐 Generating secure credentials..."
     notify_webhook "provisioning" "credentials_generation" "Creating secure passwords and keys"
 
