@@ -204,7 +204,9 @@ def generate_setup(
             exit 1
         fi
         echo "✅ Plane repository cloned successfully"
-        notify_webhook "provisioning" "plane_cloned" "✅ Repository cloned successfully"
+        notify_webhook "provisioning" "plane_cloned" "✅ Plane repository cloned successfully"
+        
+        sleep 5
     else
         echo "✅ Plane repository already exists, checking for updates..."
         notify_webhook "provisioning" "plane_update" "Checking for repository updates"
@@ -296,7 +298,7 @@ def generate_setup(
         # Test entropy availability
         echo "🔍 Checking system entropy..."
         ENTROPY_AVAILABLE=$(cat /proc/sys/kernel/random/entropy_avail 2>/dev/null || echo "unknown")
-        echo "   System entropy available: $ENTROPY_AVAILABLE"
+        echo "System entropy available: $ENTROPY_AVAILABLE"
         
         if [ "$ENTROPY_AVAILABLE" != "unknown" ] && [ "$ENTROPY_AVAILABLE" -lt 100 ]; then
             echo "⚠️ Low system entropy ($ENTROPY_AVAILABLE), this may affect OpenSSL performance"
@@ -420,14 +422,14 @@ def generate_setup(
     # Root .env
     echo "📝 Creating root .env file..."
     cat > .env <<EOF
-POSTGRES_USER=${POSTGRES_USER}
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-POSTGRES_DB=${POSTGRES_DB}
+POSTGRES_USER=$POSTGRES_USER
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+POSTGRES_DB=$POSTGRES_DB
 PGDATA=/var/lib/postgresql/data
 REDIS_HOST=plane-redis
 REDIS_PORT=6379
 AWS_ACCESS_KEY_ID=plane
-AWS_SECRET_ACCESS_KEY=${MINIO_PASSWORD}
+AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
 AWS_S3_BUCKET_NAME=uploads
 AWS_S3_ENDPOINT_URL=http://plane-minio:9000
 AWS_REGION=us-east-1
@@ -435,9 +437,9 @@ FILE_SIZE_LIMIT=52428800
 DOCKERIZED=1
 USE_MINIO=1
 NGINX_PORT=8080
-RABBITMQ_USER=${RABBITMQ_USER}
-RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
-RABBITMQ_VHOST=${RABBITMQ_VHOST}
+RABBITMQ_USER=$RABBITMQ_USER
+RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD
+RABBITMQ_VHOST=$RABBITMQ_VHOST
 LISTEN_HTTP_PORT=8080
 LISTEN_HTTPS_PORT=8443
 EOF
@@ -451,40 +453,40 @@ EOF
     # /apiserver/.env
     echo "📝 Creating apiserver/.env file..."
     mkdir -p apiserver
-    cat > apiserver/.env <<EOF
+cat > apiserver/.env <<EOF
 DEBUG=0
-CORS_ALLOWED_ORIGINS=http://${DOMAIN:-localhost}
+CORS_ALLOWED_ORIGINS=http://$DOMAIN
 SENTRY_DSN=
 SENTRY_ENVIRONMENT=production
-POSTGRES_USER=${POSTGRES_USER}
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_USER=$POSTGRES_USER
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 POSTGRES_HOST=plane-db
-POSTGRES_DB=${POSTGRES_DB}
+POSTGRES_DB=$POSTGRES_DB
 POSTGRES_PORT=5432
-DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@plane-db:$POSTGRES_PORT/$POSTGRES_DB
 REDIS_HOST=plane-redis
 REDIS_PORT=6379
 REDIS_URL=redis://plane-redis:6379/
 AWS_ACCESS_KEY_ID=plane
-AWS_SECRET_ACCESS_KEY=${MINIO_PASSWORD}
+AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
 AWS_S3_ENDPOINT_URL=http://plane-minio:9000
 AWS_S3_BUCKET_NAME=uploads
 FILE_SIZE_LIMIT=52428800
 USE_MINIO=1
 NGINX_PORT=8080
-WEB_URL=http://${DOMAIN:-localhost}
+WEB_URL=http://$DOMAIN
 GUNICORN_WORKERS=3
-SECRET_KEY=${SECRET_KEY}
+SECRET_KEY=$SECRET_KEY
 EOF
 
     # /web/.env
     echo "📝 Creating web/.env file..."
     mkdir -p web
     cat > web/.env <<EOF
-NEXT_PUBLIC_API_BASE_URL=http://${DOMAIN:-localhost}
-NEXT_PUBLIC_ADMIN_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
+NEXT_PUBLIC_ADMIN_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_ADMIN_BASE_PATH=/god-mode
-NEXT_PUBLIC_SPACE_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_SPACE_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_SPACE_BASE_PATH=/spaces
 EOF
 
@@ -492,8 +494,8 @@ EOF
     echo "📝 Creating space/.env file..."
     mkdir -p space
     cat > space/.env <<EOF
-NEXT_PUBLIC_API_BASE_URL=http://${DOMAIN:-localhost}
-NEXT_PUBLIC_WEB_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
+NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_SPACE_BASE_PATH=/spaces
 EOF
 
@@ -501,15 +503,17 @@ EOF
     echo "📝 Creating admin/.env file..."
     mkdir -p admin
     cat > admin/.env <<EOF
-NEXT_PUBLIC_API_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_API_BASE_URL=http://$DOMAIN
 NEXT_PUBLIC_ADMIN_BASE_PATH=/god-mode
-NEXT_PUBLIC_WEB_BASE_URL=http://${DOMAIN:-localhost}
+NEXT_PUBLIC_WEB_BASE_URL=http://$DOMAIN
 EOF
 
+    sleep 5
     echo "✅ All .env files created successfully"
     notify_webhook "provisioning" "env_files_ready" "✅ All environment configuration files created"
 
-       # ========== Download docker-compose.yml ==========
+
+    # ========== Download docker-compose.yml ==========
     echo "📥 Downloading docker-compose.yml..."
     notify_webhook "provisioning" "compose_download" "Downloading Docker Compose configuration"
 
