@@ -160,9 +160,10 @@ def generate_setup(
     cd "$DATA_DIR"
     echo "✅ Plane directory ready"
     notify_webhook "provisioning" "directory_ready" "✅ Plane directory created successfully"
+    
     sleep 5
 
-       # ========== PLANE INSTALL ==========
+    # ========== PLANE INSTALL ==========
     echo "[7/15] Installing Plane with Docker Compose..."
     notify_webhook "provisioning" "plane_install" "Setting up Plane with Docker Compose"
 
@@ -184,7 +185,7 @@ def generate_setup(
             exit 1
         fi
         echo "✅ Plane repository cloned successfully"
-        notify_webhook "success" "plane_cloned" "✅ Repository cloned successfully"
+        notify_webhook "provisioning" "plane_cloned" "✅ Repository cloned successfully"
     else
         echo "✅ Plane repository already exists, pulling latest changes..."
         notify_webhook "provisioning" "plane_update" "Pulling latest changes from repository"
@@ -210,42 +211,29 @@ def generate_setup(
     }
 
     echo "✅ Successfully entered Plane directory: $(pwd)"
-    notify_webhook "success" "plane_directory_ready" "✅ In Plane directory, starting configuration"
+    notify_webhook "provisioning" "plane_directory_ready" "✅ In Plane directory, starting configuration"
 
-    sleep 2
+    sleep 5
 
     # ========== Generate Secure Credentials ==========
     echo "🔐 Generating secure credentials..."
     notify_webhook "provisioning" "credentials_generation" "Creating secure passwords and keys"
 
-    # Verify openssl is available and working
-    if ! command -v openssl &> /dev/null; then
-        echo "❌ ERROR: openssl is not installed or not in PATH"
-        notify_webhook "failed" "openssl_missing" "openssl command not found"
-        exit 1
-    fi
-
-    # Test openssl functionality
-    if ! echo "test" | openssl rand -base64 10 &>/dev/null; then
-        echo "❌ ERROR: openssl rand command is not working"
-        notify_webhook "failed" "openssl_broken" "openssl rand command failed"
-        exit 1
-    fi
-
     POSTGRES_USER=plane
     POSTGRES_DB=plane
     
-    # Generate credentials with robust error handling
+    # Use multiple methods to generate credentials - skip OpenSSL verification
     echo "🔐 Generating PostgreSQL password..."
-    POSTGRES_PASSWORD=$(openssl rand -base64 32 2>/dev/null || true)
-    if [ -z "$POSTGRES_PASSWORD" ] || [ ${#POSTGRES_PASSWORD} -lt 30 ]; then
-        echo "⚠️ openssl rand failed, using alternative method"
+    if command -v openssl &> /dev/null; then
+        POSTGRES_PASSWORD=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
+    else
         POSTGRES_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
     fi
     
     echo "🔐 Generating RabbitMQ password..."
-    RABBITMQ_PASSWORD=$(openssl rand -base64 32 2>/dev/null || true)
-    if [ -z "$RABBITMQ_PASSWORD" ] || [ ${#RABBITMQ_PASSWORD} -lt 30 ]; then
+    if command -v openssl &> /dev/null; then
+        RABBITMQ_PASSWORD=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
+    else
         RABBITMQ_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
     fi
     
@@ -253,39 +241,38 @@ def generate_setup(
     RABBITMQ_VHOST=plane
     
     echo "🔐 Generating MinIO password..."
-    MINIO_PASSWORD=$(openssl rand -base64 32 2>/dev/null || true)
-    if [ -z "$MINIO_PASSWORD" ] || [ ${#MINIO_PASSWORD} -lt 30 ]; then
+    if command -v openssl &> /dev/null; then
+        MINIO_PASSWORD=$(openssl rand -base64 32 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
+    else
         MINIO_PASSWORD=$(head -c 32 /dev/urandom | base64 | tr -d '\n' | cut -c1-43)
     fi
     
     echo "🔐 Generating secret key..."
-    SECRET_KEY=$(openssl rand -hex 32 2>/dev/null || true)
-    if [ -z "$SECRET_KEY" ] || [ ${#SECRET_KEY} -lt 60 ]; then
+    if command -v openssl &> /dev/null; then
+        SECRET_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -ps -c 32 | tr -d '\n')
+    else
         SECRET_KEY=$(head -c 32 /dev/urandom | xxd -ps -c 32 | tr -d '\n')
     fi
 
-    # Final validation of all credentials
-    if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$RABBITMQ_PASSWORD" ] || \
-       [ -z "$MINIO_PASSWORD" ] || [ -z "$SECRET_KEY" ]; then
-        echo "❌ ERROR: Failed to generate one or more secure credentials"
-        echo "   POSTGRES_PASSWORD: ${#POSTGRES_PASSWORD} chars"
-        echo "   RABBITMQ_PASSWORD: ${#RABBITMQ_PASSWORD} chars"
-        echo "   MINIO_PASSWORD: ${#MINIO_PASSWORD} chars" 
-        echo "   SECRET_KEY: ${#SECRET_KEY} chars"
-        notify_webhook "failed" "credentials_failed" "Failed to generate secure credentials"
+    # Final validation - ensure we have credentials of reasonable length
+    if [ -z "$POSTGRES_PASSWORD" ] || [ ${#POSTGRES_PASSWORD} -lt 20 ] || \
+       [ -z "$SECRET_KEY" ] || [ ${#SECRET_KEY} -lt 40 ]; then
+        echo "❌ ERROR: Failed to generate secure credentials"
+        echo "   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:0:10}... (${#POSTGRES_PASSWORD} chars)"
+        echo "   SECRET_KEY: ${SECRET_KEY:0:10}... (${#SECRET_KEY} chars)"
+        notify_webhook "failed" "credentials_failed" "Failed to generate secure credentials - low entropy?"
         exit 1
     fi
 
     export POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD RABBITMQ_USER RABBITMQ_PASSWORD RABBITMQ_VHOST MINIO_PASSWORD SECRET_KEY
     
     echo "✅ Secure credentials generated successfully"
-    echo "   PostgreSQL user: $POSTGRES_USER"
-    echo "   PostgreSQL password length: ${#POSTGRES_PASSWORD} chars"
-    echo "   RabbitMQ password length: ${#RABBITMQ_PASSWORD} chars"
-    echo "   MinIO password length: ${#MINIO_PASSWORD} chars"
-    echo "   Secret key length: ${#SECRET_KEY} chars"
+    echo "   PostgreSQL: ${POSTGRES_USER}/*** (${#POSTGRES_PASSWORD} chars)"
+    echo "   RabbitMQ: ${RABBITMQ_USER}/*** (${#RABBITMQ_PASSWORD} chars)"
+    echo "   MinIO: plane/*** (${#MINIO_PASSWORD} chars)"
+    echo "   Secret Key: *** (${#SECRET_KEY} chars)"
     
-    notify_webhook "success" "credentials_ready" "✅ All credentials and keys generated successfully"
+    notify_webhook "provisioning" "credentials_ready" "✅ All credentials and keys generated successfully"
 
     # ========== Create .env Files ==========
     echo "🛠️ Generating .env configuration files..."
@@ -381,7 +368,7 @@ NEXT_PUBLIC_WEB_BASE_URL=http://${DOMAIN:-localhost}
 EOF
 
     echo "✅ All .env files created successfully"
-    notify_webhook "success" "env_files_ready" "✅ All environment configuration files created"
+    notify_webhook "provisioning" "env_files_ready" "✅ All environment configuration files created"
 
     # ========== Download docker-compose.yml ==========
     echo "📥 Downloading docker-compose.yml..."
@@ -406,7 +393,7 @@ EOF
     fi
 
     echo "✅ docker-compose.yml downloaded successfully ($(wc -l < docker-compose.yml) lines)"
-    notify_webhook "success" "compose_downloaded" "✅ Docker Compose file downloaded successfully"
+    notify_webhook "provisioning" "compose_downloaded" "✅ Docker Compose file downloaded successfully"
 
     sleep 2
 
@@ -423,7 +410,7 @@ EOF
         if sed -i.bak 's/^  proxy:/  # proxy:/' docker-compose.yml && \
            sed -i 's/^    container_name: proxy/#     container_name: proxy/' docker-compose.yml; then
             echo "✅ Disabled proxy service to avoid port conflicts"
-            notify_webhook "success" "proxy_disabled" "✅ Proxy service disabled successfully"
+            notify_webhook "provisioning" "proxy_disabled" "✅ Proxy service disabled successfully"
         else
             echo "⚠️ Could not disable proxy service, continuing anyway"
             notify_webhook "warning" "proxy_disable_failed" "Failed to disable proxy, may cause port conflicts"
@@ -436,7 +423,7 @@ EOF
     fi
 
     echo "✅ Docker Compose configuration completed"
-    notify_webhook "success" "compose_ready" "✅ Docker Compose configuration completed"
+    notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration completed"
     sleep 2
 
     # ========== Start Infrastructure ==========
@@ -465,13 +452,13 @@ EOF
             exit 1
         else
             echo "✅ $service started successfully"
-            notify_webhook "success" "service_ready" "✅ Container running: $service"
+            notify_webhook "provisioning" "service_ready" "✅ Container running: $service"
         fi
         sleep 3
     done
 
     echo "✅ All infrastructure services started"
-    notify_webhook "success" "infra_ready" "✅ All infrastructure containers are running"
+    notify_webhook "provisioning" "infra_ready" "✅ All infrastructure containers are running"
 
     # ========== Wait for PostgreSQL and Redis to be ready ==========
     echo "⏳ Waiting for PostgreSQL to be ready..."
@@ -494,7 +481,7 @@ EOF
         fi
     done
     echo "✅ PostgreSQL is ready"
-    notify_webhook "success" "postgres_ready" "✅ PostgreSQL is ready and accepting connections"
+    notify_webhook "provisioning" "postgres_ready" "✅ PostgreSQL is ready and accepting connections"
 
     echo "⏳ Waiting for Redis to be ready..."
     notify_webhook "provisioning" "redis_wait" "Waiting for Redis to become ready"
@@ -511,7 +498,7 @@ EOF
         fi
     done
     echo "✅ Redis is ready"
-    notify_webhook "success" "redis_ready" "✅ Redis is ready and responsive"
+    notify_webhook "provisioning" "redis_ready" "✅ Redis is ready and responsive"
 
     # ========== Run Migrations ==========
     echo "[9/15] Running Plane database migrations..."
@@ -530,7 +517,7 @@ EOF
         fi
     fi
     echo "✅ Database migrations completed successfully"
-    notify_webhook "success" "migrations_success" "✅ Database migrations completed successfully"
+    notify_webhook "provisioning" "migrations_success" "✅ Database migrations completed successfully"
 
     # ========== Start Application Services ==========
     echo "[10/15] Starting Plane application services..."
@@ -559,7 +546,7 @@ EOF
             # Continue with other services instead of exiting
         else
             echo "✅ $service started successfully"
-            notify_webhook "success" "app_service_ready" "✅ Application service running: $service"
+            notify_webhook "provisioning" "app_service_ready" "✅ Application service running: $service"
         fi
         sleep 3
     done
@@ -570,7 +557,7 @@ EOF
         notify_webhook "warning" "some_services_failed" "Some services failed: ${FAILED_SERVICES[*]}"
     else
         echo "✅ All application services started successfully"
-        notify_webhook "success" "all_app_services_ready" "✅ All application services are running"
+        notify_webhook "provisioning" "all_app_services_ready" "✅ All application services are running"
     fi
 
     # ========== Verify API Health ==========
@@ -747,7 +734,7 @@ EOF_SSL
     if nginx -t; then
         systemctl reload nginx
         echo "✅ Nginx configuration test passed"
-        notify_webhook "success" "verification" "✅ Nginx configuration test passed"
+        notify_webhook "provisioning" "verification" "✅ Nginx configuration test passed"
     else
         echo "❌ Nginx configuration test failed"
         notify_webhook "failed" "verification" "Nginx config test failed"
