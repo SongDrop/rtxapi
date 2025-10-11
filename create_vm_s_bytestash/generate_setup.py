@@ -54,6 +54,10 @@ def generate_setup(
     MAX_UPLOAD_SIZE_MB="__MAX_UPLOAD_SIZE_MB__"
     MAX_UPLOAD_SIZE_BYTES="__MAX_UPLOAD_SIZE_BYTES__"
 
+    # Add missing variables
+    READY_TIMEOUT=300
+    SLEEP_INTERVAL=10
+                                      
     # Generate JWT secret without openssl
     if [ -z "$BYTESTASH_JWT_SECRET" ]; then
         BYTESTASH_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p)
@@ -341,23 +345,33 @@ EOF_SSL
     # --- Step 10: Wait for readiness (HTTP probe) ---
     echo "[10/15] Waiting for Bytestash readiness..."
     notify_webhook "provisioning" "http_probe" "Waiting for HTTP readiness"
+    
     elapsed=0
     READY=false
     while [ $elapsed -lt $READY_TIMEOUT ]; do
-    if curl -fsS "http://127.0.0.1:8080" >/dev/null 2>&1; then
-        READY=true
-        break
-    fi
+        if curl -fsS "http://127.0.0.1:8080" >/dev/null 2>&1; then
+            READY=true
+            break
+        fi
     sleep $SLEEP_INTERVAL
     elapsed=$((elapsed + SLEEP_INTERVAL))
     done
+    
     if [ "$READY" = false ]; then
-    echo "ERROR: Bytestash not responding on HTTP"
-    notify_webhook "failed" "http_probe" "Bytestash not responding on HTTP"
-    exit 1
+        echo "ERROR: Bytestash not responding on HTTP"
+        notify_webhook "failed" "http_probe" "Bytestash not responding on HTTP"
+        exit 1
     fi
     sleep 5
  
+    echo "[14/15] Final system checks..."
+    # Verify Docker container is running
+    if ! docker ps | grep -q bytestash; then
+        echo "❌ Bytestash container is not running"
+        notify_webhook "failed" "verification" "Bytestash container not running"
+        exit 1
+    fi
+                                      
     # --- Step 15: Final summary ---
     echo "[15/15] Bytestash provisioning complete!"
     notify_webhook "provisioning" "bytestash_installed" "✅ Bytestash setup completed successfully"
