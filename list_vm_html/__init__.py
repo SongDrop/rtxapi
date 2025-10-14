@@ -49,8 +49,23 @@ def get_ip_from_vm_name(credentials, subscription_id, vm_name, resource_group):
         logging.error(f"Error getting IP for VM {vm_name}: {e}")
         return {"private": "N/A", "public": "N/A"}
 
+def is_valid_ip(ip):
+    """Check if the IP address is valid (simple IPv4 check)"""
+    import re
+    if ip == "N/A":
+        return False
+    ipv4_regex = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    return re.match(ipv4_regex, ip) is not None
+
 def generate_html(vm_data, credentials, subscription_id):
     """Generate HTML from VM data with enhanced IP links"""
+    # Constants for the links (same as in your Tampermonkey script)
+    logoURL = "https://i.postimg.cc/L8kDTTsb/96252163.png"
+    baseURL = "https://cdn.sdappnet.cloud/rtx/rtxvm.html?url="
+    formURL = 'https://forms.gle/QgFZQhaehZLs9sySA'
+    dumbdropURL = "https://i.postimg.cc/RF5FDjQx/icon.png"
+    dumbdropPort = "3475"
+    
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -170,13 +185,6 @@ def generate_html(vm_data, credentials, subscription_id):
             </div>
     """
     
-    # Constants for the links (same as in your Tampermonkey script)
-    logoURL = "https://i.postimg.cc/L8kDTTsb/96252163.png"
-    baseURL = "https://cdn.sdappnet.cloud/rtx/rtxvm.html?url="
-    formURL = 'https://forms.gle/QgFZQhaehZLs9sySA'
-    dumbdropURL = "https://i.postimg.cc/RF5FDjQx/icon.png"
-    dumbdropPort = "3475"
-    
     # Add each VM to the HTML
     for vm in vm_data['vms']:
         # Get IP addresses for this VM
@@ -194,7 +202,7 @@ def generate_html(vm_data, credentials, subscription_id):
         """
         
         # Add enhanced IP links for private IP if it's a valid IP
-        if ips['private'] != "N/A" and is_valid_ip(ips['private']):
+        if is_valid_ip(ips['private']):
             html_content += f"""
                     <div class="ip-link-container">
                         <img src="{logoURL}" alt="logo" class="ip-logo">
@@ -209,7 +217,7 @@ def generate_html(vm_data, credentials, subscription_id):
         """
         
         # Add enhanced IP links for public IP if it's a valid IP
-        if ips['public'] != "N/A" and is_valid_ip(ips['public']):
+        if is_valid_ip(ips['public']):
             html_content += f"""
                     <div class="ip-link-container">
                         <img src="{logoURL}" alt="logo" class="ip-logo">
@@ -236,12 +244,6 @@ def generate_html(vm_data, credentials, subscription_id):
     
     return html_content
 
-def is_valid_ip(ip):
-    """Check if the IP address is valid (simple IPv4 check)"""
-    import re
-    ipv4_regex = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
-    return re.match(ipv4_regex, ip) is not None
-
 def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Processing request to list Azure resources/VMs.')
 
@@ -266,8 +268,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             list_vms_only_str = req.params.get('list_vms_only', 'yes').lower()
             list_vms_only = list_vms_only_str in ['yes', 'y', 'true', '1', '']
 
-        # Check if HTML format is requested
-        format_html = req.params.get('format') == 'html'
+        # Check if HTML format is requested - check both body and query params
+        format_html = req_body.get('format') == 'html' or req.params.get('format') == 'html'
 
         # Authenticate with Azure
         try:
@@ -334,6 +336,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     status_code=200,
                     mimetype="text/html"
                 )
+            else:
+                # Return JSON
+                return func.HttpResponse(
+                    json.dumps(result),
+                    status_code=200,
+                    mimetype="application/json"
+                )
         else:
             # List all resources in resource group
             resources = resource_client.resources.list_by_resource_group(resource_group)
@@ -350,11 +359,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "resources": res_list
             }
 
-        return func.HttpResponse(
-            json.dumps(result),
-            status_code=200,
-            mimetype="application/json"
-        )
+            return func.HttpResponse(
+                json.dumps(result),
+                status_code=200,
+                mimetype="application/json"
+            )
 
     except Exception as ex:
         logging.exception("Unhandled error:")

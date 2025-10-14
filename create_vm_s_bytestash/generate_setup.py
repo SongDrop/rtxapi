@@ -99,8 +99,7 @@ def generate_setup(
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -q
     apt-get upgrade -y -q
-    apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq make ufw xxd
-                                      
+    apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq make ufw xxd docker-compose-plugin docker-compose
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
     notify_webhook "provisioning" "docker_install" "Installing Docker engine"
@@ -214,16 +213,24 @@ EOF
     # Try both docker compose commands with fallback
     if docker compose version &> /dev/null; then
         echo "Using 'docker compose'"
-        docker compose up -d
+        docker compose up -d || {
+            echo "ERROR: docker compose failed"
+            docker compose logs || true
+            exit 1
+        }
     elif command -v docker-compose &> /dev/null; then
         echo "Using 'docker-compose'"
-        docker-compose up -d
+        docker-compose up -d || {
+            echo "ERROR: docker-compose failed"
+            docker-compose logs || true
+            exit 1
+        }
     else
         echo "ERROR: Neither docker compose nor docker-compose available"
         notify_webhook "failed" "container_start" "Docker compose not available"
         exit 1
     fi
-                                      
+                     
     echo "✅ Docker Compose configured"
     notify_webhook "provisioning" "docker_configured" "✅ Docker Compose configured"
     sleep 5
