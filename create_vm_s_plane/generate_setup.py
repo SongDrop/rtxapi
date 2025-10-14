@@ -103,13 +103,24 @@ def generate_setup(
     # Remove old versions (ignore errors)
     apt-get remove -y docker docker-engine docker.io containerd runc >/dev/null 2>&1 || true
 
-    # Setup Docker’s official GPG key
+   # Setup Docker’s official GPG key with retry loop
     mkdir -p /etc/apt/keyrings
-    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
-        echo "❌ Failed to download Docker GPG key"
-        notify_webhook "failed" "docker_gpg" "Failed to download Docker GPG key"
-        exit 1
-    fi
+    MAX_RETRIES=3
+
+    for i in $(seq 1 $MAX_RETRIES); do
+        if curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
+            echo "✅ Docker GPG key downloaded successfully on attempt $i"
+            break
+        fi
+        echo "⚠️ Docker GPG key download attempt $i failed; retrying..."
+        sleep 5
+        if [ $i -eq $MAX_RETRIES ]; then
+            echo "❌ Failed to download Docker GPG key after $MAX_RETRIES attempts"
+            notify_webhook "failed" "docker_gpg" "Failed to download Docker GPG key after $MAX_RETRIES attempts"
+            exit 1
+        fi
+    done
+
     chmod a+r /etc/apt/keyrings/docker.gpg
 
     ARCH=$(dpkg --print-architecture)
@@ -119,6 +130,7 @@ def generate_setup(
     # Update and install Docker with retries
     for i in {1..3}; do
         if apt-get update -q && apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+            echo "✅ Docker installed successfully on attempt $i"
             break
         fi
         echo "⚠️ Docker install attempt $i failed; retrying..."
