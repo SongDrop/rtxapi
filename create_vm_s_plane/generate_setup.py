@@ -637,6 +637,70 @@ EOF
     sleep 5
 
     # ==========================================================
+    # 🕵️‍♂️ Volume & Container Preflight Checks
+    # ==========================================================
+    echo "🔍 Running preflight checks on volumes and containers..."
+    notify_webhook "provisioning" "preflight_start" "Checking volume directories and container readiness"
+
+    sleep 5
+
+    # --- Check if directories are writable ---
+    for dir in pgdata redisdata miniodata rabbitmqdata; do
+        if [ ! -w "$dir" ]; then
+            echo "❌ Directory $dir is not writable!"
+            notify_webhook "failed" "preflight_writable_check" "Directory $dir not writable"
+            exit 1
+        else
+            echo "✅ Directory $dir is writable"
+            notify_webhook "provisioning" "preflight_writable_check" "Directory $dir writable"
+        fi
+        sleep 5
+    done
+
+    # --- Check if Docker daemon is running ---
+    if ! docker info >/dev/null 2>&1; then
+        echo "❌ Docker daemon not running!"
+        notify_webhook "failed" "preflight_docker_check" "Docker daemon not running"
+        exit 1
+    else
+        echo "✅ Docker daemon is running"
+        notify_webhook "provisioning" "preflight_docker_check" "Docker daemon running"
+    fi
+    sleep 5
+
+    # --- Quick check for previous containers that might crash ---
+    services=("plane-db" "plane-redis" "plane-mq" "plane-minio")
+
+    for service in "${services[@]}"; do
+        if docker ps -a --format '{{.Names}} {{.Status}}' | grep -q "^$service "; then
+            STATUS=$(docker ps -a --format '{{.Names}} {{.Status}}' | grep "^$service " | awk '{print $2}')
+            echo "ℹ️ Service $service exists with status: $STATUS"
+            notify_webhook "provisioning" "preflight_service_check" "Service $service exists: $STATUS"
+        else
+            echo "ℹ️ Service $service not yet created"
+            notify_webhook "provisioning" "preflight_service_check" "Service $service not yet created"
+        fi
+        sleep 5
+    done
+
+    # --- Check for port conflicts (common issue with proxy/nginx) ---
+    PORTS=(5432 6379 5672 9000 8000 3000 3001 3002 3100)
+    for port in "${PORTS[@]}"; do
+        if ss -tuln | grep -q ":$port "; then
+            echo "⚠️ Port $port already in use"
+            notify_webhook "warning" "preflight_port_check" "Port $port is already in use"
+        else
+            echo "✅ Port $port is free"
+            notify_webhook "provisioning" "preflight_port_check" "Port $port is free"
+        fi
+        sleep 5
+    done
+
+    echo "✅ Preflight checks completed, proceeding with container startup"
+    notify_webhook "provisioning" "preflight_complete" "✅ Volumes, docker, services, and ports are ready"
+    sleep 5
+
+    # ==========================================================
     # 🧩 Ensure docker-compose uses correct environment
     # ==========================================================
     # We're already in the plane directory with all .env files, use simple docker compose
