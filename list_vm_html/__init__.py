@@ -196,6 +196,7 @@ def generate_html(vm_data, credentials, subscription_id):
             <div class="vm-item">
                 <div class="vm-name">{vm['name']}</div>
                 <div>{vm_data['resource_group']} | {vm['location']}</div>
+                <div class="vm-instance">{vm['vm_size']}</div>
                 <div class="ip-info">
         """
         
@@ -222,9 +223,6 @@ def generate_html(vm_data, credentials, subscription_id):
             """
         
         html_content += f"""
-                </div>
-                <div class="vm-instance">{vm['vm_size']}</div>
-            </div>
         """
     
     html_content += """

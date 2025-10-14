@@ -43,8 +43,16 @@ def generate_setup(
     # --- Webhook Notification System ---
     __WEBHOOK_FUNCTION__
 
-    trap 'notify_webhook "failed" "unexpected_error" "Script exited on line $LINENO with code $?"' ERR
-
+    # Enhanced error logging
+    error_handler() {
+        local exit_code=$?
+        local line_number=$1
+        echo "ERROR: Script failed at line $line_number with exit code $exit_code"
+        notify_webhook "failed" "unexpected_error" "Script exited on line $line_number with code $exit_code"
+        exit $exit_code
+    }
+    trap 'error_handler ${LINENO}' ERR
+                                      
     # --- Logging ---
     LOG_FILE="/var/log/bytestash_setup.log"
     exec > >(tee -a "$LOG_FILE") 2>&1
@@ -85,7 +93,8 @@ def generate_setup(
 
     # Generate JWT secret without openssl
     if [ -z "${BYTESTASH_JWT_SECRET:-}" ]; then
-        BYTESTASH_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p)
+        BYTESTASH_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p -c 32 | head -1)
+        export BYTESTASH_JWT_SECRET
     fi
     
     echo "[2/15] JWT secret generated"
@@ -97,16 +106,20 @@ def generate_setup(
     echo "[3/15] Installing system dependencies..."
     notify_webhook "provisioning" "system_dependencies" "Installing base packages"
     export DEBIAN_FRONTEND=noninteractive
+    
+    # Update and install base packages first
     apt-get update -q
     apt-get upgrade -y -q
     apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq make ufw xxd docker-compose-plugin docker-compose
+
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
     notify_webhook "provisioning" "docker_install" "Installing Docker engine"
     sleep 5
 
-    # Ensure prerequisites exist
-    apt-get install -y -q ca-certificates curl gnupg lsb-release || {
+    # Install prerequisites
+    apt-get install -y -q ca-certificates curl gnupg lsb-release apt-transport-https || {
+        echo "❌ Failed to install Docker prerequisites"
         notify_webhook "failed" "docker_prereq" "Failed to install Docker prerequisites"
         exit 1
     }
@@ -116,46 +129,63 @@ def generate_setup(
 
     # Setup Docker's official GPG key
     mkdir -p /etc/apt/keyrings
-    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg || {
         echo "❌ Failed to download Docker GPG key"
         notify_webhook "failed" "docker_gpg" "Failed to download Docker GPG key"
         exit 1
-    fi
+    }
     chmod a+r /etc/apt/keyrings/docker.gpg
 
+    # Add Docker repository
     ARCH=$(dpkg --print-architecture)
     CODENAME=$(lsb_release -cs)
-    echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list
+    echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-    # Update and install Docker with retries
+    # Update package list with new repository
+    apt-get update -q || {
+        echo "❌ Failed to update package list after adding Docker repo"
+        notify_webhook "failed" "docker_repo" "Failed to update package list"
+        exit 1
+    }
+
+    # Install Docker with retries
     for i in {1..3}; do
-        if apt-get update -q && apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+        echo "Docker install attempt $i/3..."
+        if apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
             break
         fi
-        echo "⚠️ Docker install attempt $i failed; retrying..."
+        echo "⚠️ Docker install attempt $i failed; retrying in 5 seconds..."
         sleep 5
-        [ $i -eq 3 ] && {
+        if [ $i -eq 3 ]; then
             echo "❌ Docker installation failed after 3 attempts"
             notify_webhook "failed" "docker_install" "Docker install failed after 3 attempts"
             exit 1
-        }
+        fi
     done
 
     # Enable and start Docker
     systemctl enable docker
-    systemctl start docker
+    if ! systemctl start docker; then
+        echo "❌ Failed to start Docker service"
+        journalctl -u docker --no-pager | tail -n 20
+        notify_webhook "failed" "docker_service" "Failed to start Docker service"
+        exit 1
+    fi
 
+    # Wait for Docker to be ready
+    sleep 3
+    
     # Verify Docker works
     if ! docker info >/dev/null 2>&1; then
         echo "❌ Docker daemon did not start correctly"
+        journalctl -u docker --no-pager | tail -n 30
         notify_webhook "failed" "docker_daemon" "Docker daemon failed to start"
-        journalctl -u docker --no-pager | tail -n 50 || true
         exit 1
     fi
 
     echo "✅ Docker installed and running"
     notify_webhook "provisioning" "docker_ready" "✅ Docker installed successfully"
-    sleep 5
+    sleep 2
                                       
     # ========== BYTESTASH DIRECTORY SETUP ==========
     echo "[5/15] Creating Bytestash directories..."
