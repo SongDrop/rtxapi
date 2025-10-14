@@ -99,8 +99,8 @@ def generate_setup(
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -q
     apt-get upgrade -y -q
-    apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq make ufw xxd docker.io docker-compose
-
+    apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq make ufw xxd
+                                      
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
     notify_webhook "provisioning" "docker_install" "Installing Docker engine"
