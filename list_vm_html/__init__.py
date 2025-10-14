@@ -65,6 +65,7 @@ def generate_html(vm_data, credentials, subscription_id):
     formURL = 'https://forms.gle/QgFZQhaehZLs9sySA'
     dumbdropURL = "https://i.postimg.cc/RF5FDjQx/icon.png"
     dumbdropPort = "3475"
+    rdpURL = "https://i.postimg.cc/VsCWBLfm/rdp.png"
     
     html_content = f"""
     <!DOCTYPE html>
@@ -215,7 +216,8 @@ def generate_html(vm_data, credentials, subscription_id):
                         <a class="ip-link" href="{baseURL}{ips['public']}&form={formURL}" target="_blank">[Connect]</a>
                         <img src="{dumbdropURL}" alt="files" class="ip-logo">
                         <a class="ip-link" href="https://{ips['public']}:{dumbdropPort}" target="_blank">[Files]</a>
-                        <a class="vm-link" href="{baseURL}{connect_ip}&form={formURL}" target="_blank">Connect to VM (Auto)</a>
+                        <img src="{rdpURL}" alt="rdp" class="ip-logo">
+                        <a class="ip-link" href="https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={ips['public']}&user=source&vm_name={vm['name']}" target="_blank">RDP Windows</a>
                     </div>
             """
         
