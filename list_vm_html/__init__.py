@@ -201,12 +201,6 @@ def generate_html(vm_data, credentials, subscription_id):
                 <div class="ip-info">
         """
 
-        # Add enhanced IP links for private IP if it's a valid IP
-        # if is_valid_ip(ips['private']):
-        #     html_content += f"""
-        #             <strong>Private IP:</strong> <span class="ip-address">{ips['private']}</span><br>
-        #     """
-
         # Always show the public IP
         html_content += f"""
                     <strong>Public IP:</strong> <span class="ip-address">{ips['public']}</span>
@@ -233,10 +227,10 @@ def generate_html(vm_data, credentials, subscription_id):
 
     # Close the HTML document
     html_content += """
-        </body>
+        </div>
+    </body>
     </html>
     """
-
     
     return html_content
 
@@ -252,10 +246,30 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         resource_group = req_body.get('resource_group') or req.params.get('resource_group')
         if not resource_group:
+            # Return HTML error instead of JSON
+            error_html = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Error</title>
+                <style>
+                    body { font-family: 'Segoe UI', sans-serif; padding: 20px; }
+                    .error { color: #d13438; background: #fdf2f2; padding: 15px; border-radius: 4px; }
+                </style>
+            </head>
+            <body>
+                <div class="error">
+                    <h2>Error: Missing Resource Group</h2>
+                    <p>Please provide a 'resource_group' parameter in your request.</p>
+                    <p>Example: https://your-function.azurewebsites.net/api/your-function?resource_group=myResourceGroup</p>
+                </div>
+            </body>
+            </html>
+            """
             return func.HttpResponse(
-                json.dumps({"error": "Missing 'resource_group' parameter"}),
+                error_html,
                 status_code=400,
-                mimetype="application/json"
+                mimetype="text/html"
             )
 
         list_vms_only = req_body.get('list_vms_only')
@@ -263,9 +277,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             # fallback to query param, treat 'yes'/'true'/1 as True
             list_vms_only_str = req.params.get('list_vms_only', 'yes').lower()
             list_vms_only = list_vms_only_str in ['yes', 'y', 'true', '1', '']
-
-        # Check if HTML format is requested - check both body and query params
-        format_html = req_body.get('format') == 'html' or req.params.get('format') == 'html'
 
         # Authenticate with Azure
         try:
@@ -277,20 +288,58 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         except KeyError as e:
             err = f"Missing environment variable: {e}"
             logging.error(err)
+            # Return HTML error
+            error_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Error</title>
+                <style>
+                    body {{ font-family: 'Segoe UI', sans-serif; padding: 20px; }}
+                    .error {{ color: #d13438; background: #fdf2f2; padding: 15px; border-radius: 4px; }}
+                </style>
+            </head>
+            <body>
+                <div class="error">
+                    <h2>Configuration Error</h2>
+                    <p>{err}</p>
+                </div>
+            </body>
+            </html>
+            """
             return func.HttpResponse(
-                json.dumps({"error": err}),
+                error_html,
                 status_code=500,
-                mimetype="application/json"
+                mimetype="text/html"
             )
 
         subscription_id = os.environ.get('AZURE_SUBSCRIPTION_ID')
         if not subscription_id:
             err = "AZURE_SUBSCRIPTION_ID environment variable is not set."
             logging.error(err)
+            # Return HTML error
+            error_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Error</title>
+                <style>
+                    body {{ font-family: 'Segoe UI', sans-serif; padding: 20px; }}
+                    .error {{ color: #d13438; background: #fdf2f2; padding: 15px; border-radius: 4px; }}
+                </style>
+            </head>
+            <body>
+                <div class="error">
+                    <h2>Configuration Error</h2>
+                    <p>{err}</p>
+                </div>
+            </body>
+            </html>
+            """
             return func.HttpResponse(
-                json.dumps({"error": err}),
+                error_html,
                 status_code=500,
-                mimetype="application/json"
+                mimetype="text/html"
             )
 
         resource_client = ResourceManagementClient(credentials, subscription_id)
@@ -302,10 +351,29 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         except Exception as e:
             err = f"Resource group '{resource_group}' not found or inaccessible: {e}"
             logging.error(err)
+            # Return HTML error
+            error_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Error</title>
+                <style>
+                    body {{ font-family: 'Segoe UI', sans-serif; padding: 20px; }}
+                    .error {{ color: #d13438; background: #fdf2f2; padding: 15px; border-radius: 4px; }}
+                </style>
+            </head>
+            <body>
+                <div class="error">
+                    <h2>Resource Group Not Found</h2>
+                    <p>{err}</p>
+                </div>
+            </body>
+            </html>
+            """
             return func.HttpResponse(
-                json.dumps({"error": err}),
+                error_html,
                 status_code=404,
-                mimetype="application/json"
+                mimetype="text/html"
             )
 
         if list_vms_only:
@@ -324,23 +392,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 "vms": vm_list
             }
             
-            # Return HTML if requested
-            if format_html:
-                html_output = generate_html(result, credentials, subscription_id)
-                return func.HttpResponse(
-                    html_output,
-                    status_code=200,
-                    mimetype="text/html"
-                )
-            else:
-                # Return JSON
-                return func.HttpResponse(
-                    json.dumps(result),
-                    status_code=200,
-                    mimetype="application/json"
-                )
+            # ALWAYS RETURN HTML - removed the format_html check
+            html_output = generate_html(result, credentials, subscription_id)
+            return func.HttpResponse(
+                html_output,
+                status_code=200,
+                mimetype="text/html"
+            )
         else:
-            # List all resources in resource group
+            # For non-VM resources, still return HTML but with a different format
             resources = resource_client.resources.list_by_resource_group(resource_group)
             res_list = []
             for res in resources:
@@ -349,22 +409,71 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     "type": res.type,
                     "location": res.location
                 })
-            result = {
-                "resource_group": resource_group,
-                "resource_count": len(res_list),
-                "resources": res_list
-            }
-
+            
+            # Generate HTML for all resources
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Azure Resources - {resource_group}</title>
+                <style>
+                    body {{ font-family: 'Segoe UI', sans-serif; padding: 20px; }}
+                    .container {{ max-width: 1200px; margin: 0 auto; }}
+                    h1 {{ color: #0078d4; }}
+                    .resource-item {{ padding: 10px; border-bottom: 1px solid #eee; }}
+                    .resource-name {{ font-weight: bold; color: #0078d4; }}
+                    .resource-type {{ color: #666; font-style: italic; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>All Resources in {resource_group}</h1>
+                    <p>Total resources: {len(res_list)}</p>
+            """
+            
+            for resource in res_list:
+                html_content += f"""
+                    <div class="resource-item">
+                        <div class="resource-name">{resource['name']}</div>
+                        <div class="resource-type">{resource['type']} | {resource['location']}</div>
+                    </div>
+                """
+            
+            html_content += """
+                </div>
+            </body>
+            </html>
+            """
+            
             return func.HttpResponse(
-                json.dumps(result),
+                html_content,
                 status_code=200,
-                mimetype="application/json"
+                mimetype="text/html"
             )
 
     except Exception as ex:
         logging.exception("Unhandled error:")
+        # Return HTML error
+        error_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Error</title>
+            <style>
+                body {{ font-family: 'Segoe UI', sans-serif; padding: 20px; }}
+                .error {{ color: #d13438; background: #fdf2f2; padding: 15px; border-radius: 4px; }}
+            </style>
+        </head>
+        <body>
+            <div class="error">
+                <h2>Unexpected Error</h2>
+                <p>{str(ex)}</p>
+            </div>
+        </body>
+        </html>
+        """
         return func.HttpResponse(
-            json.dumps({"error": str(ex)}),
+            error_html,
             status_code=500,
-            mimetype="application/json"
+            mimetype="text/html"
         )
