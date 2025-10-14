@@ -4,18 +4,17 @@ def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
-    PORT,
-    DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh",
+    PORT=3000,
     WEBHOOK_URL="",
-    ALLOW_EMBED_WEBSITE="",
     location="",
     resource_group="",
-    UPLOAD_SIZE_MB=256
+    UPLOAD_SIZE_MB=256,
+    DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh",
 ):
     """
     Returns a full 15-step Bytestash provisioning script in your style.
     """
-
+    # ========== TOKEN DEFINITIONS ==========
     tokens = {
         "__DOMAIN__": DOMAIN_NAME,
         "__ADMIN_EMAIL__": ADMIN_EMAIL,
@@ -23,7 +22,6 @@ def generate_setup(
         "__PORT__": str(PORT),
         "__DNS_HOOK_SCRIPT__": DNS_HOOK_SCRIPT,
         "__WEBHOOK_URL__": WEBHOOK_URL,
-        "__ALLOW_EMBED_WEBSITE__": ALLOW_EMBED_WEBSITE,
         "__LOCATION__": location,
         "__RESOURCE_GROUP__": resource_group,
         "__BYTESTASH_DIR__": "/opt/bytestash",
@@ -38,11 +36,20 @@ def generate_setup(
     #!/bin/bash
     set -euo pipefail
 
-    LOG_FILE="/var/log/bytestash_setup.log"
-    exec > >(tee -a "$LOG_FILE") 2>&1
+    # ----------------------------------------------------------------------
+    # Plane Provisioning Script (Forgejo style)
+    # ----------------------------------------------------------------------
 
+    # --- Webhook Notification System ---
     __WEBHOOK_FUNCTION__
 
+    trap 'notify_webhook "failed" "unexpected_error" "Script exited on line $LINENO with code $?"' ERR
+
+    # --- Logging ---
+    LOG_FILE="/var/log/bytestash_setup.log"
+    exec > >(tee -a "$LOG_FILE") 2>&1
+                                      
+    # --- Environment Variables ---
     DOMAIN="__DOMAIN__"
     ADMIN_EMAIL="__ADMIN_EMAIL__"
     ADMIN_PASSWORD="__ADMIN_PASSWORD__"
@@ -50,25 +57,18 @@ def generate_setup(
     BYTESTASH_DIR="__BYTESTASH_DIR__"
     DNS_HOOK_SCRIPT="__DNS_HOOK_SCRIPT__"
     WEBHOOK_URL="__WEBHOOK_URL__"
-    ALLOW_EMBED_WEBSITE="__ALLOW_EMBED_WEBSITE__"
     MAX_UPLOAD_SIZE_MB="__MAX_UPLOAD_SIZE_MB__"
     MAX_UPLOAD_SIZE_BYTES="__MAX_UPLOAD_SIZE_BYTES__"
 
     # Add missing variables
     READY_TIMEOUT=300
     SLEEP_INTERVAL=10
-                                      
-    # Generate JWT secret without openssl
-    if [ -z "$BYTESTASH_JWT_SECRET" ]; then
-        BYTESTASH_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p)
-    fi
-    
-    echo "[0/15] JWT secret generated"
-    notify_webhook "provisioning" "jwt_generated" "JWT secret generated"
-    sleep 5
+
+    echo "[1/15] Starting Bytestash provisioning..."
+    notify_webhook "provisioning" "starting" "Beginning Bytestash setup"  
 
     # --- Step 1: Validate Inputs ---
-    echo "[1/15] Validating inputs..."
+    echo "[2/15] Validating inputs..."
     notify_webhook "provisioning" "validation" "Validating domain and port"
    
     if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
@@ -82,9 +82,20 @@ def generate_setup(
         notify_webhook "failed" "validation" "Invalid port: $PORT"
         exit 1
     fi
+
+                                                                                        
+    # Generate JWT secret without openssl
+    if [ -z "$BYTESTASH_JWT_SECRET" ]; then
+        BYTESTASH_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p)
+    fi
     
-    # --- Step 2: System dependencies ---
-    echo "[2/15] Installing system dependencies..."
+    echo "[2/15] JWT secret generated"
+    notify_webhook "provisioning" "jwt_generated" "JWT secret generated"
+    sleep 5
+
+   
+    # --- Step 3: System dependencies ---
+    echo "[3/15] Installing system dependencies..."
     notify_webhook "provisioning" "system_dependencies" "Installing base packages"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -q
@@ -149,7 +160,7 @@ def generate_setup(
     sleep 5
                                       
     # ========== BYTESTASH DIRECTORY SETUP ==========
-    echo "[3/15] Creating Bytestash directories..."
+    echo "[5/15] Creating Bytestash directories..."
     notify_webhook "provisioning" "directories" "Creating Bytestash directories"
 
     mkdir -p "$BYTESTASH_DIR" || {
@@ -165,7 +176,7 @@ def generate_setup(
     sleep 5
                                       
     # --- Step 4: Docker Compose ---
-    echo "[4/15] Creating Docker Compose configuration..."
+    echo "[6/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose" "Creating docker-compose.yml"
                                       
     cat > "$BYTESTASH_DIR/docker-compose.yml" <<EOF
@@ -187,10 +198,11 @@ version: "3.8"
         ports:
           - "$PORT:8080"
 EOF
+    
     sleep 5
 
     # --- Step 5: Start Docker container ---
-    echo "[5/15] Starting Bytestash container..."
+    echo "[7/15] Starting Bytestash container..."
     notify_webhook "provisioning" "container_start" "Starting Bytestash container"
     cd "$BYTESTASH_DIR"
     docker-compose up -d
@@ -217,7 +229,7 @@ EOF
     notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
 
     rm -f /etc/nginx/sites-enabled/default
-    rm -f /etc/nginx/sites-available/plane
+    rm -f /etc/nginx/sites-available/bytestash
 
     # Download Let's Encrypt recommended configs
     mkdir -p /etc/letsencrypt
@@ -225,7 +237,7 @@ EOF
     curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
 
     # Temporary HTTP server for certbot validation
-    cat > /etc/nginx/sites-available/plane <<'EOF_TEMP'
+    cat > /etc/nginx/sites-available/bytestash <<'EOF_TEMP'
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -238,7 +250,7 @@ server {
 }
 EOF_TEMP
 
-    ln -sf /etc/nginx/sites-available/plane /etc/nginx/sites-enabled/plane
+    ln -sf /etc/nginx/sites-available/bytestash /etc/nginx/sites-enabled/bytestash
     nginx -t && systemctl restart nginx
 
     # Create webroot for certbot
@@ -263,7 +275,7 @@ EOF_TEMP
         notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
 
         # Replace nginx config for HTTPS proxy only if SSL exists
-        cat > /etc/nginx/sites-available/plane <<'EOF_SSL'
+        cat > /etc/nginx/sites-available/bytestash <<'EOF_SSL'
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -295,7 +307,7 @@ server {
 }
 EOF_SSL
 
-        ln -sf /etc/nginx/sites-available/plane /etc/nginx/sites-enabled/plane
+        ln -sf /etc/nginx/sites-available/bytestash /etc/nginx/sites-enabled/bytestash
         nginx -t && systemctl reload nginx
     fi
 
@@ -376,7 +388,7 @@ EOF_SSL
     echo "[15/15] Bytestash provisioning complete!"
     notify_webhook "provisioning" "bytestash_installed" "✅ Bytestash setup completed successfully"
     sleep 5
-    """)
+""")
 
     # ------------------ WEBHOOK FUNCTION HANDLING ------------------
     if tokens["__WEBHOOK_URL__"]:
