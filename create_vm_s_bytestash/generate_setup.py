@@ -182,20 +182,19 @@ def generate_setup(
 version: "3.8"
 services:
   bytestash:
-    image: bytestash/bytestash:latest
+    image: "ghcr.io/jordan-dalby/bytestash:latest"
     container_name: bytestash
     restart: always
     environment:
-      - BYTESTASH_ADMIN_EMAIL=$ADMIN_EMAIL
-      - BYTESTASH_ADMIN_PASSWORD=$ADMIN_PASSWORD
-      - BYTESTASH_JWT_SECRET=$BYTESTASH_JWT_SECRET
-      - BYTESTASH_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
+      - JWT_SECRET=$BYTESTASH_JWT_SECRET
+      - ALLOW_NEW_ACCOUNTS=true
+      - DEBUG=true
+      - DISABLE_ACCOUNTS=false
+      - DISABLE_INTERNAL_ACCOUNTS=false
     volumes:
-      - ./data:/data
-      - ./config:/config
-      - ./ssl:/ssl
+      - ./data:/data/snippets
     ports:
-      - "$PORT:8080"
+      - "$PORT:5000"
 EOF
     
     sleep 5
