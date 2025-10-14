@@ -85,9 +85,7 @@ def generate_html(vm_data, credentials, subscription_id):
                 max-width: 1200px;
                 margin: 0 auto;
                 background-color: white;
-                padding: 20px;
-                border-radius: 8px;
-                box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                padding: 10px;
             }}
             h1 {{
                 color: #0078d4;
@@ -198,18 +196,11 @@ def generate_html(vm_data, credentials, subscription_id):
                 <div class="vm-name">{vm['name']}</div>
                 <div>{vm_data['resource_group']} | {vm['location']}</div>
                 <div class="ip-info">
-                    <strong>Private IP:</strong> <span class="ip-address">{ips['private']}</span>
         """
         
         # Add enhanced IP links for private IP if it's a valid IP
         if is_valid_ip(ips['private']):
             html_content += f"""
-                    <div class="ip-link-container">
-                        <img src="{logoURL}" alt="logo" class="ip-logo">
-                        <a class="ip-link" href="{baseURL}{ips['private']}&form={formURL}" target="_blank">[Connect]</a>
-                        <img src="{dumbdropURL}" alt="files" class="ip-logo">
-                        <a class="ip-link" href="https://{ips['private']}:{dumbdropPort}" target="_blank">[Files]</a>
-                    </div>
             """
         
         html_content += f"""
@@ -224,14 +215,12 @@ def generate_html(vm_data, credentials, subscription_id):
                         <a class="ip-link" href="{baseURL}{ips['public']}&form={formURL}" target="_blank">[Connect]</a>
                         <img src="{dumbdropURL}" alt="files" class="ip-logo">
                         <a class="ip-link" href="https://{ips['public']}:{dumbdropPort}" target="_blank">[Files]</a>
+                        <a class="vm-link" href="{baseURL}{connect_ip}&form={formURL}" target="_blank">Connect to VM (Auto)</a>
                     </div>
             """
         
         html_content += f"""
                 </div>
-                <a class="vm-link" href="{baseURL}{connect_ip}&form={formURL}" target="_blank">
-                    Connect to VM (Auto)
-                </a>
                 <div class="vm-instance">{vm['vm_size']}</div>
             </div>
         """
