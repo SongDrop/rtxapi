@@ -50,7 +50,7 @@ def get_ip_from_vm_name(credentials, subscription_id, vm_name, resource_group):
         return {"private": "N/A", "public": "N/A"}
 
 def generate_html(vm_data, credentials, subscription_id):
-    """Generate HTML from VM data"""
+    """Generate HTML from VM data with enhanced IP links"""
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -134,6 +134,29 @@ def generate_html(vm_data, credentials, subscription_id):
             .refresh-btn:hover {{
                 background-color: #106ebe;
             }}
+            .ip-link-container {{
+                margin-top: 8px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }}
+            .ip-logo {{
+                height: 16px;
+                vertical-align: middle;
+            }}
+            .ip-link {{
+                color: #0078d4;
+                text-decoration: none;
+                font-size: 0.9em;
+                margin-left: 6px;
+            }}
+            .ip-link:hover {{
+                text-decoration: underline;
+            }}
+            .ip-address {{
+                font-weight: bold;
+                color: #242424;
+            }}
         </style>
     </head>
     <body>
@@ -147,12 +170,19 @@ def generate_html(vm_data, credentials, subscription_id):
             </div>
     """
     
+    # Constants for the links (same as in your Tampermonkey script)
+    logoURL = "https://i.postimg.cc/L8kDTTsb/96252163.png"
+    baseURL = "https://cdn.sdappnet.cloud/rtx/rtxvm.html?url="
+    formURL = 'https://forms.gle/QgFZQhaehZLs9sySA'
+    dumbdropURL = "https://i.postimg.cc/RF5FDjQx/icon.png"
+    dumbdropPort = "3475"
+    
     # Add each VM to the HTML
     for vm in vm_data['vms']:
         # Get IP addresses for this VM
         ips = get_ip_from_vm_name(credentials, subscription_id, vm['name'], vm_data['resource_group'])
         
-        # Determine which IP to use for connection
+        # Determine which IP to use for connection (prefer public, fallback to private)
         connect_ip = ips['public'] if ips['public'] != "N/A" else ips['private']
         
         html_content += f"""
@@ -160,11 +190,39 @@ def generate_html(vm_data, credentials, subscription_id):
                 <div class="vm-name">{vm['name']}</div>
                 <div>{vm_data['resource_group']} | {vm['location']}</div>
                 <div class="ip-info">
-                    <strong>Private IP:</strong> {ips['private']}<br>
-                    <strong>Public IP:</strong> {ips['public']}
+                    <strong>Private IP:</strong> <span class="ip-address">{ips['private']}</span>
+        """
+        
+        # Add enhanced IP links for private IP if it's a valid IP
+        if ips['private'] != "N/A" and is_valid_ip(ips['private']):
+            html_content += f"""
+                    <div class="ip-link-container">
+                        <img src="{logoURL}" alt="logo" class="ip-logo">
+                        <a class="ip-link" href="{baseURL}{ips['private']}&form={formURL}" target="_blank">[Connect]</a>
+                        <img src="{dumbdropURL}" alt="files" class="ip-logo">
+                        <a class="ip-link" href="https://{ips['private']}:{dumbdropPort}" target="_blank">[Files]</a>
+                    </div>
+            """
+        
+        html_content += f"""
+                    <br><strong>Public IP:</strong> <span class="ip-address">{ips['public']}</span>
+        """
+        
+        # Add enhanced IP links for public IP if it's a valid IP
+        if ips['public'] != "N/A" and is_valid_ip(ips['public']):
+            html_content += f"""
+                    <div class="ip-link-container">
+                        <img src="{logoURL}" alt="logo" class="ip-logo">
+                        <a class="ip-link" href="{baseURL}{ips['public']}&form={formURL}" target="_blank">[Connect]</a>
+                        <img src="{dumbdropURL}" alt="files" class="ip-logo">
+                        <a class="ip-link" href="https://{ips['public']}:{dumbdropPort}" target="_blank">[Files]</a>
+                    </div>
+            """
+        
+        html_content += f"""
                 </div>
-                <a class="vm-link" href="https://cdn.sdappnet.cloud/rtx/rtxvm.html?url={connect_ip}&form=https://forms.gle/QgFZQhaehZLs9sySA" target="_blank">
-                    Connect to VM
+                <a class="vm-link" href="{baseURL}{connect_ip}&form={formURL}" target="_blank">
+                    Connect to VM (Auto)
                 </a>
                 <div class="vm-instance">{vm['vm_size']}</div>
             </div>
@@ -177,6 +235,12 @@ def generate_html(vm_data, credentials, subscription_id):
     """
     
     return html_content
+
+def is_valid_ip(ip):
+    """Check if the IP address is valid (simple IPv4 check)"""
+    import re
+    ipv4_regex = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+    return re.match(ipv4_regex, ip) is not None
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Processing request to list Azure resources/VMs.')
