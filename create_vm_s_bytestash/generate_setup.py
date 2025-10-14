@@ -204,9 +204,10 @@ EOF
     echo "[7/15] Starting Bytestash container..."
     notify_webhook "provisioning" "container_start" "Starting Bytestash container"
     cd "$BYTESTASH_DIR"
-    docker-compose up -d
+    docker compose up -d
                                       
     echo "✅ Docker Compose configured"
+    notify_webhook "provisioning" "docker_configured" "✅ Docker Compose configured"
     sleep 5
 
     # ========== FIREWALL ==========
