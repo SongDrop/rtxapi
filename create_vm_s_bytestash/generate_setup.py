@@ -106,11 +106,12 @@ def generate_setup(
     echo "[3/15] Installing system dependencies..."
     notify_webhook "provisioning" "system_dependencies" "Installing base packages"
     export DEBIAN_FRONTEND=noninteractive
-    
-    # Update and install base packages first
+
     apt-get update -q
     apt-get upgrade -y -q
-    apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq make ufw xxd docker-compose-plugin docker-compose
+    apt-get install -y -q \
+        curl git nginx certbot python3-pip python3-venv jq make ufw xxd \
+        software-properties-common docker-compose-plugin
 
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."

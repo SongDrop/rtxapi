@@ -188,10 +188,11 @@ def generate_html(vm_data, credentials, subscription_id):
     for vm in vm_data['vms']:
         # Get IP addresses for this VM
         ips = get_ip_from_vm_name(credentials, subscription_id, vm['name'], vm_data['resource_group'])
-        
+
         # Determine which IP to use for connection (prefer public, fallback to private)
         connect_ip = ips['public'] if ips['public'] != "N/A" else ips['private']
-        
+
+        # Start the VM HTML block
         html_content += f"""
             <div class="vm-item">
                 <div class="vm-name">{vm['name']}</div>
@@ -199,16 +200,18 @@ def generate_html(vm_data, credentials, subscription_id):
                 <div class="vm-instance">{vm['vm_size']}</div>
                 <div class="ip-info">
         """
-        
+
         # Add enhanced IP links for private IP if it's a valid IP
-        if is_valid_ip(ips['private']):
-            html_content += f"""
-            """
-        
+        # if is_valid_ip(ips['private']):
+        #     html_content += f"""
+        #             <strong>Private IP:</strong> <span class="ip-address">{ips['private']}</span><br>
+        #     """
+
+        # Always show the public IP
         html_content += f"""
-                    <br><strong>Public IP:</strong> <span class="ip-address">{ips['public']}</span>
+                    <strong>Public IP:</strong> <span class="ip-address">{ips['public']}</span>
         """
-        
+
         # Add enhanced IP links for public IP if it's a valid IP
         if is_valid_ip(ips['public']):
             html_content += f"""
@@ -221,15 +224,19 @@ def generate_html(vm_data, credentials, subscription_id):
                         <a class="ip-link" href="https://cdn.sdappnet.cloud/rtx/rdpgen.html?ip={ips['public']}&user=source&vm_name={vm['name']}" target="_blank">RDP Windows</a>
                     </div>
             """
-        
-        html_content += f"""
+
+        # Close the VM block
+        html_content += """
+                </div>
+            </div>
         """
-    
+
+    # Close the HTML document
     html_content += """
-        </div>
-    </body>
+        </body>
     </html>
     """
+
     
     return html_content
 
