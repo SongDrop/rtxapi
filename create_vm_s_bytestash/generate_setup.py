@@ -84,7 +84,7 @@ def generate_setup(
     fi
 
     # Generate JWT secret without openssl
-    if [ -z "$BYTESTASH_JWT_SECRET" ]; then
+    if [ -z "${BYTESTASH_JWT_SECRET:-}" ]; then
         BYTESTASH_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p)
     fi
     
