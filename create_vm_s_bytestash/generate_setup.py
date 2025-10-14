@@ -173,36 +173,42 @@ def generate_setup(
     
     sleep 5
                                       
-    # --- Step 4: Docker Compose ---
+   # --- Step 4: Docker Compose ---
     echo "[6/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose" "Creating docker-compose.yml"
-                                        
-    cat > "$BYTESTASH_DIR/docker-compose.yml" <<EOF
+
+    cat > "$BYTESTASH_DIR/docker-compose.yml" <<'EOF'
 version: "3.8"
+
 services:
   bytestash:
     image: "ghcr.io/jordan-dalby/bytestash:latest"
     container_name: bytestash
     restart: always
-    environment:
-      - JWT_SECRET=$BYTESTASH_JWT_SECRET
-      - TOKEN_EXPIRY=24h
-      - ALLOW_NEW_ACCOUNTS=true
-      - DEBUG=true
-      - DISABLE_ACCOUNTS=false
-      - DISABLE_INTERNAL_ACCOUNTS=false
-      - OIDC_ENABLED=false
-      - OIDC_DISPLAY_NAME=""
-      - OIDC_ISSUER_URL=""
-      - OIDC_CLIENT_ID=""
-      - OIDC_CLIENT_SECRET=""
-      - OIDC_SCOPES=""
     volumes:
       - ./data:/data/snippets
     ports:
-      - "$PORT:5000"
+      - "${PORT}:5000"
+    environment:
+      # See https://github.com/jordan-dalby/ByteStash/wiki/FAQ#environment-variables
+      BASE_PATH: ""
+      JWT_SECRET: "${BYTESTASH_JWT_SECRET}"
+      TOKEN_EXPIRY: "24h"
+      ALLOW_NEW_ACCOUNTS: "true"
+      DEBUG: "true"
+      DISABLE_ACCOUNTS: "false"
+      DISABLE_INTERNAL_ACCOUNTS: "false"
+      # Optional host restriction (uncomment and edit as needed)
+      # ALLOWED_HOSTS: "localhost,${DOMAIN}"
+      # See https://github.com/jordan-dalby/ByteStash/wiki/Single-Sign%E2%80%90on-Setup for SSO config
+      OIDC_ENABLED: "false"
+      OIDC_DISPLAY_NAME: ""
+      OIDC_ISSUER_URL: ""
+      OIDC_CLIENT_ID: ""
+      OIDC_CLIENT_SECRET: ""
+      OIDC_SCOPES: ""
 EOF
-        
+
     sleep 5
 
     # --- Step 5: Start Docker container ---
