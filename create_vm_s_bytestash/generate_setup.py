@@ -177,7 +177,7 @@ def generate_setup(
     # --- Step 4: Docker Compose ---
     echo "[6/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose" "Creating docker-compose.yml"
-                                      
+                                        
     cat > "$BYTESTASH_DIR/docker-compose.yml" <<EOF
 version: "3.8"
 services:
@@ -187,23 +187,42 @@ services:
     restart: always
     environment:
       - JWT_SECRET=$BYTESTASH_JWT_SECRET
+      - TOKEN_EXPIRY=24h
       - ALLOW_NEW_ACCOUNTS=true
       - DEBUG=true
       - DISABLE_ACCOUNTS=false
       - DISABLE_INTERNAL_ACCOUNTS=false
+      - OIDC_ENABLED=false
+      - OIDC_DISPLAY_NAME=""
+      - OIDC_ISSUER_URL=""
+      - OIDC_CLIENT_ID=""
+      - OIDC_CLIENT_SECRET=""
+      - OIDC_SCOPES=""
     volumes:
       - ./data:/data/snippets
     ports:
       - "$PORT:5000"
 EOF
-    
+        
     sleep 5
 
     # --- Step 5: Start Docker container ---
     echo "[7/15] Starting Bytestash container..."
     notify_webhook "provisioning" "container_start" "Starting Bytestash container"
     cd "$BYTESTASH_DIR"
-    docker compose up -d
+
+    # Try both docker compose commands with fallback
+    if docker compose version &> /dev/null; then
+        echo "Using 'docker compose'"
+        docker compose up -d
+    elif command -v docker-compose &> /dev/null; then
+        echo "Using 'docker-compose'"
+        docker-compose up -d
+    else
+        echo "ERROR: Neither docker compose nor docker-compose available"
+        notify_webhook "failed" "container_start" "Docker compose not available"
+        exit 1
+    fi
                                       
     echo "✅ Docker Compose configured"
     notify_webhook "provisioning" "docker_configured" "✅ Docker Compose configured"
