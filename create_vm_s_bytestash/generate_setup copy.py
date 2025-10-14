@@ -83,6 +83,7 @@ def generate_setup(
         exit 1
     fi
 
+                                                                                        
     # Generate JWT secret without openssl
     if [ -z "$BYTESTASH_JWT_SECRET" ]; then
         BYTESTASH_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p)
@@ -115,7 +116,7 @@ def generate_setup(
     # Remove old versions (ignore errors)
     apt-get remove -y docker docker-engine docker.io containerd runc >/dev/null 2>&1 || true
 
-    # Setup Docker's official GPG key
+    # Setup Docker’s official GPG key
     mkdir -p /etc/apt/keyrings
     if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
         echo "❌ Failed to download Docker GPG key"
@@ -180,22 +181,22 @@ def generate_setup(
                                       
     cat > "$BYTESTASH_DIR/docker-compose.yml" <<EOF
 version: "3.8"
-services:
-  bytestash:
-    image: bytestash/bytestash:latest
-    container_name: bytestash
-    restart: always
-    environment:
-      - BYTESTASH_ADMIN_EMAIL=$ADMIN_EMAIL
-      - BYTESTASH_ADMIN_PASSWORD=$ADMIN_PASSWORD
-      - BYTESTASH_JWT_SECRET=$BYTESTASH_JWT_SECRET
-      - BYTESTASH_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
-    volumes:
-      - ./data:/data
-      - ./config:/config
-      - ./ssl:/ssl
-    ports:
-      - "$PORT:8080"
+    services:
+      bytestash:
+        image: bytestash/bytestash:latest
+        container_name: bytestash
+        restart: always
+        environment:
+          - BYTESTASH_ADMIN_EMAIL=$ADMIN_EMAIL
+          - BYTESTASH_ADMIN_PASSWORD=$ADMIN_PASSWORD
+          - BYTESTASH_JWT_SECRET=$BYTESTASH_JWT_SECRET
+          - BYTESTASH_MAX_FILE_SIZE=$MAX_UPLOAD_SIZE_BYTES
+        volumes:
+          - ./data:/data
+          - ./config:/config
+          - ./ssl:/ssl
+        ports:
+          - "$PORT:8080"
 EOF
     
     sleep 5
@@ -222,30 +223,9 @@ EOF
     ufw allow "$PORT"/tcp
     ufw --force enable
 
-    # --- Step 10: Wait for readiness (HTTP probe) ---
-    echo "[10/15] Waiting for Bytestash readiness..."
-    notify_webhook "provisioning" "http_probe" "Waiting for HTTP readiness"
-    
-    elapsed=0
-    READY=false
-    while [ $elapsed -lt $READY_TIMEOUT ]; do
-        if curl -fsS "http://127.0.0.1:$PORT" >/dev/null 2>&1; then
-            READY=true
-            break
-        fi
-        sleep $SLEEP_INTERVAL
-        elapsed=$((elapsed + SLEEP_INTERVAL))
-    done
-    
-    if [ "$READY" = false ]; then
-        echo "ERROR: Bytestash not responding on HTTP"
-        notify_webhook "failed" "http_probe" "Bytestash not responding on HTTP"
-        exit 1
-    fi
-    sleep 5
-
+   
     # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
-    echo "[11/15] Configuring nginx reverse proxy with SSL..."
+    echo "[18/20] Configuring nginx reverse proxy with SSL..."
     notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
 
     rm -f /etc/nginx/sites-enabled/default
@@ -257,7 +237,7 @@ EOF
     curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
 
     # Temporary HTTP server for certbot validation
-    cat > /etc/nginx/sites-available/bytestash <<EOF_TEMP
+    cat > /etc/nginx/sites-available/bytestash <<'EOF_TEMP'
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -277,6 +257,8 @@ EOF_TEMP
     mkdir -p /var/www/html
     chown www-data:www-data /var/www/html
 
+    #use --staging if u reach daily limit
+    #certbot --nginx -d "__DOMAIN__" --staging --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
     # Attempt to obtain SSL certificate
     if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
         echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
@@ -293,11 +275,11 @@ EOF_TEMP
         notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
 
         # Replace nginx config for HTTPS proxy only if SSL exists
-        cat > /etc/nginx/sites-available/bytestash <<EOF_SSL
+        cat > /etc/nginx/sites-available/bytestash <<'EOF_SSL'
 server {
     listen 80;
     server_name __DOMAIN__;
-    return 301 https://\$host\$request_uri;
+    return 301 https://$host$request_uri;
 }
 server {
     listen 443 ssl http2;
@@ -308,15 +290,15 @@ server {
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    client_max_body_size __MAX_UPLOAD_SIZE_MB__;
+    client_max_body_size 100M;
 
     location / {
-        proxy_pass http://127.0.0.1:__PORT__;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
+        proxy_pass http://127.0.0.1:80;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400;
         proxy_buffering off;
@@ -329,14 +311,14 @@ EOF_SSL
         nginx -t && systemctl reload nginx
     fi
 
-    echo "[12/15] Setup Cron for renewal..."
-    notify_webhook "provisioning" "cron_setup" "Setup Cron for renewal..."
+    echo "[14/15] Setup Cron for renewal..."
+    notify_webhook "provisioning" "provisioning" "Setup Cron for renewal..."
          
     # Setup cron for renewal (runs daily and reloads nginx on change)
-    (crontab -l 2>/dev/null | grep -v -F "certbot renew" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
+    (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
 
     # ========== FINAL CHECKS ==========
-    echo "[13/15] Final verification..."
+    echo "[15/15] Final verification..."
     notify_webhook "provisioning" "verification" "Performing verification checks"
 
     if ! nginx -t; then
@@ -366,6 +348,34 @@ EOF_SSL
         exit 1
     fi
 
+    echo "✅ Bytestash setup complete!"
+    notify_webhook "provisioning" "provisioning" "✅ Bytestash deployment succeeded"
+
+    #wait 60 seconds until everything is fully ready 
+    sleep 60
+
+    # --- Step 10: Wait for readiness (HTTP probe) ---
+    echo "[10/15] Waiting for Bytestash readiness..."
+    notify_webhook "provisioning" "http_probe" "Waiting for HTTP readiness"
+    
+    elapsed=0
+    READY=false
+    while [ $elapsed -lt $READY_TIMEOUT ]; do
+        if curl -fsS "http://127.0.0.1:8080" >/dev/null 2>&1; then
+            READY=true
+            break
+        fi
+    sleep $SLEEP_INTERVAL
+    elapsed=$((elapsed + SLEEP_INTERVAL))
+    done
+    
+    if [ "$READY" = false ]; then
+        echo "ERROR: Bytestash not responding on HTTP"
+        notify_webhook "failed" "http_probe" "Bytestash not responding on HTTP"
+        exit 1
+    fi
+    sleep 5
+ 
     echo "[14/15] Final system checks..."
     # Verify Docker container is running
     if ! docker ps | grep -q bytestash; then
@@ -377,8 +387,7 @@ EOF_SSL
     # --- Step 15: Final summary ---
     echo "[15/15] Bytestash provisioning complete!"
     notify_webhook "provisioning" "bytestash_installed" "✅ Bytestash setup completed successfully"
-    
-
+    sleep 5
 """)
 
     # ------------------ WEBHOOK FUNCTION HANDLING ------------------
@@ -400,8 +409,8 @@ EOF_SSL
                     "message": "$message"
                 }
             }
-JSON_EOF
-                )
+            JSON_EOF
+        )
                 curl -s -X POST "__WEBHOOK_URL__" \
                     -H "Content-Type: application/json" \
                     -d "$JSON_PAYLOAD" \
@@ -431,5 +440,15 @@ JSON_EOF
     # Replace SSL configuration URLs
     final = final.replace("__LET_OPTIONS_URL__", tokens["__LET_OPTIONS_URL__"])
     final = final.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
+
+    # Replace CERTBOT_CRON token
+    certbot_cron = "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'"
+    final = final.replace("__CERTBOT_CRON__", certbot_cron)
+
+    # Replace remaining tokens for password, admin email, domain, port
+    final = final.replace("__ADMIN_PASSWORD__", tokens["__ADMIN_PASSWORD__"])
+    final = final.replace("__ADMIN_EMAIL__", tokens["__ADMIN_EMAIL__"])
+    final = final.replace("__DOMAIN__", tokens["__DOMAIN__"])
+    final = final.replace("__PORT__", tokens["__PORT__"])
 
     return final
