@@ -107,9 +107,9 @@ def generate_setup(
     notify_webhook "provisioning" "system_dependencies" "Installing base packages"
     export DEBIAN_FRONTEND=noninteractive
 
-    apt-get update -q
-    apt-get upgrade -y -q
-    apt-get install -y -q \
+    apt-get update
+    apt-get upgrade -y
+    apt-get install -y \
         curl git nginx certbot python3-pip python3-venv jq make ufw xxd \
         software-properties-common docker-compose-plugin
 
