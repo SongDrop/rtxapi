@@ -105,13 +105,21 @@ def generate_setup(
     # --- Step 3: System dependencies ---
     echo "[3/15] Installing system dependencies..."
     notify_webhook "provisioning" "system_dependencies" "Installing base packages"
+
     export DEBIAN_FRONTEND=noninteractive
 
-    apt-get update
-    apt-get upgrade -y
-    apt-get install -y \
+    notify_webhook "provisioning" "apt_update" "Running apt-get update"
+    apt-get update -q || { notify_webhook "failed" "apt_update" "apt-get update failed"; exit 1; }
+
+    notify_webhook "provisioning" "apt_upgrade" "Running apt-get upgrade"
+    apt-get upgrade -y -q || { notify_webhook "failed" "apt_upgrade" "apt-get upgrade failed"; exit 1; }
+
+    notify_webhook "provisioning" "apt_install" "Installing required packages"
+    apt-get install -y -q \
         curl git nginx certbot python3-pip python3-venv jq make ufw xxd \
-        software-properties-common docker-compose-plugin
+        software-properties-common docker-compose-plugin \
+        || { notify_webhook "failed" "apt_install" "apt-get install failed"; exit 1; }
+
 
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
