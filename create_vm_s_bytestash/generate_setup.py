@@ -114,12 +114,24 @@ def generate_setup(
     notify_webhook "provisioning" "apt_upgrade" "Running apt-get upgrade"
     apt-get upgrade -y -q || { notify_webhook "failed" "apt_upgrade" "apt-get upgrade failed"; exit 1; }
 
+    # Ensure system is ready for next apt operation
+    sleep 3
+    fuser -vki /var/lib/dpkg/lock-frontend || true
+    dpkg --configure -a
+
     notify_webhook "provisioning" "apt_install" "Installing required packages"
     apt-get install -y -q \
         curl git nginx certbot python3-pip python3-venv jq make ufw xxd \
-        software-properties-common docker-compose-plugin \
-        || { notify_webhook "failed" "apt_install" "apt-get install failed"; exit 1; }
+        software-properties-common \
+        || { notify_webhook "failed" "apt_install" "Base package install failed"; exit 1; }
 
+    # Docker Compose plugin (handle separately for compatibility)
+    if ! apt-get install -y -q docker-compose-plugin; then
+        echo "Falling back: installing docker-compose via pip"
+        pip3 install docker-compose || {
+            notify_webhook "failed" "apt_install" "Docker Compose install failed"; exit 1;
+        }
+    fi
 
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
