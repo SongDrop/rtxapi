@@ -125,14 +125,6 @@ def generate_setup(
         software-properties-common \
         || { notify_webhook "failed" "apt_install" "Base package install failed"; exit 1; }
 
-    # Docker Compose plugin (handle separately for compatibility)
-    if ! apt-get install -y -q docker-compose-plugin; then
-        echo "Falling back: installing docker-compose via pip"
-        pip3 install docker-compose || {
-            notify_webhook "failed" "apt_install" "Docker Compose install failed"; exit 1;
-        }
-    fi
-
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
     notify_webhook "provisioning" "docker_install" "Installing Docker engine"
@@ -172,7 +164,7 @@ def generate_setup(
     # Install Docker with retries
     for i in {1..3}; do
         echo "Docker install attempt $i/3..."
-        if apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+        if apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin; then
             break
         fi
         echo "⚠️ Docker install attempt $i failed; retrying in 5 seconds..."
@@ -184,6 +176,32 @@ def generate_setup(
         fi
     done
 
+    # ========== DOCKER COMPOSE INSTALLATION ==========
+    echo "[4.5/15] Installing Docker Compose..."
+    notify_webhook "provisioning" "docker_compose_install" "Installing Docker Compose"
+    
+    # Try Docker Compose plugin first (now that Docker repo is available)
+    if apt-get install -y -q docker-compose-plugin; then
+        echo "✅ Docker Compose plugin installed via apt"
+    else
+        echo "⚠️ Docker Compose plugin not available, installing via pip"
+        # Ensure pip is properly installed and updated
+        apt-get install -y -q python3-pip python3-venv || {
+            echo "❌ Failed to install python3-pip"
+            notify_webhook "failed" "docker_compose" "Failed to install python3-pip for Docker Compose"
+            exit 1
+        }
+        # Update pip and install docker-compose
+        pip3 install --upgrade pip || true
+        if pip3 install docker-compose; then
+            echo "✅ Docker Compose installed via pip"
+        else
+            echo "❌ Docker Compose installation failed via both apt and pip"
+            notify_webhook "failed" "docker_compose" "Docker Compose install failed via both apt and pip"
+            exit 1
+        fi
+    fi
+
     # Enable and start Docker
     systemctl enable docker
     if ! systemctl start docker; then
@@ -192,9 +210,6 @@ def generate_setup(
         notify_webhook "failed" "docker_service" "Failed to start Docker service"
         exit 1
     fi
-
-    # Wait for Docker to be ready
-    sleep 3
     
     # Verify Docker works
     if ! docker info >/dev/null 2>&1; then
