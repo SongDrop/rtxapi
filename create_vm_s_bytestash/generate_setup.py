@@ -282,12 +282,16 @@ EOF
     notify_webhook "provisioning" "container_start" "Starting Bytestash container"
     cd "$BYTESTASH_DIR"
 
+    # Export the JWT secret for docker-compose
+    export BYTESTASH_JWT_SECRET
+
     # Try both docker compose commands with fallback
     if docker compose version &> /dev/null; then
         echo "Using 'docker compose'"
         docker compose up -d || {
             echo "ERROR: docker compose failed"
             docker compose logs || true
+            notify_webhook "failed" "container_start" "Docker compose up failed"
             exit 1
         }
     elif command -v docker-compose &> /dev/null; then
@@ -295,6 +299,7 @@ EOF
         docker-compose up -d || {
             echo "ERROR: docker-compose failed"
             docker-compose logs || true
+            notify_webhook "failed" "container_start" "Docker-compose up failed"
             exit 1
         }
     else
@@ -302,7 +307,19 @@ EOF
         notify_webhook "failed" "container_start" "Docker compose not available"
         exit 1
     fi
-                     
+
+    # Wait a moment for container to start
+    echo "Waiting for container to initialize..."
+    sleep 10
+
+    # Check container status
+    echo "Container status:"
+    docker ps -a | grep bytestash || echo "Container not found"
+
+    # Check container logs for errors
+    echo "Checking container logs..."
+    docker logs bytestash || echo "Could not retrieve container logs"
+
     echo "✅ Docker Compose configured"
     notify_webhook "provisioning" "docker_configured" "✅ Docker Compose configured"
     sleep 5
@@ -313,33 +330,68 @@ EOF
     ufw allow 22/tcp
     ufw allow 80/tcp
     ufw allow 443/tcp
-    ufw allow 8080/tcp
-    ufw allow 5432/tcp
-    ufw allow 6379/tcp  
-    ufw allow 9090/tcp                             
     ufw allow "$PORT"/tcp
     ufw --force enable
 
-    # --- Step 10: Wait for readiness (HTTP probe) ---
-    echo "[10/15] Waiting for Bytestash readiness..."
+    # --- Step 9: Wait for readiness (HTTP probe) ---
+    echo "[9/15] Waiting for Bytestash readiness..."
     notify_webhook "provisioning" "http_probe" "Waiting for HTTP readiness"
     
+    # Check if container is running first
+    if ! docker ps | grep -q bytestash; then
+        echo "❌ Bytestash container is not running"
+        docker logs bytestash || true
+        notify_webhook "failed" "http_probe" "Bytestash container not running"
+        exit 1
+    fi
+
+    # Check what port the container is actually using
+    echo "Checking container port mapping:"
+    docker port bytestash || echo "Could not check container ports"
+    
+    # Also check if anything is listening on the port
+    echo "Checking if anything is listening on port $PORT:"
+    netstat -tulpn | grep ":$PORT" || echo "Nothing listening on port $PORT"
+
     elapsed=0
     READY=false
     while [ $elapsed -lt $READY_TIMEOUT ]; do
-        if curl -fsS "http://127.0.0.1:$PORT" >/dev/null 2>&1; then
+        # Try multiple endpoints - Bytestash might be on a different path
+        if curl -fsS "http://127.0.0.1:$PORT" >/dev/null 2>&1 || \
+           curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 || \
+           curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
             READY=true
             break
         fi
+        
+        # Show progress every 30 seconds
+        if [ $((elapsed % 30)) -eq 0 ]; then
+            echo "Still waiting for Bytestash to be ready... (${elapsed}s elapsed)"
+            # Show container status
+            if docker ps | grep -q bytestash; then
+                echo "Container is running, checking logs for recent activity..."
+                docker logs bytestash --tail 10 || true
+            fi
+        fi
+        
         sleep $SLEEP_INTERVAL
         elapsed=$((elapsed + SLEEP_INTERVAL))
     done
     
     if [ "$READY" = false ]; then
-        echo "ERROR: Bytestash not responding on HTTP"
-        notify_webhook "failed" "http_probe" "Bytestash not responding on HTTP"
+        echo "ERROR: Bytestash not responding on HTTP after $READY_TIMEOUT seconds"
+        echo "Container logs:"
+        docker logs bytestash || true
+        echo "Container status:"
+        docker ps -a | grep bytestash || true
+        echo "Network status:"
+        netstat -tulpn | grep ":$PORT" || echo "No process listening on port $PORT"
+        notify_webhook "failed" "http_probe" "Bytestash not responding on HTTP after $READY_TIMEOUT seconds"
         exit 1
     fi
+    
+    echo "✅ Bytestash is ready and responding"
+    notify_webhook "provisioning" "http_ready" "✅ Bytestash HTTP probe successful"
     sleep 5
 
     # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
