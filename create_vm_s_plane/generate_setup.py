@@ -377,23 +377,39 @@ EOF
     sleep 5
 
     # ==========================================================
-    # Prepare persistent volume directories
+    # Prepare persistent volume directories (with safe permissions)
     # ==========================================================
     echo "🔍 Preparing persistent volume directories..."
+    notify_webhook "provisioning" "volume_setup" "Creating persistent volume directories"
+
     VOLUME_DIRS=(/volume1/docker/plane/db \
                 /volume1/docker/plane/redis \
                 /volume1/docker/plane/rabbitmq \
                 /volume1/docker/plane/uploads)
 
     for dir in "${VOLUME_DIRS[@]}"; do
-        mkdir -p "$dir"
-        chown 1026:100 "$dir"
-        chmod 755 "$dir"
+        echo "📁 Creating directory: $dir"
+        mkdir -p "$dir" || {
+            echo "❌ Failed to create $dir"
+            notify_webhook "failed" "volume_creation" "Cannot create directory $dir"
+            exit 1
+        }
+        chown 1000:100 "$dir" || {
+            echo "❌ Failed to set ownership for $dir"
+            notify_webhook "failed" "volume_chown" "Cannot chown $dir"
+            exit 1
+        }
+        chmod 755 "$dir" || {
+            echo "❌ Failed to set permissions for $dir"
+            notify_webhook "failed" "volume_chmod" "Cannot chmod $dir"
+            exit 1
+        }
+        sleep 1
     done
 
     echo "✅ Volume directories ready"
-    notify_webhook "provisioning" "volume_ready" "✅ Volumes ready"
-
+    notify_webhook "provisioning" "volume_ready" "✅ Volume directories created and permissions set"
+    sleep 2
 
     # ==========================================================
     # Docker Compose command
@@ -410,26 +426,34 @@ EOF
     for service in "${INFRA_SERVICES[@]}"; do
         echo "🚀 Starting $service..."
         notify_webhook "provisioning" "service_start" "Starting $service"
-        $DOCKER_COMPOSE_CMD up -d "$service"
+        $DOCKER_COMPOSE_CMD up -d "$service" || {
+            echo "❌ Failed to start $service"
+            notify_webhook "failed" "service_start_failed" "Cannot start $service"
+            exit 1
+        }
+        sleep 3
     done
 
     # ==========================================================
     # Wait for healthchecks
     # ==========================================================
-    MAX_WAIT=60
+    MAX_WAIT=60  # max retries (60 * 5 sec = 5 min)
 
     wait_for_postgres() {
         local count=0
         until $DOCKER_COMPOSE_CMD exec -T db pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; do
             sleep 5
             count=$((count+1))
+            notify_webhook "provisioning" "waiting_postgres" "Waiting for PostgreSQL... (${count} retries)"
             if [ $count -ge $MAX_WAIT ]; then
                 echo "❌ PostgreSQL did not become ready"
                 $DOCKER_COMPOSE_CMD logs db --tail=30
+                notify_webhook "failed" "postgres_ready_timeout" "PostgreSQL did not become ready"
                 exit 1
             fi
         done
         echo "✅ PostgreSQL ready"
+        notify_webhook "provisioning" "postgres_ready" "✅ PostgreSQL is ready"
     }
 
     wait_for_redis() {
@@ -437,13 +461,16 @@ EOF
         until $DOCKER_COMPOSE_CMD exec -T redis redis-cli ping >/dev/null 2>&1; do
             sleep 5
             count=$((count+1))
+            notify_webhook "provisioning" "waiting_redis" "Waiting for Redis... (${count} retries)"
             if [ $count -ge $MAX_WAIT ]; then
                 echo "❌ Redis did not become ready"
                 $DOCKER_COMPOSE_CMD logs redis --tail=30
+                notify_webhook "failed" "redis_ready_timeout" "Redis did not become ready"
                 exit 1
             fi
         done
         echo "✅ Redis ready"
+        notify_webhook "provisioning" "redis_ready" "✅ Redis is ready"
     }
 
     wait_for_rabbitmq() {
@@ -451,13 +478,16 @@ EOF
         until $DOCKER_COMPOSE_CMD exec -T plane-mq rabbitmqctl await_startup >/dev/null 2>&1; do
             sleep 5
             count=$((count+1))
+            notify_webhook "provisioning" "waiting_rabbitmq" "Waiting for RabbitMQ... (${count} retries)"
             if [ $count -ge $MAX_WAIT ]; then
                 echo "❌ RabbitMQ did not become ready"
                 $DOCKER_COMPOSE_CMD logs plane-mq --tail=30
+                notify_webhook "failed" "rabbitmq_ready_timeout" "RabbitMQ did not become ready"
                 exit 1
             fi
         done
         echo "✅ RabbitMQ ready"
+        notify_webhook "provisioning" "rabbitmq_ready" "✅ RabbitMQ is ready"
     }
 
     wait_for_minio() {
@@ -465,19 +495,24 @@ EOF
         until $DOCKER_COMPOSE_CMD exec -T minio mc alias set local http://localhost:9000 $MINIO_USER $MINIO_PASSWORD >/dev/null 2>&1; do
             sleep 5
             count=$((count+1))
+            notify_webhook "provisioning" "waiting_minio" "Waiting for MinIO... (${count} retries)"
             if [ $count -ge $MAX_WAIT ]; then
                 echo "❌ MinIO did not become ready"
                 $DOCKER_COMPOSE_CMD logs minio --tail=30
+                notify_webhook "failed" "minio_ready_timeout" "MinIO did not become ready"
                 exit 1
             fi
         done
         echo "✅ MinIO ready"
+        notify_webhook "provisioning" "minio_ready" "✅ MinIO is ready"
     }
 
+    # Execute healthchecks sequentially
     wait_for_postgres
     wait_for_redis
     wait_for_rabbitmq
     wait_for_minio
+
 
     # ==========================================================
     # Run database migrations
