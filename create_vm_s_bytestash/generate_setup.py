@@ -282,12 +282,25 @@ EOF
     notify_webhook "provisioning" "container_start" "Starting Bytestash container"
     cd "$BYTESTASH_DIR"
 
+    # Create the data directory with proper permissions
+    mkdir -p data
+    chown -R 1000:1000 data
+
     # Export the JWT secret for docker-compose
     export BYTESTASH_JWT_SECRET
 
+    # Debug: Show environment
+    echo "Debug: Current directory: $(pwd)"
+    echo "Debug: JWT secret length: ${#BYTESTASH_JWT_SECRET}"
+    echo "Debug: Docker Compose file:"
+    cat docker-compose.yml
+
     # Try both docker compose commands with fallback
     if docker compose version &> /dev/null; then
-        echo "Using 'docker compose'"
+        echo "Using 'docker compose' (plugin)"
+        # Pull the image first
+        docker compose pull || echo "Warning: Image pull failed, will try to run anyway"
+        # Start the container
         docker compose up -d || {
             echo "ERROR: docker compose failed"
             docker compose logs || true
@@ -295,7 +308,10 @@ EOF
             exit 1
         }
     elif command -v docker-compose &> /dev/null; then
-        echo "Using 'docker-compose'"
+        echo "Using 'docker-compose' (standalone)"
+        # Pull the image first
+        docker-compose pull || echo "Warning: Image pull failed, will try to run anyway"
+        # Start the container
         docker-compose up -d || {
             echo "ERROR: docker-compose failed"
             docker-compose logs || true
@@ -308,17 +324,30 @@ EOF
         exit 1
     fi
 
-    # Wait a moment for container to start
+    # Wait for container to start
     echo "Waiting for container to initialize..."
-    sleep 10
+    sleep 15
 
-    # Check container status
-    echo "Container status:"
-    docker ps -a | grep bytestash || echo "Container not found"
+    # Check container status in detail
+    echo "=== Container Status ==="
+    docker ps -a | grep bytestash || echo "Container not found in docker ps"
+    
+    echo "=== Container Inspect ==="
+    docker inspect bytestash 2>/dev/null || echo "Could not inspect container"
 
     # Check container logs for errors
-    echo "Checking container logs..."
-    docker logs bytestash || echo "Could not retrieve container logs"
+    echo "=== Container Logs ==="
+    docker logs bytestash 2>/dev/null || echo "Could not retrieve container logs"
+
+    echo "=== Docker Compose Status ==="
+    if docker compose version &> /dev/null; then
+        docker compose ps || true
+    else
+        docker-compose ps || true
+    fi
+
+    echo "=== Port Mapping Check ==="
+    docker port bytestash 2>/dev/null || echo "Could not check port mapping"
 
     echo "✅ Docker Compose configured"
     notify_webhook "provisioning" "docker_configured" "✅ Docker Compose configured"
@@ -337,41 +366,59 @@ EOF
     echo "[9/15] Waiting for Bytestash readiness..."
     notify_webhook "provisioning" "http_probe" "Waiting for HTTP readiness"
     
-    # Check if container is running first
-    if ! docker ps | grep -q bytestash; then
-        echo "❌ Bytestash container is not running"
-        docker logs bytestash || true
-        notify_webhook "failed" "http_probe" "Bytestash container not running"
+    # First, check if container is actually running
+    CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' bytestash 2>/dev/null || echo "nonexistent")
+    echo "Container status: $CONTAINER_STATUS"
+    
+    if [ "$CONTAINER_STATUS" != "running" ]; then
+        echo "❌ Bytestash container is not running. Status: $CONTAINER_STATUS"
+        echo "=== Full container logs ==="
+        docker logs bytestash 2>/dev/null || echo "No logs available"
+        echo "=== Recent system events ==="
+        journalctl -u docker --since "5 minutes ago" --no-pager | tail -20 || true
+        notify_webhook "failed" "http_probe" "Bytestash container not running. Status: $CONTAINER_STATUS"
         exit 1
     fi
 
-    # Check what port the container is actually using
-    echo "Checking container port mapping:"
-    docker port bytestash || echo "Could not check container ports"
-    
-    # Also check if anything is listening on the port
-    echo "Checking if anything is listening on port $PORT:"
-    netstat -tulpn | grep ":$PORT" || echo "Nothing listening on port $PORT"
+    # Check what's actually running in the container
+    echo "=== Checking container processes ==="
+    docker top bytestash || echo "Could not check container processes"
 
+    # Try multiple endpoints with detailed debugging
     elapsed=0
     READY=false
     while [ $elapsed -lt $READY_TIMEOUT ]; do
-        # Try multiple endpoints - Bytestash might be on a different path
-        if curl -fsS "http://127.0.0.1:$PORT" >/dev/null 2>&1 || \
-           curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 || \
-           curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
-            READY=true
+        # Check if container is still running
+        if [ "$(docker inspect -f '{{.State.Status}}' bytestash 2>/dev/null)" != "running" ]; then
+            echo "❌ Container stopped during startup"
+            docker logs bytestash 2>/dev/null || true
             break
         fi
+
+        # Try multiple endpoints with verbose output
+        echo "Testing connection to port $PORT..."
         
-        # Show progress every 30 seconds
-        if [ $((elapsed % 30)) -eq 0 ]; then
-            echo "Still waiting for Bytestash to be ready... (${elapsed}s elapsed)"
-            # Show container status
-            if docker ps | grep -q bytestash; then
-                echo "Container is running, checking logs for recent activity..."
-                docker logs bytestash --tail 10 || true
+        # Check if port is bound
+        if netstat -tuln | grep ":$PORT " >/dev/null; then
+            echo "✅ Port $PORT is bound on host"
+        else
+            echo "❌ Port $PORT is NOT bound on host"
+        fi
+
+        # Try different endpoints
+        for endpoint in "/" "/health" "/api/health" "/status"; do
+            if curl -v "http://127.0.0.1:$PORT$endpoint" 2>&1 | grep -q "HTTP.*200"; then
+                echo "✅ Successfully connected to $endpoint"
+                READY=true
+                break 2
             fi
+        done
+
+        # Show progress every 30 seconds with logs
+        if [ $((elapsed % 30)) -eq 0 ]; then
+            echo "Still waiting for Bytestash... (${elapsed}s elapsed)"
+            echo "=== Recent container logs ==="
+            docker logs bytestash --since "1m ago" 2>/dev/null | tail -10 || echo "No recent logs"
         fi
         
         sleep $SLEEP_INTERVAL
@@ -379,14 +426,16 @@ EOF
     done
     
     if [ "$READY" = false ]; then
-        echo "ERROR: Bytestash not responding on HTTP after $READY_TIMEOUT seconds"
-        echo "Container logs:"
-        docker logs bytestash || true
-        echo "Container status:"
+        echo "ERROR: Bytestash not responding after $READY_TIMEOUT seconds"
+        echo "=== Final container status ==="
         docker ps -a | grep bytestash || true
-        echo "Network status:"
+        echo "=== Final container logs ==="
+        docker logs bytestash 2>/dev/null || true
+        echo "=== Network connections ==="
         netstat -tulpn | grep ":$PORT" || echo "No process listening on port $PORT"
-        notify_webhook "failed" "http_probe" "Bytestash not responding on HTTP after $READY_TIMEOUT seconds"
+        echo "=== Docker daemon logs ==="
+        journalctl -u docker --since "10 minutes ago" --no-pager | tail -30 || true
+        notify_webhook "failed" "http_probe" "Bytestash not responding after $READY_TIMEOUT seconds"
         exit 1
     fi
     
