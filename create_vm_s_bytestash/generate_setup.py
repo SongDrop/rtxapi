@@ -121,9 +121,9 @@ def generate_setup(
 
     notify_webhook "provisioning" "apt_install" "Installing required packages"
     apt-get install -y -q \
-        curl git nginx certbot python3-pip python3-venv jq make ufw xxd \
+        curl git nginx certbot python3-certbot-nginx python3-pip python3-venv jq make ufw xxd \
         software-properties-common \
-        || { notify_webhook "failed" "apt_install" "Base package install failed"; exit 1; }
+    || { notify_webhook "failed" "apt_install" "Base package install failed"; exit 1; }
 
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
