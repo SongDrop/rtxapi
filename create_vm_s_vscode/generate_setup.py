@@ -195,7 +195,8 @@ def generate_setup(
     notify_webhook "provisioning" "npm_tools" "Installing npm CLI tools"
     npm install -g yarn --no-progress || true
     npm install -g netlify-cli --no-progress || true
-
+    npm install -g vsce --no-progress || true
+                                      
     # ========== PYENV and Python (root and service user) ==========
     echo "[7/20] Installing pyenv for root and $SERVICE_USER..."
     notify_webhook "provisioning" "pyenv" "Installing pyenv and Python 3.9.7"
