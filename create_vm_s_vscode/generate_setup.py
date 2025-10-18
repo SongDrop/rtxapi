@@ -169,7 +169,7 @@ def generate_setup(
     apt-get install -y -q \
       curl wget gnupg2 lsb-release ca-certificates apt-transport-https \
       nginx certbot python3-certbot-nginx ufw git build-essential sudo cron \
-      python3 python3-pip jq software-properties-common gnupg2
+      python3 python3-pip jq software-properties-common gnupg2 xdg-utils
 
     # Create service user if missing
     if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
@@ -393,66 +393,51 @@ EOF
 
     install_extension() {
         local ext="$1"
-        local max_attempts=2
-        local attempt=1
-        local installed=false
+        local VSIX_FILE="$ext"  # can be publisher.extension or local .vsix file
+        local CS_USER_DATA_DIR="${HOME}/.local/share/code-server"
+        local CS_EXT_DIR="${CS_USER_DATA_DIR}/extensions"
 
-        is_installed() {
-            sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
-                --list-extensions | grep -q "^$ext\$"
-        }
-
-        echo "📦 Installing $ext..."
-        notify_webhook "provisioning" "extension_install" "Installing $ext"
-
-        if is_installed; then
-            echo "✅ $ext already installed, skipping"
-            notify_webhook "provisioning" "extension_skip" "$ext already installed"
-            return 0
+        # Detect running code-server process and extract real paths
+        local CS_PID
+        CS_PID=$(pgrep -af "code-server" | head -n1 | awk '{print $1}')
+        if [ -n "$CS_PID" ] && ps -p "$CS_PID" > /dev/null 2>&1; then
+            local CS_CMD
+            CS_CMD=$(ps -p "$CS_PID" -o args=)
+            if [[ "$CS_CMD" =~ --user-data-dir[=\ ]([^[:space:]]+) ]]; then
+                CS_USER_DATA_DIR="${BASH_REMATCH[1]}"
+            fi
+            if [[ "$CS_CMD" =~ --extensions-dir[=\ ]([^[:space:]]+) ]]; then
+                CS_EXT_DIR="${BASH_REMATCH[1]}"
+            fi
         fi
 
-        # Try Open VSX (retry)
-        while [ $attempt -le $max_attempts ] && [ "$installed" = false ]; do
-            if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
-                --install-extension "$ext" \
-                --extensions-dir="$EXT_DIR" \
-                --user-data-dir="$DATA_DIR" --force 2>/dev/null; then
-                installed=true
-            else
-                echo "⚠️ Attempt $attempt failed for $ext"
-                attempt=$((attempt + 1))
-                sleep 2
-            fi
-        done
+        echo "📁 Installing $ext to user-data-dir: $CS_USER_DATA_DIR, extensions-dir: $CS_EXT_DIR"
 
-        # Marketplace fallback
-        if [ "$installed" = false ]; then
-            local publisher=$(echo "$ext" | cut -d. -f1)
-            local extension_name=$(echo "$ext" | cut -d. -f2)
-            local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/$publisher/vsextensions/$extension_name/latest/vspackage"
-            local tmpfile=$(mktemp /tmp/extension.XXXXXX.vsix)
-            if curl -fsSL -o "$tmpfile" "$url" && [ -s "$tmpfile" ]; then
-                sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" "$CODE_BIN" \
-                    --install-extension "$tmpfile" \
-                    --extensions-dir="$EXT_DIR" \
-                    --user-data-dir="$DATA_DIR" --force && installed=true
-            fi
-            rm -f "$tmpfile"
-        fi
+        # Use the correct environment: if running as service user
+        sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" code-server --install-extension "$VSIX_FILE" \
+            --force \
+            --user-data-dir "$CS_USER_DATA_DIR" \
+            --extensions-dir "$CS_EXT_DIR" || true
 
-        # Verify
-        if is_installed; then
+        # Verify installation
+        if sudo -u "$SERVICE_USER" HOME="/home/$SERVICE_USER" code-server --list-extensions | grep -q "^$ext\$"; then
             echo "✅ Verified $ext installation"
-            notify_webhook "provisioning" "extension_verified" "$ext is installed"
+            notify_webhook "provisioning" "extension_verified" "$ext installed"
         else
-            echo "❌ Failed to install $ext, skipping"
+            echo "❌ Failed to install $ext"
             notify_webhook "warning" "extension_failed" "$ext installation failed"
         fi
     }
 
+    # Loop over all extensions
+    extensions=(
+        __EXTENSIONS__
+    )
+
     for ext in "${extensions[@]}"; do
         install_extension "$ext"
     done
+
 
     # List installed extensions
     echo "📂 Installed extensions:"
