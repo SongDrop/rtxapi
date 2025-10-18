@@ -1,87 +1,28 @@
-```
-BYTESTASH
-```
+# Bytestash Provisioning Script Overview
 
-https://www.youtube.com/watch?v=wiu57sgxMt8
+This document outlines the steps performed by the Bytestash provisioning script.
 
-# ByteStash Self-Hosted Code Snipper Sharing Server on Azure
-
-This is an **automatic installation** on Azure to set up a Mailcow self-hosted email server.
-
----
-
-## Step 1: Create a Microsoft Azure account on https://portal.azure.com
-
-## Step 2: Point your DNS records to Microsoft Azure
-
-## Step 3: Create a new Application in Microsoft Entra ID and fill out the .evn
-
-## Step 4: Run setup script for automatic software installation on the virtual machine
-
----
-
----
-
-> **Important:**  
-> You will need to update your domain's nameservers at your registrar (e.g., Namecheap) to the following Azure DNS nameservers:
->
-> - ns1-01.azure-dns.com
-> - ns2-01.azure-dns.net
-> - ns3-01.azure-dns.org
-> - ns4-01.azure-dns.info
->
-> Make sure your DNS records point to Azure **before** you start the installation.
-
----
-
-## Required `.env` values for Azure:
-
-You need to provide the following values in your `.env` file:
-
-```
-Azure subscription -> portal.azure.com
-
-AZURE_SUBSCRIPTION_ID=''  # https://portal.azure.com/#view/Microsoft_Azure_Billing/SubscriptionsBladeV2
-AZURE_TENANT_ID=''        # https://portal.azure.com/#view/Microsoft_AAD_IAM/ActiveDirectoryMenuBlade/~/Overview
-AZURE_APP_CLIENT_ID=''
-AZURE_APP_CLIENT_SECRET=''
-AZURE_APP_TENANT_ID=''
-```
-
-You also need to create a new Azure Application in Azure Entra ID (Azure Active Directory) to get these credentials.
-
----
-
-## To start:
-
-```bash
-python3 -m venv myenv
-source myenv/bin/activate
-pip install -r requirements.txt
-python3 create_vm.py
-```
-
----
-
-## After that, just input these values when prompted, and your email service will be up and running within 5 minutes:
-
-```
-Enter VM username [azureuser]:
-Enter VM password [azurepassword1234!]:
-Enter main domain [example.com]:
-Enter subdomain (e.g., 'smtp') [smtp]:
-[INFO] Full domain to configure: smtp.example.com
-Enter resource group name [smtpgroup]:
-Enter VM name [stmp]:
-Enter Azure region [uksouth]:
-Enter VM size [Standard_B2s]:
-Enter admin email [admin@example.com]:
-Enter admin password [smtppass123!]:
-Enter disk size in GB [128]:
-```
-
-> You might also need to request Azure quota increase for the specific virtual machine size you plan to use.
-
----
-
-Happy mailing with your new Mailcow setup on Azure! 🚀
+- Set strict bash options (`set -euo pipefail`)
+- Define webhook function for notifications or a no-op if URL not provided
+- Redirect all output to `/var/log/bytestash_setup.log`
+- Set environment variables (domain, admin email/password, port, directories, DNS hook, upload size, etc.)
+- Generate a 64-byte JWT secret for Bytestash
+- Validate domain format and port number; exit on invalid input
+- Install system dependencies (curl, git, nginx, certbot, python3-pip, python3-venv, jq, make, net-tools, ufw, xxd, software-properties-common)
+- Install Docker engine and Docker Compose (with retries and fallback to pip installation)
+- Enable and start Docker, verify daemon is running
+- Create Bytestash directories (`/opt/bytestash` and `data`) with proper ownership and permissions
+- Create Docker Compose configuration for Bytestash server
+- Pull and start Bytestash container using Docker Compose
+- Wait for container readiness with health check and HTTP probe fallback
+- Configure UFW firewall to allow SSH, HTTP, HTTPS, and Bytestash custom port
+- Remove default nginx configuration and create temporary HTTP server for Certbot validation
+- Download Let’s Encrypt recommended SSL configs (`options-ssl-nginx.conf`, `ssl-dhparams.pem`)
+- Attempt SSL certificate issuance with Certbot; fallback to webroot if needed
+- Update nginx configuration for HTTPS reverse proxy to Bytestash backend
+- Test nginx configuration and reload if successful
+- Setup cron job for daily SSL certificate renewal and nginx reload
+- Perform final verification of Bytestash container health and HTTPS access
+- Wait for container readiness and proper port binding
+- Display summary with access URL, admin email, JWT secret, and useful Docker commands
+- Send webhook notifications for all major steps, warnings, and errors

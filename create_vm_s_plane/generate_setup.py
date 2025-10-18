@@ -284,580 +284,219 @@ def generate_setup(
 
     sleep 5
 
+
     # ==========================================================
     # 🔐 Generate Secure Credentials
     # ==========================================================
     echo "🔐 Generating secure credentials..."
     notify_webhook "provisioning" "credentials_generation" "Creating secure passwords and keys"
 
-    # ----------------------------------------------------------
-    # Verify OpenSSL availability
-    # ----------------------------------------------------------
-    echo "🔍 Verifying OpenSSL installation and functionality..."
-    OPENSSL_WORKING=false
-    if command -v openssl &> /dev/null; then
-        echo "✅ OpenSSL found: $(openssl version)"
-        if openssl rand -base64 10 &>/dev/null; then
-            echo "✅ OpenSSL rand command works"
-            OPENSSL_WORKING=true
-        else
-            echo "⚠️ OpenSSL rand test failed — will use fallback"
-            notify_webhook "warning" "openssl_rand_failed" "OpenSSL rand test failed"
-        fi
-    else
-        echo "⚠️ OpenSSL not installed — will use fallback"
-        notify_webhook "warning" "openssl_missing" "OpenSSL not found in PATH"
-    fi
-
-    # ----------------------------------------------------------
-    # Check entropy availability (informational)
-    # ----------------------------------------------------------
-    if [ -r /proc/sys/kernel/random/entropy_avail ]; then
-        ENTROPY=$(cat /proc/sys/kernel/random/entropy_avail)
-        echo "🔍 System entropy: $ENTROPY"
-        if [ "$ENTROPY" -lt 100 ]; then
-            echo "⚠️ Low entropy detected ($ENTROPY) — may slow crypto ops"
-            notify_webhook "warning" "low_entropy" "Low entropy: $ENTROPY"
-        fi
-    fi
-
-    # ----------------------------------------------------------
-    # Secure random generation helper
-    # ----------------------------------------------------------
     generate_secure_random() {
-        local type="$1"   # base64 | hex
-        local length="$2" # bytes
+        local type="$1"
+        local length="$2"
         local result=""
-
-        if [ "$OPENSSL_WORKING" = true ]; then
+        if command -v openssl &>/dev/null; then
             if [ "$type" = "hex" ]; then
-                result=$(openssl rand -hex "$length" 2>/dev/null || true)
+                result=$(openssl rand -hex "$length")
             else
-                result=$(openssl rand -base64 "$length" 2>/dev/null | tr -d '\n' || true)
+                result=$(openssl rand -base64 "$length" | tr -d '\n')
             fi
         fi
-
-        # Fallback: /dev/urandom
-        if [ -z "$result" ] || [ ${#result} -lt $((length/2)) ]; then
-            echo "⚙️ Using /dev/urandom fallback for $type ($length bytes)"
+        # fallback
+        if [ -z "$result" ]; then
             if [ "$type" = "hex" ]; then
-                result=$(head -c "$length" /dev/urandom | xxd -p -c "$length" | tr -d '\n')
+                result=$(head -c "$length" /dev/urandom | xxd -p -c "$length")
             else
                 result=$(head -c "$length" /dev/urandom | base64 | tr -d '\n' | head -c $((length*2)))
             fi
         fi
-
-        # Final fallback
-        if [ -z "$result" ]; then
-            result="$(date +%s%N | sha256sum | head -c $((length*2)))"
-        fi
-
         echo "$result"
     }
 
-    # ----------------------------------------------------------
-    # Generate credentials
-    # ----------------------------------------------------------
+    # ==========================================================
+    # Credentials
+    # ==========================================================
     POSTGRES_USER="plane"
     POSTGRES_DB="plane"
+    POSTGRES_PASSWORD=$(generate_secure_random base64 32)
+
     RABBITMQ_USER="plane"
     RABBITMQ_VHOST="plane"
-
-    POSTGRES_PASSWORD=$(generate_secure_random base64 32)
     RABBITMQ_PASSWORD=$(generate_secure_random base64 32)
+
+    MINIO_USER="plane"
     MINIO_PASSWORD=$(generate_secure_random base64 32)
+
     SECRET_KEY=$(generate_secure_random hex 32)
 
-    # ----------------------------------------------------------
-    # Validate credentials
-    # ----------------------------------------------------------
-    echo "🔍 Validating generated credentials..."
-    VALIDATION_FAILED=false
+    # ==========================================================
+    # Write stack.env
+    # ==========================================================
+    STACK_ENV="./stack.env"
+    cat > "$STACK_ENV" <<EOF
+    # PostgreSQL
+    POSTGRES_USER=$POSTGRES_USER
+    POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+    POSTGRES_DB=$POSTGRES_DB
 
-    validate_length() {
-        local name="$1"
-        local value="$2"
-        local minlen="$3"
-        if [ -z "$value" ] || [ ${#value} -lt "$minlen" ]; then
-            echo "❌ $name too short (${#value} chars)"
-            VALIDATION_FAILED=true
-        fi
-    }
+    # Redis
+    REDIS_HOST=plane-redis
+    REDIS_PORT=6379
 
-    validate_length "PostgreSQL password" "$POSTGRES_PASSWORD" 20
-    validate_length "RabbitMQ password" "$RABBITMQ_PASSWORD" 20
-    validate_length "MinIO password" "$MINIO_PASSWORD" 20
-    validate_length "Secret key" "$SECRET_KEY" 40
+    # RabbitMQ
+    RABBITMQ_USER=$RABBITMQ_USER
+    RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD
+    RABBITMQ_VHOST=$RABBITMQ_VHOST
 
-    if [ "$VALIDATION_FAILED" = true ]; then
-        echo "❌ ERROR: One or more generated credentials failed validation"
-        notify_webhook "failed" "credentials_validation_failed" "Credential validation failed (entropy or OpenSSL issue)"
-        exit 1
-    fi
+    # MinIO
+    AWS_ACCESS_KEY_ID=$MINIO_USER
+    AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
+    AWS_S3_BUCKET_NAME=uploads
+    AWS_S3_ENDPOINT_URL=http://plane-minio:9000
 
-    export POSTGRES_USER POSTGRES_DB POSTGRES_PASSWORD \
-        RABBITMQ_USER RABBITMQ_PASSWORD RABBITMQ_VHOST \
-        MINIO_PASSWORD SECRET_KEY
+    # Misc
+    SECRET_KEY=$SECRET_KEY
+    FILE_SIZE_LIMIT=52428800
+    DOCKERIZED=1
+    USE_MINIO=1
+    EOF
 
-    echo "✅ Credentials generated successfully using $([ "$OPENSSL_WORKING" = true ] && echo "OpenSSL" || echo "fallback")"
-    notify_webhook "provisioning" "credentials_ready" "✅ All credentials generated successfully"
-    sleep 5
+    echo "✅ stack.env created with secure credentials"
+    notify_webhook "provisioning" "credentials_ready" "✅ Credentials generated"
 
     # ==========================================================
-    # 🧱 Update .env Files from cloned repository with our credentials
+    # Prepare persistent volume directories
     # ==========================================================
-    echo "🛠️ Updating .env files with secure credentials and domain..."
+    echo "🔍 Preparing persistent volume directories..."
+    mkdir -p /volume1/docker/plane/db \
+            /volume1/docker/plane/redis \
+            /volume1/docker/plane/rabbitmq \
+            /volume1/docker/plane/uploads
 
-    # -----------------------------
-    # Update root .env (infrastructure)
-    # -----------------------------
-    ROOT_ENV=".env"
-    if [ -f "$ROOT_ENV" ]; then
-        sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$POSTGRES_PASSWORD/" "$ROOT_ENV"
-        sed -i "s/^RABBITMQ_PASSWORD=.*/RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD/" "$ROOT_ENV"
-        sed -i "s/^AWS_SECRET_ACCESS_KEY=.*/AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD/" "$ROOT_ENV"
-        echo "✅ Updated root $ROOT_ENV with secure credentials"
-    else
-        cat > "$ROOT_ENV" <<EOF
-# Database Settings
-POSTGRES_USER="$POSTGRES_USER"
-POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
-POSTGRES_DB="$POSTGRES_DB"
-PGDATA="/var/lib/postgresql/data"
-
-# Redis Settings
-REDIS_HOST="plane-redis"
-REDIS_PORT="6379"
-
-# RabbitMQ Settings
-RABBITMQ_HOST="plane-mq"
-RABBITMQ_PORT="5672"
-RABBITMQ_USER="$RABBITMQ_USER"
-RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD"
-RABBITMQ_VHOST="$RABBITMQ_VHOST"
-LISTEN_HTTP_PORT=80
-LISTEN_HTTPS_PORT=443
-
-# AWS Settings
-AWS_REGION="us-east-1"
-AWS_ACCESS_KEY_ID="plane"
-AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD"
-AWS_S3_BUCKET_NAME="uploads"
-AWS_S3_ENDPOINT_URL="http://plane-minio:9000"
-
-# Misc
-FILE_SIZE_LIMIT=52428800
-DOCKERIZED=1
-USE_MINIO=1
-EOF
-        echo "✅ Created root $ROOT_ENV"
-    fi
-
-    # -----------------------------
-    # Update apps/api/.env (backend)
-    # -----------------------------
-    API_ENV="apps/api/.env"
-    mkdir -p "apps/api"
-    cat > "$API_ENV" <<EOF
-# Backend settings
-DEBUG=0
-CORS_ALLOWED_ORIGINS="http://$DOMAIN,http://$DOMAIN:3001,http://$DOMAIN:3002,http://$DOMAIN:3100"
-
-# Database
-POSTGRES_USER="$POSTGRES_USER"
-POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
-POSTGRES_HOST="plane-db"
-POSTGRES_DB="$POSTGRES_DB"
-POSTGRES_PORT=5432
-DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@plane-db:\$POSTGRES_PORT/\$POSTGRES_DB
-
-# Redis
-REDIS_HOST="plane-redis"
-REDIS_PORT="6379"
-REDIS_URL=redis://plane-redis:6379/
-
-# RabbitMQ
-RABBITMQ_HOST="plane-mq"
-RABBITMQ_PORT="5672"
-RABBITMQ_USER="$RABBITMQ_USER"
-RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD"
-RABBITMQ_VHOST="$RABBITMQ_VHOST"
-
-# AWS
-AWS_REGION="us-east-1"
-AWS_ACCESS_KEY_ID="plane"
-AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD"
-AWS_S3_ENDPOINT_URL="http://plane-minio:9000"
-AWS_S3_BUCKET_NAME="uploads"
-
-# Misc
-FILE_SIZE_LIMIT=52428800
-USE_MINIO=1
-WEB_URL="http://$DOMAIN"
-GUNICORN_WORKERS=3
-SECRET_KEY="$SECRET_KEY"
-MINIO_ENDPOINT_SSL=0
-API_KEY_RATE_LIMIT="60/minute"
-EOF
-    echo "✅ Created/updated $API_ENV"
-
-    # -----------------------------
-    # Update apps/web/.env (frontend)
-    # -----------------------------
-    WEB_ENV="apps/web/.env"
-    mkdir -p "apps/web"
-    cat > "$WEB_ENV" <<EOF
-NEXT_PUBLIC_API_BASE_URL="http://$DOMAIN:8000"
-NEXT_PUBLIC_WEB_BASE_URL="http://$DOMAIN:3000"
-NEXT_PUBLIC_ADMIN_BASE_URL="http://$DOMAIN:3001"
-NEXT_PUBLIC_ADMIN_BASE_PATH="/god-mode"
-NEXT_PUBLIC_SPACE_BASE_URL="http://$DOMAIN:3002"
-NEXT_PUBLIC_SPACE_BASE_PATH="/spaces"
-NEXT_PUBLIC_LIVE_BASE_URL="http://$DOMAIN:3100"
-NEXT_PUBLIC_LIVE_BASE_PATH="/live"
-EOF
-    echo "✅ Created/updated $WEB_ENV"
-
-    # -----------------------------
-    # Update apps/space/.env
-    # -----------------------------
-    SPACE_ENV="apps/space/.env"
-    mkdir -p "apps/space"
-    cat > "$SPACE_ENV" <<EOF
-NEXT_PUBLIC_API_BASE_URL="http://$DOMAIN:8000"
-NEXT_PUBLIC_WEB_BASE_URL="http://$DOMAIN:3000"
-NEXT_PUBLIC_ADMIN_BASE_URL="http://$DOMAIN:3001"
-NEXT_PUBLIC_ADMIN_BASE_PATH="/god-mode"
-NEXT_PUBLIC_SPACE_BASE_URL="http://$DOMAIN:3002"
-NEXT_PUBLIC_SPACE_BASE_PATH="/spaces"
-NEXT_PUBLIC_LIVE_BASE_URL="http://$DOMAIN:3100"
-NEXT_PUBLIC_LIVE_BASE_PATH="/live"
-EOF
-    echo "✅ Created/updated $SPACE_ENV"
-
-    # -----------------------------
-    # Update apps/admin/.env
-    # -----------------------------
-    ADMIN_ENV="apps/admin/.env"
-    mkdir -p "apps/admin"
-    cat > "$ADMIN_ENV" <<EOF
-NEXT_PUBLIC_API_BASE_URL="http://$DOMAIN:8000"
-NEXT_PUBLIC_WEB_BASE_URL="http://$DOMAIN:3000"
-NEXT_PUBLIC_ADMIN_BASE_URL="http://$DOMAIN:3001"
-NEXT_PUBLIC_ADMIN_BASE_PATH="/god-mode"
-NEXT_PUBLIC_SPACE_BASE_URL="http://$DOMAIN:3002"
-NEXT_PUBLIC_SPACE_BASE_PATH="/spaces"
-NEXT_PUBLIC_LIVE_BASE_URL="http://$DOMAIN:3100"
-NEXT_PUBLIC_LIVE_BASE_PATH="/live"
-EOF
-    echo "✅ Created/updated $ADMIN_ENV"
-
-    echo "✅ All .env files updated/created successfully"
-    notify_webhook "provisioning" "env_files_ready" "✅ Environment files ready with secure credentials"
-    sleep 5
-                                      
-    # ========== Use existing docker-compose.yml from cloned repo ==========
-    echo "📁 Using docker-compose.yml from cloned Plane repository..."
-    notify_webhook "provisioning" "compose_setup" "Setting up Docker Compose from cloned repo"
-
-    # Check if docker-compose.yml exists in the cloned repo
-    if [ ! -f "docker-compose.yml" ]; then
-        echo "❌ docker-compose.yml not found in cloned repository"
-        echo "🔍 Looking for docker-compose files:"
-        find . -name "*docker-compose*" -type f | head -10
-        notify_webhook "failed" "compose_missing" "docker-compose.yml not found in cloned repo"
-        exit 1
-    fi
-
-    echo "✅ Using existing docker-compose.yml from cloned repository ($(wc -l < docker-compose.yml) lines)"
-    echo "🔍 First 10 lines of docker-compose.yml:"
-    head -10 docker-compose.yml
-    notify_webhook "provisioning" "compose_ready" "✅ Docker Compose file ready from repository"
-
-    sleep 5
-
-    # ========== Fix Docker Compose File ==========
-    echo "🔧 Adjusting docker-compose.yml for standalone deployment..."
-    notify_webhook "provisioning" "compose_adjustment" "Modifying Docker Compose for standalone setup"
-
-    # Verify we can read and modify the file
-    echo "🔍 Verifying docker-compose.yml permissions..."
-    if [ ! -r "docker-compose.yml" ] || [ ! -w "docker-compose.yml" ]; then
-        echo "❌ ERROR: Cannot read or write docker-compose.yml"
-        echo "🔍 File permissions: $(ls -l docker-compose.yml)"
-        notify_webhook "failed" "compose_permission_denied" "Cannot modify docker-compose.yml - permission issue"
-        exit 1
-    fi
-
-    # Create backup before modification
-    echo "🔍 Creating backup of docker-compose.yml..."
-    cp docker-compose.yml docker-compose.yml.backup
-    if [ ! -f "docker-compose.yml.backup" ]; then
-        echo "❌ ERROR: Failed to create backup file"
-        notify_webhook "failed" "backup_failed" "Failed to create docker-compose.yml backup"
-        exit 1
-    fi
-
-    # Disable proxy service to avoid port conflicts with host nginx
-    echo "🔍 Checking for proxy service in docker-compose.yml..."
-    if grep -q "proxy:" docker-compose.yml; then
-        echo "🔧 Disabling proxy service to avoid port conflicts..."
-        if sed -i.bak 's/^  proxy:/  # proxy:/' docker-compose.yml && \
-           sed -i 's/^    container_name: proxy/#     container_name: proxy/' docker-compose.yml; then
-            echo "✅ Disabled proxy service to avoid port conflicts"
-            echo "🔍 Verification - proxy lines should be commented:"
-            grep -E "^(  # proxy:|#     container_name: proxy)" docker-compose.yml || echo "⚠️ Could not find commented proxy lines"
-            notify_webhook "provisioning" "proxy_disabled" "✅ Proxy service disabled successfully"
-        else
-            echo "⚠️ Could not disable proxy service, continuing anyway"
-            notify_webhook "warning" "proxy_disable_failed" "Failed to disable proxy, may cause port conflicts"
-            # Restore backup
-            cp docker-compose.yml.backup docker-compose.yml
-        fi
-    else
-        echo "ℹ️  Proxy service not found in docker-compose.yml, skipping"
-        notify_webhook "info" "proxy_not_found" "Proxy service not found in compose file"
-    fi
-
-    echo "✅ Docker Compose configuration completed"
-    notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration completed"
-    sleep 5
-    
-    # ==========================================================
-    # 🧹 Ensure database and volume directories exist and are writable
-    # ==========================================================
-    echo "🔍 Preparing Docker volume directories and ensuring permissions..."
-    notify_webhook "provisioning" "volume_prep" "Preparing data volumes for Plane services"
-
-    # Use current directory for persistent storage (we're already in /opt/plane/plane)
-    mkdir -p pgdata redisdata miniodata rabbitmqdata
-
-    # Set proper permissions
-    chown -R 999:999 pgdata
-    chown -R 1001:1001 redisdata
-    chown -R 1000:1000 miniodata
-    chmod -R 755 pgdata redisdata miniodata rabbitmqdata
-
-    # Confirm directory status
-    echo "🔍 Checking data directories:"
-    ls -ld ./*data 2>/dev/null || true
-    df -h . || true
-
-    echo "✅ Volume directories prepared in current Plane directory"
-    notify_webhook "provisioning" "volume_ready" "✅ Data directories ready for containers"
-    
-    sleep 5
+    chown -R 1026:100 /volume1/docker/plane/db \
+                    /volume1/docker/plane/redis \
+                    /volume1/docker/plane/rabbitmq \
+                    /volume1/docker/plane/uploads
+    chmod -R 755 /volume1/docker/plane/db \
+                /volume1/docker/plane/redis \
+                /volume1/docker/plane/rabbitmq \
+                /volume1/docker/plane/uploads
+    echo "✅ Volume directories ready"
+    notify_webhook "provisioning" "volume_ready" "✅ Volumes ready"
 
     # ==========================================================
-    # 🕵️‍♂️ Volume & Container Preflight Checks
+    # Docker Compose command
     # ==========================================================
-    echo "🔍 Running preflight checks on volumes and containers..."
-    notify_webhook "provisioning" "preflight_start" "Checking volume directories and container readiness"
-
-    sleep 5
-
-    # --- Check if directories are writable ---
-    for dir in pgdata redisdata miniodata rabbitmqdata; do
-        if [ ! -w "$dir" ]; then
-            echo "❌ Directory $dir is not writable!"
-            notify_webhook "failed" "preflight_writable_check" "Directory $dir not writable"
-            exit 1
-        else
-            echo "✅ Directory $dir is writable"
-            notify_webhook "provisioning" "preflight_writable_check" "Directory $dir writable"
-        fi
-        sleep 5
-    done
-
-    # --- Check if Docker daemon is running ---
-    if ! docker info >/dev/null 2>&1; then
-        echo "❌ Docker daemon not running!"
-        notify_webhook "failed" "preflight_docker_check" "Docker daemon not running"
-        exit 1
-    else
-        echo "✅ Docker daemon is running"
-        notify_webhook "provisioning" "preflight_docker_check" "Docker daemon running"
-    fi
-    sleep 5
-
-    # --- Quick check for previous containers that might crash ---
-    services=("plane-db" "plane-redis" "plane-mq" "plane-minio")
-
-    for service in "${services[@]}"; do
-        if docker ps -a --format '{{.Names}} {{.Status}}' | grep -q "^$service "; then
-            STATUS=$(docker ps -a --format '{{.Names}} {{.Status}}' | grep "^$service " | awk '{print $2}')
-            echo "ℹ️ Service $service exists with status: $STATUS"
-            notify_webhook "provisioning" "preflight_service_check" "Service $service exists: $STATUS"
-        else
-            echo "ℹ️ Service $service not yet created"
-            notify_webhook "provisioning" "preflight_service_check" "Service $service not yet created"
-        fi
-        sleep 5
-    done
-
-    # --- Check for port conflicts (common issue with proxy/nginx) ---
-    PORTS=(5432 6379 5672 9000 8000 3000 3001 3002 3100)
-    for port in "${PORTS[@]}"; do
-        if ss -tuln | grep -q ":$port "; then
-            echo "⚠️ Port $port already in use"
-            notify_webhook "warning" "preflight_port_check" "Port $port is already in use"
-        else
-            echo "✅ Port $port is free"
-            notify_webhook "provisioning" "preflight_port_check" "Port $port is free"
-        fi
-        sleep 5
-    done
-
-    echo "✅ Preflight checks completed, proceeding with container startup"
-    notify_webhook "provisioning" "preflight_complete" "✅ Volumes, docker, services, and ports are ready"
-    sleep 5
-
-    # ==========================================================
-    # 🧩 Ensure docker-compose uses correct environment
-    # ==========================================================
-    # We're already in the plane directory with all .env files, use simple docker compose
     DOCKER_COMPOSE_CMD="docker compose"
     if ! docker compose version &>/dev/null; then
         DOCKER_COMPOSE_CMD="docker-compose"
     fi
 
-    echo "✅ Docker Compose configured to use current directory .env files"
-    
-    sleep 5
-
-    # ========== Start Infrastructure ==========
-    echo "[8/15] Starting Plane infrastructure (DB, Redis, MQ, MinIO)..."
-    notify_webhook "provisioning" "infra_start" "Starting Plane infrastructure services"
-
-    # ========== Start Infrastructure Services Individually ==========
-    services=("plane-db" "plane-redis" "plane-mq" "plane-minio")
-
-    for service in "${services[@]}"; do
+    # ==========================================================
+    # Start infrastructure services first
+    # ==========================================================
+    INFRA_SERVICES=("db" "redis" "plane-mq" "minio")
+    for service in "${INFRA_SERVICES[@]}"; do
         echo "🚀 Starting $service..."
-        notify_webhook "provisioning" "service_start" "Starting container: $service"
-
-        # Verify service exists in compose file
-        if ! grep -q "$service:" docker-compose.yml; then
-            echo "⚠️ Service $service not found in docker-compose.yml, skipping"
-            notify_webhook "warning" "service_missing" "Service $service not in compose file"
-            continue
-        fi
-
-        if ! $DOCKER_COMPOSE_CMD up -d "$service"; then
-            echo "❌ Failed to start $service"
-            notify_webhook "failed" "service_failed" "Failed to start: $service"
-            echo "🔍 Checking $service logs:"
-            $DOCKER_COMPOSE_CMD logs "$service" --tail=20
-            exit 1
-        else
-            echo "✅ $service started successfully"
-            notify_webhook "provisioning" "service_ready" "✅ Container running: $service"
-        fi
-        sleep 5
+        notify_webhook "provisioning" "service_start" "Starting $service"
+        $DOCKER_COMPOSE_CMD up -d "$service"
     done
 
-    echo "✅ All infrastructure services started"
-    notify_webhook "provisioning" "infra_ready" "✅ All infrastructure containers are running"
-
-    # ========== Wait for PostgreSQL and Redis to be ready ==========
-    echo "⏳ Waiting for PostgreSQL to be ready..."
-    notify_webhook "provisioning" "db_wait" "Waiting for PostgreSQL to become ready"
-
+    # ==========================================================
+    # Wait for healthchecks
+    # ==========================================================
     MAX_WAIT=60
-    count=0
-    until $DOCKER_COMPOSE_CMD exec plane-db pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; do
-        sleep 5
-        count=$((count + 1))
-        if [ $count -ge $MAX_WAIT ]; then
-            echo "❌ PostgreSQL failed to become ready within $((MAX_WAIT*5)) seconds"
-            $DOCKER_COMPOSE_CMD logs plane-db --tail=30
-            notify_webhook "failed" "postgres_timeout" "PostgreSQL startup timeout"
-            exit 1
-        fi
-        if [ $((count % 4)) -eq 0 ]; then
-            echo "   Still waiting for PostgreSQL... ($((count*5))s)"
-            notify_webhook "provisioning" "db_waiting" "PostgreSQL still starting... ($((count*5))s)"
-        fi
-    done
-    echo "✅ PostgreSQL is ready"
-    notify_webhook "provisioning" "postgres_ready" "✅ PostgreSQL is ready and accepting connections"
 
-    echo "⏳ Waiting for Redis to be ready..."
-    notify_webhook "provisioning" "redis_wait" "Waiting for Redis to become ready"
+    wait_for_postgres() {
+        local count=0
+        until $DOCKER_COMPOSE_CMD exec -T db pg_isready -U "$POSTGRES_USER" >/dev/null 2>&1; do
+            sleep 5
+            count=$((count+1))
+            if [ $count -ge $MAX_WAIT ]; then
+                echo "❌ PostgreSQL did not become ready"
+                $DOCKER_COMPOSE_CMD logs db --tail=30
+                exit 1
+            fi
+        done
+        echo "✅ PostgreSQL ready"
+    }
 
-    count=0
-    until $DOCKER_COMPOSE_CMD exec plane-redis redis-cli ping >/dev/null 2>&1; do
-        sleep 5
-        count=$((count + 1))
-        if [ $count -ge $MAX_WAIT ]; then
-            echo "❌ Redis failed to become ready within $((MAX_WAIT*2)) seconds"
-            $DOCKER_COMPOSE_CMD logs plane-redis --tail=30
-            notify_webhook "failed" "redis_timeout" "Redis startup timeout"
-            exit 1
-        fi
-    done
-    echo "✅ Redis is ready"
-    notify_webhook "provisioning" "redis_ready" "✅ Redis is ready and responsive"
+    wait_for_redis() {
+        local count=0
+        until $DOCKER_COMPOSE_CMD exec -T redis redis-cli ping >/dev/null 2>&1; do
+            sleep 5
+            count=$((count+1))
+            if [ $count -ge $MAX_WAIT ]; then
+                echo "❌ Redis did not become ready"
+                $DOCKER_COMPOSE_CMD logs redis --tail=30
+                exit 1
+            fi
+        done
+        echo "✅ Redis ready"
+    }
 
-    # ========== Run Migrations ==========
-    echo "[9/15] Running Plane database migrations..."
-    notify_webhook "provisioning" "migrations_start" "Starting database migrations"
+    wait_for_rabbitmq() {
+        local count=0
+        until $DOCKER_COMPOSE_CMD exec -T plane-mq rabbitmqctl await_startup >/dev/null 2>&1; do
+            sleep 5
+            count=$((count+1))
+            if [ $count -ge $MAX_WAIT ]; then
+                echo "❌ RabbitMQ did not become ready"
+                $DOCKER_COMPOSE_CMD logs plane-mq --tail=30
+                exit 1
+            fi
+        done
+        echo "✅ RabbitMQ ready"
+    }
 
-    if ! $DOCKER_COMPOSE_CMD run --rm migrator; then
-        echo "⚠️ Migration failed on first attempt, retrying..."
-        notify_webhook "warning" "migrations_retry" "First migration attempt failed, retrying..."
+    wait_for_minio() {
+        local count=0
+        until $DOCKER_COMPOSE_CMD exec -T minio mc alias set local http://localhost:9000 $MINIO_USER $MINIO_PASSWORD >/dev/null 2>&1; do
+            sleep 5
+            count=$((count+1))
+            if [ $count -ge $MAX_WAIT ]; then
+                echo "❌ MinIO did not become ready"
+                $DOCKER_COMPOSE_CMD logs minio --tail=30
+                exit 1
+            fi
+        done
+        echo "✅ MinIO ready"
+    }
+
+    wait_for_postgres
+    wait_for_redis
+    wait_for_rabbitmq
+    wait_for_minio
+
+    # ==========================================================
+    # Run database migrations
+    # ==========================================================
+    echo "[9/15] Running migrations..."
+    notify_webhook "provisioning" "migrations_start" "Running migrations"
+    $DOCKER_COMPOSE_CMD run --rm migrator || {
         sleep 10
-        
-        if ! $DOCKER_COMPOSE_CMD run --rm migrator; then
-            echo "❌ Database migrations failed after retry"
+        $DOCKER_COMPOSE_CMD run --rm migrator || {
+            echo "❌ Migrations failed"
             $DOCKER_COMPOSE_CMD logs migrator --tail=30
-            notify_webhook "failed" "migrations_failed" "Database migrations failed after retry"
+            notify_webhook "failed" "migrations_failed" "Migrations failed"
             exit 1
-        fi
-    fi
-    echo "✅ Database migrations completed successfully"
-    notify_webhook "provisioning" "migrations_success" "✅ Database migrations completed successfully"
+        }
+    }
+    echo "✅ Migrations completed"
 
-    # ========== Start Application Services ==========
-    echo "[10/15] Starting Plane application services..."
-    notify_webhook "provisioning" "app_start" "Starting Plane application services"
-
-    APPLICATION_SERVICES=("api" "web" "admin" "space" "worker" "beat-worker" "live")
-    FAILED_SERVICES=()
-
-    for service in "${APPLICATION_SERVICES[@]}"; do
+    # ==========================================================
+    # Start application services
+    # ==========================================================
+    APP_SERVICES=("back" "worker" "beat" "front" "space" "admin" "live" "proxy")
+    for service in "${APP_SERVICES[@]}"; do
         echo "🚀 Starting $service..."
-        notify_webhook "provisioning" "app_service_start" "Starting application service: $service"
-
-        # Verify service exists in compose file
-        if ! grep -q "$service:" docker-compose.yml; then
-            echo "⚠️ Service $service not found in docker-compose.yml, skipping"
-            notify_webhook "warning" "app_service_missing" "Application service $service not in compose file"
-            FAILED_SERVICES+=("$service(missing)")
-            continue
-        fi
-
-        if ! $DOCKER_COMPOSE_CMD up -d "$service"; then
-            echo "❌ Failed to start $service"
-            notify_webhook "failed" "app_service_failed" "Failed to start: $service"
-            $DOCKER_COMPOSE_CMD logs "$service" --tail=20
-            FAILED_SERVICES+=("$service")
-            # Continue with other services instead of exiting
-        else
-            echo "✅ $service started successfully"
-            notify_webhook "provisioning" "app_service_ready" "✅ Application service running: $service"
-        fi
-        sleep 5
+        notify_webhook "provisioning" "app_service_start" "Starting $service"
+        $DOCKER_COMPOSE_CMD up -d "$service"
     done
 
-    # Report on any failed services
-    if [ ${#FAILED_SERVICES[@]} -gt 0 ]; then
-        echo "⚠️ The following services failed to start: ${FAILED_SERVICES[*]}"
-        notify_webhook "warning" "some_services_failed" "Some services failed: ${FAILED_SERVICES[*]}"
-    else
-        echo "✅ All application services started successfully"
-        notify_webhook "provisioning" "all_app_services_ready" "✅ All application services are running"
-    fi
+    echo "✅ Plane deployment complete"
+    notify_webhook "provisioning" "all_services_ready" "✅ All services running"
+
 
     # ========== Verify API Health ==========
     echo "[11/15] Verifying Plane API health..."
