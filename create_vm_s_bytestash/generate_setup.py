@@ -177,41 +177,71 @@ def generate_setup(
     # Remove old versions (ignore errors)
     apt-get remove -y docker docker-engine docker.io containerd runc >/dev/null 2>&1 || true
 
-    # Setup Docker's official GPG key
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg || {
-        echo "❌ Failed to download Docker GPG key"
-        notify_webhook "failed" "docker_gpg" "Failed to download Docker GPG key"
-        exit 1
-    }
-    chmod a+r /etc/apt/keyrings/docker.gpg
+    # ==========================================================
+    # Install Docker (with retry on GPG key and package install)
+    # ==========================================================
+    echo "[4/15] Installing Docker..."
+    notify_webhook "provisioning" "docker_install" "Installing Docker with retries"
 
-    # Add Docker repository
+    # Setup variables
+    DOCKER_GPG_URL="https://download.docker.com/linux/ubuntu/gpg"
+    DOCKER_KEYRING="/etc/apt/keyrings/docker.gpg"
+    RETRY_MAX=3
+    RETRY_DELAY=5
+
+    mkdir -p /etc/apt/keyrings
+    chmod a+r /etc/apt/keyrings || true
+
+    # --- Download Docker GPG key with retries ---
+    for attempt in $(seq 1 $RETRY_MAX); do
+        echo "Downloading Docker GPG key (attempt $attempt/$RETRY_MAX)..."
+        if curl -fsSL "$DOCKER_GPG_URL" | gpg --dearmor -o "$DOCKER_KEYRING"; then
+            chmod a+r "$DOCKER_KEYRING"
+            echo "✅ Docker GPG key downloaded successfully"
+            break
+        else
+            echo "⚠️ Attempt $attempt failed to download Docker GPG key"
+            notify_webhook "warning" "docker_gpg_retry" "Attempt $attempt to download Docker GPG key failed"
+            sleep $RETRY_DELAY
+            if [ $attempt -eq $RETRY_MAX ]; then
+                echo "❌ Docker GPG key download failed after $RETRY_MAX attempts"
+                notify_webhook "failed" "docker_gpg" "Failed to download Docker GPG key after retries"
+                exit 1
+            fi
+        fi
+    done
+
+    # --- Add Docker repository ---
     ARCH=$(dpkg --print-architecture)
     CODENAME=$(lsb_release -cs)
-    echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    echo "deb [arch=$ARCH signed-by=$DOCKER_KEYRING] https://download.docker.com/linux/ubuntu $CODENAME stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-    # Update package list with new repository
+    # --- Update package list ---
     apt-get update -q || {
         echo "❌ Failed to update package list after adding Docker repo"
         notify_webhook "failed" "docker_repo" "Failed to update package list"
         exit 1
     }
 
-    # Install Docker with retries
-    for i in {1..3}; do
-        echo "Docker install attempt $i/3..."
-        if apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin; then
+    # --- Install Docker packages with retries ---
+    DOCKER_PACKAGES=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin)
+    for attempt in $(seq 1 $RETRY_MAX); do
+        echo "Installing Docker packages (attempt $attempt/$RETRY_MAX)..."
+        if apt-get install -y -q "${DOCKER_PACKAGES[@]}"; then
+            echo "✅ Docker installed successfully"
             break
-        fi
-        echo "⚠️ Docker install attempt $i failed; retrying in 5 seconds..."
-        sleep 5
-        if [ $i -eq 3 ]; then
-            echo "❌ Docker installation failed after 3 attempts"
-            notify_webhook "failed" "docker_install" "Docker install failed after 3 attempts"
-            exit 1
+        else
+            echo "⚠️ Docker install attempt $attempt failed, retrying in $RETRY_DELAY seconds..."
+            notify_webhook "warning" "docker_install_retry" "Attempt $attempt to install Docker failed"
+            sleep $RETRY_DELAY
+            if [ $attempt -eq $RETRY_MAX ]; then
+                echo "❌ Docker installation failed after $RETRY_MAX attempts"
+                notify_webhook "failed" "docker_install" "Docker install failed after retries"
+                exit 1
+            fi
         fi
     done
+
 
     # ========== DOCKER COMPOSE INSTALLATION ==========
     echo "[4.5/15] Installing Docker Compose..."
