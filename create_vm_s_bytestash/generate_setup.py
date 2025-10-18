@@ -91,9 +91,9 @@ def generate_setup(
         exit 1
     fi
 
-    # Generate JWT secret without openssl
+    # Generate 64-byte JWT secret (128 hex chars)
     if [ -z "${BYTESTASH_JWT_SECRET:-}" ]; then
-        BYTESTASH_JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p -c 32 | head -1)
+        BYTESTASH_JWT_SECRET=$(head -c 64 /dev/urandom | xxd -p -c 64 | head -1)
         export BYTESTASH_JWT_SECRET
     fi
     
@@ -278,8 +278,11 @@ EOF
     notify_webhook "provisioning" "container_start" "Starting Bytestash container"
     cd "$BYTESTASH_DIR"
 
+    # Create the data directory with proper permissions
     mkdir -p data
     chown -R 1000:1000 data
+
+    # Export the JWT secret for docker-compose
     export BYTESTASH_JWT_SECRET
 
     # Debug: Show environment
@@ -288,7 +291,7 @@ EOF
     echo "Debug: Docker Compose file:"
     cat docker-compose.yml
 
-    # Choose docker compose command
+    # Determine docker-compose command
     if docker compose version &> /dev/null; then
         COMPOSE_CMD="docker compose"
     elif command -v docker-compose &> /dev/null; then
@@ -299,36 +302,70 @@ EOF
         exit 1
     fi
 
-    # Pull and start container
+    # Pull & start (don't exit immediately on failure so we can collect diagnostics)
     $COMPOSE_CMD pull || echo "Warning: Image pull failed, will try to run anyway"
-    $COMPOSE_CMD up -d || {
-        echo "ERROR: Docker compose up failed"
-        $COMPOSE_CMD logs || true
-        notify_webhook "failed" "container_start" "Docker compose up failed"
-        exit 1
-    }
+    $COMPOSE_CMD up -d || echo "Warning: docker compose up returned non-zero (continuing to collect diagnostics)"
 
-    notify_webhook "provisioning" "container_started" "✅ Docker container started successfully"
-
-    # Wait for container to start
+    # Wait for container to initialize briefly so logs appear
     echo "Waiting for container to initialize..."
-    sleep 15
+    sleep 5
 
-    # --- Docker ps / inspect / logs hooks ---
-    DOCKER_PS_OUTPUT=$(docker ps --no-trunc)
+    # --- Always collect diagnostics and send to webhook (even if container exited) ---
+    # docker ps -a (no-trunc) and focus on bytestash if present
+    DOCKER_PS_OUTPUT=$(docker ps -a --no-trunc 2>/dev/null || echo "docker ps failed")
     SHORT_PS=$(echo "$DOCKER_PS_OUTPUT" | grep -i bytestash || echo "$DOCKER_PS_OUTPUT" | head -n 20)
     SHORT_PS_ESCAPED=$(echo "$SHORT_PS" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
     notify_webhook "provisioning" "docker_ps" "=== docker ps output ===\\n$SHORT_PS_ESCAPED"
 
+    # docker inspect (first chunk)
     INSPECT_OUTPUT=$(docker inspect bytestash 2>/dev/null || echo "inspect failed")
     INSPECT_ESCAPED=$(echo "$INSPECT_OUTPUT" | head -n 50 | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
     notify_webhook "provisioning" "docker_inspect" "=== docker inspect (first 50 lines) ===\\n$INSPECT_ESCAPED"
 
-    LOG_TAIL=$(docker logs bytestash --tail 30 2>/dev/null || echo "no logs")
+    # docker logs (last 100 lines if available)
+    LOG_TAIL=$(docker logs bytestash --tail 100 2>/dev/null || echo "no logs")
     LOG_ESCAPED=$(echo "$LOG_TAIL" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
-    notify_webhook "provisioning" "docker_logs" "=== container logs (last 30 lines) ===\\n$LOG_ESCAPED"
+    notify_webhook "provisioning" "docker_logs" "=== container logs (last 100 lines) ===\\n$LOG_ESCAPED"
 
     sleep 5
+
+    # Show compose/service status locally (keeps original debugging behavior)
+    echo "=== Docker Compose Status ==="
+    if docker compose version &> /dev/null; then
+        docker compose ps || true
+    else
+        docker-compose ps || true
+    fi
+
+    echo "=== Port Mapping Check ==="
+    docker port bytestash 2>/dev/null || echo "Could not check port mapping"
+
+    notify_webhook "provisioning" "container_started" "✅ Docker container start attempted and diagnostics sent"
+
+    sleep 5
+
+    # Now evaluate container lifecycle status and fail fast if needed
+    CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' bytestash 2>/dev/null || echo "nonexistent")
+    echo "Container status: $CONTAINER_STATUS"
+    if [ "$CONTAINER_STATUS" != "running" ]; then
+        # Send an extra diagnostics burst (in case it died after the earlier snapshot)
+        DOCKER_PS_OUTPUT2=$(docker ps -a --no-trunc 2>/dev/null || echo "docker ps failed")
+        PS2_ESCAPED=$(echo "$DOCKER_PS_OUTPUT2" | head -n 50 | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+        notify_webhook "provisioning" "docker_ps_followup" "=== docker ps (follow-up) ===\\n$PS2_ESCAPED"
+
+        LOG_TAIL2=$(docker logs bytestash --tail 200 2>/dev/null || echo "no logs")
+        LOG2_ESCAPED=$(echo "$LOG_TAIL2" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+        notify_webhook "provisioning" "docker_logs_followup" "=== container logs (follow-up last 200 lines) ===\\n$LOG2_ESCAPED"
+
+        echo "❌ Bytestash container is not running. Status: $CONTAINER_STATUS"
+        notify_webhook "failed" "container_start" "Bytestash failed to start (status: $CONTAINER_STATUS). Diagnostics posted."
+        exit 1
+    fi
+
+    echo "✅ Bytestash container is running"
+    notify_webhook "provisioning" "container_running" "Bytestash container running successfully"
+    sleep 5
+
 
     # --- Firewall ---
     echo "[8/15] Configuring firewall..."
