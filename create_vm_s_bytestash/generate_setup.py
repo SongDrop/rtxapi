@@ -4,7 +4,7 @@ def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
-    PORT=3000,
+    PORT=5000,
     WEBHOOK_URL="",
     location="",
     resource_group="",
@@ -239,40 +239,39 @@ def generate_setup(
     
     sleep 5
                                       
-   # --- Step 4: Docker Compose ---
-echo "[6/15] Creating Docker Compose configuration..."
-notify_webhook "provisioning" "docker_compose" "Creating docker-compose.yml"
+    # --- Step 4: Docker Compose ---
+    echo "[6/15] Creating Docker Compose configuration..."
+    notify_webhook "provisioning" "docker_compose" "Creating docker-compose.yml"
 
-cat > "$BYTESTASH_DIR/docker-compose.yml" <<'EOF'
+    cat > "$BYTESTASH_DIR/docker-compose.yml" <<'EOF'
 version: "3.8"
 
 services:
-  bytestash:
+bytestash:
     image: ghcr.io/jordan-dalby/bytestash:latest
     container_name: bytestash
     restart: on-failure:5
 
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 5000 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 90s
+    test: ["CMD-SHELL", "nc -z 127.0.0.1 5000 || exit 1"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 90s
 
     volumes:
-      - ./data:/data/snippets:rw
+    - ./data:/data/snippets:rw
 
     environment:
-      JWT_SECRET: "${BYTESTASH_JWT_SECRET}"
-      TOKEN_EXPIRY: "24h"
-      ALLOW_NEW_ACCOUNTS: "true"
+    JWT_SECRET: "${BYTESTASH_JWT_SECRET}"
+    TOKEN_EXPIRY: "24h"
+    ALLOW_NEW_ACCOUNTS: "true"
 
     ports:
-      - "${PORT}:5000"
+    - "${PORT}:5000"
 EOF
 
-sleep 5
-
+    sleep 5
 
     # --- Step 5: Start Docker container ---
     echo "[7/15] Starting Bytestash container..."
@@ -317,6 +316,8 @@ sleep 5
         exit 1
     fi
 
+    notify_webhook "provisioning" "container_started" "✅ Docker container started successfully"
+
     # Wait for container to start
     echo "Waiting for container to initialize..."
     sleep 15
@@ -327,18 +328,29 @@ sleep 5
     echo "=== Container Inspect ==="
     docker inspect bytestash 2>/dev/null || echo "Could not inspect container"
 
-    # 🔔 Notify webhook with docker ps output (trim to avoid oversize payloads)
+    # 🔔 Explicit docker ps webhook (FULL)
     DOCKER_PS_OUTPUT=$(docker ps --no-trunc)
-    # Use only the bytestash lines to keep payload small if many containers present
     SHORT_PS=$(echo "$DOCKER_PS_OUTPUT" | grep -i bytestash || echo "$DOCKER_PS_OUTPUT" | head -n 20)
-    # Replace newlines with \n for safe JSON-friendly string
     SHORT_PS_ESCAPED=$(echo "$SHORT_PS" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+    notify_webhook "provisioning" "docker_ps" "=== docker ps output ===\\n$SHORT_PS_ESCAPED"
 
-    notify_webhook "provisioning" "docker_ps" "docker ps output:\\n$SHORT_PS_ESCAPED"
+    sleep 5
+    
+    # 🔔 Container inspect info
+    INSPECT_OUTPUT=$(docker inspect bytestash 2>/dev/null || echo "inspect failed")
+    INSPECT_ESCAPED=$(echo "$INSPECT_OUTPUT" | head -n 50 | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+    notify_webhook "provisioning" "docker_inspect" "=== docker inspect (first 50 lines) ===\\n$INSPECT_ESCAPED"
 
+    sleep 5
+                                      
     # Check container logs for errors
     echo "=== Container Logs ==="
     docker logs bytestash 2>/dev/null || echo "Could not retrieve container logs"
+
+    # 🔔 Send first log lines too
+    LOG_TAIL=$(docker logs bytestash --tail 30 2>/dev/null || echo "no logs")
+    LOG_ESCAPED=$(echo "$LOG_TAIL" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+    notify_webhook "provisioning" "docker_logs" "=== container logs (last 30 lines) ===\\n$LOG_ESCAPED"
 
     echo "=== Docker Compose Status ==="
     if docker compose version &> /dev/null; then
@@ -362,8 +374,6 @@ sleep 5
     ufw allow 443/tcp
     ufw allow "$PORT"/tcp
     ufw --force enable
-    
-    # Report UFW status to webhook (trim output)
     UFW_STATUS=$(ufw status verbose 2>/dev/null || echo "ufw not present")
     UFW_STATUS_ESCAPED=$(echo "$UFW_STATUS" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
     notify_webhook "provisioning" "firewall_status" "UFW status:\\n$UFW_STATUS_ESCAPED"
@@ -371,47 +381,34 @@ sleep 5
     # --- Step 9: Wait for readiness (HTTP probe) ---
     echo "[9/15] Waiting for Bytestash readiness..."
     notify_webhook "provisioning" "http_probe" "Waiting for HTTP readiness"
-    
-    # First, check if container is actually running
+
     CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' bytestash 2>/dev/null || echo "nonexistent")
     echo "Container status: $CONTAINER_STATUS"
-    
     if [ "$CONTAINER_STATUS" != "running" ]; then
-        echo "❌ Bytestash container is not running. Status: $CONTAINER_STATUS"
-        echo "=== Full container logs ==="
         docker logs bytestash 2>/dev/null || echo "No logs available"
-        echo "=== Recent system events ==="
-        journalctl -u docker --since "5 minutes ago" --no-pager | tail -20 || true
         notify_webhook "failed" "http_probe" "Bytestash container not running. Status: $CONTAINER_STATUS"
         exit 1
     fi
 
-    # Check what's actually running in the container
-    echo "=== Checking container processes ==="
+    # Check processes inside container
     docker top bytestash || echo "Could not check container processes"
 
-    # Try multiple endpoints with detailed debugging
     elapsed=0
     READY=false
     while [ $elapsed -lt $READY_TIMEOUT ]; do
-        # Check if container is still running
         if [ "$(docker inspect -f '{{.State.Status}}' bytestash 2>/dev/null)" != "running" ]; then
             echo "❌ Container stopped during startup"
             docker logs bytestash 2>/dev/null || true
             break
         fi
 
-        # Try multiple endpoints with verbose output
         echo "Testing connection to port $PORT..."
-        
-        # Check if port is bound
         if netstat -tuln | grep ":$PORT " >/dev/null; then
             echo "✅ Port $PORT is bound on host"
         else
             echo "❌ Port $PORT is NOT bound on host"
         fi
 
-        # Try different endpoints
         for endpoint in "/" "/health" "/api/health" "/status"; do
             if curl -v "http://127.0.0.1:$PORT$endpoint" 2>&1 | grep -q "HTTP.*200"; then
                 echo "✅ Successfully connected to $endpoint"
@@ -420,34 +417,22 @@ sleep 5
             fi
         done
 
-        # Show progress every 30 seconds with logs
         if [ $((elapsed % 30)) -eq 0 ]; then
-            echo "Still waiting for Bytestash... (${elapsed}s elapsed)"
-            echo "=== Recent container logs ==="
             docker logs bytestash --since "1m ago" 2>/dev/null | tail -10 || echo "No recent logs"
         fi
-        
         sleep $SLEEP_INTERVAL
         elapsed=$((elapsed + SLEEP_INTERVAL))
     done
-    
+
     if [ "$READY" = false ]; then
-        echo "ERROR: Bytestash not responding after $READY_TIMEOUT seconds"
-        echo "=== Final container status ==="
-        docker ps -a | grep bytestash || true
-        echo "=== Final container logs ==="
-        docker logs bytestash 2>/dev/null || true
-        echo "=== Network connections ==="
-        netstat -tulpn | grep ":$PORT" || echo "No process listening on port $PORT"
-        echo "=== Docker daemon logs ==="
-        journalctl -u docker --since "10 minutes ago" --no-pager | tail -30 || true
         notify_webhook "failed" "http_probe" "Bytestash not responding after $READY_TIMEOUT seconds"
         exit 1
     fi
-    
+
     echo "✅ Bytestash is ready and responding"
     notify_webhook "provisioning" "http_ready" "✅ Bytestash HTTP probe successful"
     sleep 5
+
 
     # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
     echo "[11/15] Configuring nginx reverse proxy with SSL..."
