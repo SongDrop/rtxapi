@@ -247,29 +247,30 @@ def generate_setup(
 version: "3.8"
 
 services:
-bytestash:
+  bytestash:
     image: ghcr.io/jordan-dalby/bytestash:latest
     container_name: bytestash
-    restart: "on-failure:5"
+    restart: on-failure:5
 
     healthcheck:
-    test: ["CMD-SHELL", "nc -z 127.0.0.1 5000 || exit 1"]
-    interval: 10s
-    timeout: 5s
-    retries: 3
-    start_period: 90s
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
 
     volumes:
-    - ./data:/data/snippets:rw
+      - ./data:/data/snippets:rw
 
     environment:
-    JWT_SECRET: "${BYTESTASH_JWT_SECRET}"
-    TOKEN_EXPIRY: "24h"
-    ALLOW_NEW_ACCOUNTS: "true"
+      JWT_SECRET: "${BYTESTASH_JWT_SECRET}"
+      TOKEN_EXPIRY: "24h"
+      ALLOW_NEW_ACCOUNTS: "true"
 
     ports:
-    - "${PORT}:5000"
+      - "${PORT}:5000"
 EOF
+
 
     sleep 5
 
