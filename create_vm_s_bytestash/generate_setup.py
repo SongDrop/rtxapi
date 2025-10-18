@@ -243,14 +243,14 @@ def generate_setup(
     echo "[6/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose" "Creating docker-compose.yml"
 
-    cat > "$BYTESTASH_DIR/docker-compose.yml" <<'EOF'
+    cat > "$BYTESTASH_DIR/docker-compose.yml" <<EOF
 version: "3.8"
 
 services:
 bytestash:
     image: ghcr.io/jordan-dalby/bytestash:latest
     container_name: bytestash
-    restart: on-failure:5
+    restart: "on-failure:5"
 
     healthcheck:
     test: ["CMD-SHELL", "nc -z 127.0.0.1 5000 || exit 1"]
@@ -278,11 +278,8 @@ EOF
     notify_webhook "provisioning" "container_start" "Starting Bytestash container"
     cd "$BYTESTASH_DIR"
 
-    # Create the data directory with proper permissions
     mkdir -p data
     chown -R 1000:1000 data
-
-    # Export the JWT secret for docker-compose
     export BYTESTASH_JWT_SECRET
 
     # Debug: Show environment
@@ -291,30 +288,25 @@ EOF
     echo "Debug: Docker Compose file:"
     cat docker-compose.yml
 
-    # Try both docker compose commands with fallback
+    # Choose docker compose command
     if docker compose version &> /dev/null; then
-        echo "Using 'docker compose' (plugin)"
-        docker compose pull || echo "Warning: Image pull failed, will try to run anyway"
-        docker compose up -d || {
-            echo "ERROR: docker compose failed"
-            docker compose logs || true
-            notify_webhook "failed" "container_start" "Docker compose up failed"
-            exit 1
-        }
+        COMPOSE_CMD="docker compose"
     elif command -v docker-compose &> /dev/null; then
-        echo "Using 'docker-compose' (standalone)"
-        docker-compose pull || echo "Warning: Image pull failed, will try to run anyway"
-        docker-compose up -d || {
-            echo "ERROR: docker-compose failed"
-            docker-compose logs || true
-            notify_webhook "failed" "container_start" "Docker-compose up failed"
-            exit 1
-        }
+        COMPOSE_CMD="docker-compose"
     else
         echo "ERROR: Neither docker compose nor docker-compose available"
         notify_webhook "failed" "container_start" "Docker compose not available"
         exit 1
     fi
+
+    # Pull and start container
+    $COMPOSE_CMD pull || echo "Warning: Image pull failed, will try to run anyway"
+    $COMPOSE_CMD up -d || {
+        echo "ERROR: Docker compose up failed"
+        $COMPOSE_CMD logs || true
+        notify_webhook "failed" "container_start" "Docker compose up failed"
+        exit 1
+    }
 
     notify_webhook "provisioning" "container_started" "✅ Docker container started successfully"
 
@@ -322,51 +314,23 @@ EOF
     echo "Waiting for container to initialize..."
     sleep 15
 
-    # Check container status in detail
-    echo "=== Container Status ==="
-    docker ps -a | grep bytestash || echo "Container not found in docker ps"
-    echo "=== Container Inspect ==="
-    docker inspect bytestash 2>/dev/null || echo "Could not inspect container"
-
-    # 🔔 Explicit docker ps webhook (FULL)
+    # --- Docker ps / inspect / logs hooks ---
     DOCKER_PS_OUTPUT=$(docker ps --no-trunc)
     SHORT_PS=$(echo "$DOCKER_PS_OUTPUT" | grep -i bytestash || echo "$DOCKER_PS_OUTPUT" | head -n 20)
     SHORT_PS_ESCAPED=$(echo "$SHORT_PS" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
     notify_webhook "provisioning" "docker_ps" "=== docker ps output ===\\n$SHORT_PS_ESCAPED"
 
-    sleep 5
-    
-    # 🔔 Container inspect info
     INSPECT_OUTPUT=$(docker inspect bytestash 2>/dev/null || echo "inspect failed")
     INSPECT_ESCAPED=$(echo "$INSPECT_OUTPUT" | head -n 50 | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
     notify_webhook "provisioning" "docker_inspect" "=== docker inspect (first 50 lines) ===\\n$INSPECT_ESCAPED"
 
-    sleep 5
-                                      
-    # Check container logs for errors
-    echo "=== Container Logs ==="
-    docker logs bytestash 2>/dev/null || echo "Could not retrieve container logs"
-
-    # 🔔 Send first log lines too
     LOG_TAIL=$(docker logs bytestash --tail 30 2>/dev/null || echo "no logs")
     LOG_ESCAPED=$(echo "$LOG_TAIL" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
     notify_webhook "provisioning" "docker_logs" "=== container logs (last 30 lines) ===\\n$LOG_ESCAPED"
 
-    echo "=== Docker Compose Status ==="
-    if docker compose version &> /dev/null; then
-        docker compose ps || true
-    else
-        docker-compose ps || true
-    fi
-
-    echo "=== Port Mapping Check ==="
-    docker port bytestash 2>/dev/null || echo "Could not check port mapping"
-
-    echo "✅ Docker Compose configured"
-    notify_webhook "provisioning" "docker_configured" "✅ Docker Compose configured"
     sleep 5
 
-    # ========== FIREWALL ==========
+    # --- Firewall ---
     echo "[8/15] Configuring firewall..."
     notify_webhook "provisioning" "firewall" "Setting up UFW"
     ufw allow 22/tcp
@@ -390,7 +354,6 @@ EOF
         exit 1
     fi
 
-    # Check processes inside container
     docker top bytestash || echo "Could not check container processes"
 
     elapsed=0
@@ -420,6 +383,7 @@ EOF
         if [ $((elapsed % 30)) -eq 0 ]; then
             docker logs bytestash --since "1m ago" 2>/dev/null | tail -10 || echo "No recent logs"
         fi
+
         sleep $SLEEP_INTERVAL
         elapsed=$((elapsed + SLEEP_INTERVAL))
     done
@@ -432,6 +396,7 @@ EOF
     echo "✅ Bytestash is ready and responding"
     notify_webhook "provisioning" "http_ready" "✅ Bytestash HTTP probe successful"
     sleep 5
+
 
 
     # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
