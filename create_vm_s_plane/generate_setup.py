@@ -295,21 +295,31 @@ def generate_setup(
         local type="$1"
         local length="$2"
         local result=""
+
+        # Try openssl first
         if command -v openssl &>/dev/null; then
             if [ "$type" = "hex" ]; then
-                result=$(openssl rand -hex "$length")
+                result=$(openssl rand -hex "$length" 2>/dev/null || true)
             else
-                result=$(openssl rand -base64 "$length" | tr -d '\n')
+                result=$(openssl rand -base64 "$length" 2>/dev/null | tr -d '\n' || true)
             fi
         fi
-        # fallback
+
+        # Fallback to /dev/urandom if openssl fails
         if [ -z "$result" ]; then
             if [ "$type" = "hex" ]; then
-                result=$(head -c "$length" /dev/urandom | xxd -p -c "$length")
+                result=$(head -c "$length" /dev/urandom | xxd -p -c "$length" 2>/dev/null || true)
             else
-                result=$(head -c "$length" /dev/urandom | base64 | tr -d '\n' | head -c $((length*2)))
+                result=$(head -c "$length" /dev/urandom | base64 | tr -d '\n' | head -c $((length*2)) 2>/dev/null || true)
             fi
         fi
+
+        # Final check
+        if [ -z "$result" ]; then
+            echo "❌ ERROR: Unable to generate random $type string"
+            exit 1
+        fi
+
         echo "$result"
     }
 
@@ -330,59 +340,60 @@ def generate_setup(
     SECRET_KEY=$(generate_secure_random hex 32)
 
     # ==========================================================
-    # Write stack.env
+    # Write stack.env securely
     # ==========================================================
     STACK_ENV="./stack.env"
+    umask 077  # ensure file is only readable/writable by owner
     cat > "$STACK_ENV" <<EOF
-    # PostgreSQL
-    POSTGRES_USER=$POSTGRES_USER
-    POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-    POSTGRES_DB=$POSTGRES_DB
+# PostgreSQL
+POSTGRES_USER=$POSTGRES_USER
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+POSTGRES_DB=$POSTGRES_DB
 
-    # Redis
-    REDIS_HOST=plane-redis
-    REDIS_PORT=6379
+# Redis
+REDIS_HOST=plane-redis
+REDIS_PORT=6379
 
-    # RabbitMQ
-    RABBITMQ_USER=$RABBITMQ_USER
-    RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD
-    RABBITMQ_VHOST=$RABBITMQ_VHOST
+# RabbitMQ
+RABBITMQ_USER=$RABBITMQ_USER
+RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD
+RABBITMQ_VHOST=$RABBITMQ_VHOST
 
-    # MinIO
-    AWS_ACCESS_KEY_ID=$MINIO_USER
-    AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
-    AWS_S3_BUCKET_NAME=uploads
-    AWS_S3_ENDPOINT_URL=http://plane-minio:9000
+# MinIO
+AWS_ACCESS_KEY_ID=$MINIO_USER
+AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
+AWS_S3_BUCKET_NAME=uploads
+AWS_S3_ENDPOINT_URL=http://plane-minio:9000
 
-    # Misc
-    SECRET_KEY=$SECRET_KEY
-    FILE_SIZE_LIMIT=52428800
-    DOCKERIZED=1
-    USE_MINIO=1
-    EOF
+# Misc
+SECRET_KEY=$SECRET_KEY
+FILE_SIZE_LIMIT=52428800
+DOCKERIZED=1
+USE_MINIO=1
+EOF
 
     echo "✅ stack.env created with secure credentials"
     notify_webhook "provisioning" "credentials_ready" "✅ Credentials generated"
+    sleep 5
 
     # ==========================================================
     # Prepare persistent volume directories
     # ==========================================================
     echo "🔍 Preparing persistent volume directories..."
-    mkdir -p /volume1/docker/plane/db \
-            /volume1/docker/plane/redis \
-            /volume1/docker/plane/rabbitmq \
-            /volume1/docker/plane/uploads
-
-    chown -R 1026:100 /volume1/docker/plane/db \
-                    /volume1/docker/plane/redis \
-                    /volume1/docker/plane/rabbitmq \
-                    /volume1/docker/plane/uploads
-    chmod -R 755 /volume1/docker/plane/db \
+    VOLUME_DIRS=(/volume1/docker/plane/db \
                 /volume1/docker/plane/redis \
                 /volume1/docker/plane/rabbitmq \
-                /volume1/docker/plane/uploads
+                /volume1/docker/plane/uploads)
+
+    for dir in "${VOLUME_DIRS[@]}"; do
+        mkdir -p "$dir"
+        chown 1026:100 "$dir"
+        chmod 755 "$dir"
+    done
+
     echo "✅ Volume directories ready"
     notify_webhook "provisioning" "volume_ready" "✅ Volumes ready"
+
 
     # ==========================================================
     # Docker Compose command
