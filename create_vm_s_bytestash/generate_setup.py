@@ -100,30 +100,67 @@ def generate_setup(
     echo "[2/15] JWT secret generated"
     notify_webhook "provisioning" "jwt_generated" "JWT secret generated"
     sleep 5
-
-   
-    # --- Step 3: System dependencies ---
+                                      
+    # ==========================================================
+    # Step 3: Install System Dependencies
+    # ==========================================================
     echo "[3/15] Installing system dependencies..."
     notify_webhook "provisioning" "system_dependencies" "Installing base packages"
 
+    # Set non-interactive mode for apt
     export DEBIAN_FRONTEND=noninteractive
 
+    # ----------------------------------------------------------
+    # Update package lists
+    # ----------------------------------------------------------
     notify_webhook "provisioning" "apt_update" "Running apt-get update"
-    apt-get update -q || { notify_webhook "failed" "apt_update" "apt-get update failed"; exit 1; }
+    if ! apt-get update -q; then
+        notify_webhook "failed" "apt_update" "apt-get update failed"
+        exit 1
+    fi
 
+    # ----------------------------------------------------------
+    # Upgrade installed packages
+    # ----------------------------------------------------------
     notify_webhook "provisioning" "apt_upgrade" "Running apt-get upgrade"
-    apt-get upgrade -y -q || { notify_webhook "failed" "apt_upgrade" "apt-get upgrade failed"; exit 1; }
+    if ! apt-get upgrade -y -q; then
+        notify_webhook "failed" "apt_upgrade" "apt-get upgrade failed"
+        exit 1
+    fi
 
-    # Ensure system is ready for next apt operation
+    # ----------------------------------------------------------
+    # Ensure no locks block future operations
+    # ----------------------------------------------------------
     sleep 3
     fuser -vki /var/lib/dpkg/lock-frontend || true
     dpkg --configure -a
 
+    # ----------------------------------------------------------
+    # Install required base packages
+    # ----------------------------------------------------------
     notify_webhook "provisioning" "apt_install" "Installing required packages"
-    apt-get install -y -q \
-        curl git nginx certbot python3-certbot-nginx python3-pip python3-venv jq make ufw xxd \
-        software-properties-common \
-    || { notify_webhook "failed" "apt_install" "Base package install failed"; exit 1; }
+    REQUIRED_PACKAGES=(
+        curl
+        git
+        nginx
+        certbot
+        python3-certbot-nginx
+        python3-pip
+        python3-venv
+        jq
+        make
+        ufw
+        xxd
+        software-properties-common
+    )
+
+    if ! apt-get install -y -q "${REQUIRED_PACKAGES[@]}"; then
+        notify_webhook "failed" "apt_install" "Base package install failed"
+        exit 1
+    fi
+
+    notify_webhook "provisioning" "system_dependencies_success" "✅ System dependencies installed successfully"
+    sleep 5
 
     # ========== DOCKER INSTALLATION ==========
     echo "[4/15] Installing Docker..."
@@ -572,6 +609,7 @@ EOF_SSL
     echo "[15/15] Bytestash provisioning complete!"
     notify_webhook "provisioning" "bytestash_installed" "✅ Bytestash setup completed successfully"
     
+    sleep 10
 
 """)
 
