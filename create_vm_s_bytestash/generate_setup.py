@@ -435,9 +435,7 @@ EOF
     notify_webhook "provisioning" "http_ready" "✅ Bytestash HTTP probe successful"
     sleep 5
 
-
-
-    # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
+    # ========== NGINX CONFIG + SSL (Bytestash / fail-safe) ==========
     echo "[11/15] Configuring nginx reverse proxy with SSL..."
     notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
 
@@ -450,7 +448,7 @@ EOF
     curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
 
     # Temporary HTTP server for certbot validation
-    cat > /etc/nginx/sites-available/bytestash <<EOF_TEMP
+    cat > /etc/nginx/sites-available/bytestash <<'EOF_TEMP'
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -471,6 +469,8 @@ EOF_TEMP
     chown www-data:www-data /var/www/html
 
     # Attempt to obtain SSL certificate
+    # Use --staging if you hit the daily limit
+    # certbot --nginx -d "__DOMAIN__" --staging --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
     if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
         echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
         systemctl start nginx || true
@@ -480,18 +480,19 @@ EOF_TEMP
     # Fail-safe check
     if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
         echo "⚠️ SSL certificate not found! Continuing without SSL..."
-        notify_webhook "warning" "ssl" "Forgejo Certbot failed, SSL not installed for __DOMAIN__"
+        notify_webhook "warning" "ssl" "Bytestash Certbot failed, SSL not installed for __DOMAIN__"
     else
         echo "✅ SSL certificate obtained"
         notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
 
         # Replace nginx config for HTTPS proxy only if SSL exists
-        cat > /etc/nginx/sites-available/bytestash <<EOF_SSL
+        cat > /etc/nginx/sites-available/bytestash <<'EOF_SSL'
 server {
     listen 80;
     server_name __DOMAIN__;
-    return 301 https://\$host\$request_uri;
+    return 301 https://$host$request_uri;
 }
+
 server {
     listen 443 ssl http2;
     server_name __DOMAIN__;
@@ -505,11 +506,11 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:__PORT__;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400;
         proxy_buffering off;
@@ -524,9 +525,9 @@ EOF_SSL
 
     echo "[12/15] Setup Cron for renewal..."
     notify_webhook "provisioning" "cron_setup" "Setup Cron for renewal..."
-         
     # Setup cron for renewal (runs daily and reloads nginx on change)
-    (crontab -l 2>/dev/null | grep -v -F "certbot renew" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
+    (crontab -l 2>/dev/null | grep -v -F "certbot renew" || true; \
+    echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
 
     # ========== FINAL CHECKS ==========
     echo "[13/15] Final verification..."

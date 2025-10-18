@@ -44,7 +44,7 @@ image_reference = {
     'exactVersion': '24.04.202409120'
 }
 
-PORTS_TO_OPEN = [22, 80, 443, 8000, 3000, 8889, 8890, 7088, 8088]
+PORTS_TO_OPEN = [22, 80, 443, 8000, 3000, 5000, 8889, 8890, 7088, 8088]
 
 class bcolors:
     HEADER = '\033[95m'
