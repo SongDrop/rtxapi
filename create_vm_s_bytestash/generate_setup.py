@@ -240,42 +240,39 @@ def generate_setup(
     sleep 5
                                       
    # --- Step 4: Docker Compose ---
-    echo "[6/15] Creating Docker Compose configuration..."
-    notify_webhook "provisioning" "docker_compose" "Creating docker-compose.yml"
+echo "[6/15] Creating Docker Compose configuration..."
+notify_webhook "provisioning" "docker_compose" "Creating docker-compose.yml"
 
-    cat > "$BYTESTASH_DIR/docker-compose.yml" <<'EOF'
+cat > "$BYTESTASH_DIR/docker-compose.yml" <<'EOF'
 version: "3.8"
 
 services:
   bytestash:
-    image: "ghcr.io/jordan-dalby/bytestash:latest"
+    image: ghcr.io/jordan-dalby/bytestash:latest
     container_name: bytestash
-    restart: always
+    restart: on-failure:5
+
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
     volumes:
-      - ./data:/data/snippets
-    ports:
-      - "${PORT}:5000"
+      - ./data:/data/snippets:rw
+
     environment:
-      # See https://github.com/jordan-dalby/ByteStash/wiki/FAQ#environment-variables
-      BASE_PATH: ""
       JWT_SECRET: "${BYTESTASH_JWT_SECRET}"
       TOKEN_EXPIRY: "24h"
       ALLOW_NEW_ACCOUNTS: "true"
-      DEBUG: "true"
-      DISABLE_ACCOUNTS: "false"
-      DISABLE_INTERNAL_ACCOUNTS: "false"
-      # Optional host restriction (uncomment and edit as needed)
-      # ALLOWED_HOSTS: "localhost,${DOMAIN}"
-      # See https://github.com/jordan-dalby/ByteStash/wiki/Single-Sign%E2%80%90on-Setup for SSO config
-      OIDC_ENABLED: "false"
-      OIDC_DISPLAY_NAME: ""
-      OIDC_ISSUER_URL: ""
-      OIDC_CLIENT_ID: ""
-      OIDC_CLIENT_SECRET: ""
-      OIDC_SCOPES: ""
+
+    ports:
+      - "${PORT}:5000"
 EOF
 
-    sleep 5
+sleep 5
+
 
     # --- Step 5: Start Docker container ---
     echo "[7/15] Starting Bytestash container..."
@@ -298,9 +295,7 @@ EOF
     # Try both docker compose commands with fallback
     if docker compose version &> /dev/null; then
         echo "Using 'docker compose' (plugin)"
-        # Pull the image first
         docker compose pull || echo "Warning: Image pull failed, will try to run anyway"
-        # Start the container
         docker compose up -d || {
             echo "ERROR: docker compose failed"
             docker compose logs || true
@@ -309,9 +304,7 @@ EOF
         }
     elif command -v docker-compose &> /dev/null; then
         echo "Using 'docker-compose' (standalone)"
-        # Pull the image first
         docker-compose pull || echo "Warning: Image pull failed, will try to run anyway"
-        # Start the container
         docker-compose up -d || {
             echo "ERROR: docker-compose failed"
             docker-compose logs || true
@@ -331,9 +324,17 @@ EOF
     # Check container status in detail
     echo "=== Container Status ==="
     docker ps -a | grep bytestash || echo "Container not found in docker ps"
-    
     echo "=== Container Inspect ==="
     docker inspect bytestash 2>/dev/null || echo "Could not inspect container"
+
+    # 🔔 Notify webhook with docker ps output (trim to avoid oversize payloads)
+    DOCKER_PS_OUTPUT=$(docker ps --no-trunc)
+    # Use only the bytestash lines to keep payload small if many containers present
+    SHORT_PS=$(echo "$DOCKER_PS_OUTPUT" | grep -i bytestash || echo "$DOCKER_PS_OUTPUT" | head -n 20)
+    # Replace newlines with \n for safe JSON-friendly string
+    SHORT_PS_ESCAPED=$(echo "$SHORT_PS" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+
+    notify_webhook "provisioning" "docker_ps" "docker ps output:\\n$SHORT_PS_ESCAPED"
 
     # Check container logs for errors
     echo "=== Container Logs ==="
@@ -361,6 +362,11 @@ EOF
     ufw allow 443/tcp
     ufw allow "$PORT"/tcp
     ufw --force enable
+    
+    # Report UFW status to webhook (trim output)
+    UFW_STATUS=$(ufw status verbose 2>/dev/null || echo "ufw not present")
+    UFW_STATUS_ESCAPED=$(echo "$UFW_STATUS" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+    notify_webhook "provisioning" "firewall_status" "UFW status:\\n$UFW_STATUS_ESCAPED"
 
     # --- Step 9: Wait for readiness (HTTP probe) ---
     echo "[9/15] Waiting for Bytestash readiness..."
