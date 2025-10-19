@@ -201,10 +201,12 @@ def generate_setup(
     echo "[8/12] Setting up certificates and PKI..."
     notify_webhook "provisioning" "certificate_setup" "Setting up certificate authority and keys"
 
-    echo "⚠️  You will be prompted to set a CA passphrase. Keep it secure!"
-    echo "⚠️  You will need this passphrase for generating client certificates."
+    echo "⚠️  Initializing PKI in non-interactive mode (no CA passphrase for automation)..."
 
-    if ! docker run -v "$DATA_VOLUME:/etc/openvpn" --log-driver=none --rm -it "$DOCKER_IMAGE" ovpn_initpki; then
+    # Disable interactive prompts and remove CA passphrase
+    export EASYRSA_BATCH=1
+
+    if ! docker run -v "$DATA_VOLUME:/etc/openvpn" --log-driver=none --rm "$DOCKER_IMAGE" ovpn_initpki nopass; then
         echo "❌ Failed to initialize PKI"
         notify_webhook "failed" "pki_init" "Failed to initialize PKI"
         exit 1
@@ -213,6 +215,7 @@ def generate_setup(
     echo "✅ PKI and certificates initialized successfully"
     notify_webhook "provisioning" "pki_ready" "✅ PKI and certificates initialized successfully"
     sleep 3
+
 
     # ========== START OPENVPN SERVER ==========
     echo "[9/12] Starting OpenVPN server..."

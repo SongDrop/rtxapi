@@ -414,10 +414,64 @@ EOF
     fi
 
     # ==========================================================
+    # Detect container UIDs for volume ownership
+    # ==========================================================
+    POSTGRES_CONTAINER_USER=$(docker run --rm --entrypoint "" postgres:15 id -u postgres)
+    POSTGRES_CONTAINER_GROUP=$(docker run --rm --entrypoint "" postgres:15 id -g postgres)
+
+    RABBITMQ_CONTAINER_USER=999  # default RabbitMQ UID, adjust if needed
+    RABBITMQ_CONTAINER_GROUP=999
+
+    REDIS_CONTAINER_USER=999
+    REDIS_CONTAINER_GROUP=999
+
+    MINIO_CONTAINER_USER=1000
+    MINIO_CONTAINER_GROUP=1000
+
+    # ==========================================================
+    # Prepare persistent volume directories with correct ownership
+    # ==========================================================
+    echo "🔍 Preparing persistent volume directories..."
+    VOLUME_DIRS=(/volume1/docker/plane/db \
+                /volume1/docker/plane/redis \
+                /volume1/docker/plane/rabbitmq \
+                /volume1/docker/plane/uploads)
+
+    for dir in "${VOLUME_DIRS[@]}"; do
+        mkdir -p "$dir" || {
+            echo "❌ Failed to create directory $dir"
+            notify_webhook "failed" "volume_creation" "Cannot create $dir"
+            exit 1
+        }
+
+        case "$dir" in
+            *"/db"*)
+                chown -R $POSTGRES_CONTAINER_USER:$POSTGRES_CONTAINER_GROUP "$dir"
+                chmod 700 "$dir"
+                ;;
+            *"/redis"*)
+                chown -R $REDIS_CONTAINER_USER:$REDIS_CONTAINER_GROUP "$dir"
+                chmod 755 "$dir"
+                ;;
+            *"/rabbitmq"*)
+                chown -R $RABBITMQ_CONTAINER_USER:$RABBITMQ_CONTAINER_GROUP "$dir"
+                chmod 755 "$dir"
+                ;;
+            *"/uploads"*)
+                chown -R $MINIO_CONTAINER_USER:$MINIO_CONTAINER_GROUP "$dir"
+                chmod 755 "$dir"
+                ;;
+        esac
+    done
+
+    echo "✅ Volume directories created and permissions set"
+    notify_webhook "provisioning" "volume_ready" "✅ Volumes ready"
+    sleep 2
+
+    # ==========================================================
     # Start infrastructure services
     # ==========================================================
     INFRA_SERVICES=("db" "redis" "plane-mq" "minio")
-
     for service in "${INFRA_SERVICES[@]}"; do
         echo "🚀 Starting $service..."
         notify_webhook "provisioning" "service_start" "Starting $service"
@@ -426,18 +480,26 @@ EOF
             echo "❌ Failed to start $service"
             $DOCKER_COMPOSE_CMD logs "$service" --tail=50
             notify_webhook "failed" "service_start_failed" "Cannot start $service"
-            exit 1
+            # Optional: clean volume for DB only
+            if [ "$service" = "db" ]; then
+                echo "⚠️ Cleaning DB volume and retrying..."
+                rm -rf /volume1/docker/plane/db/*
+                $DOCKER_COMPOSE_CMD up -d db
+                sleep 10
+            else
+                exit 1
+            fi
         fi
 
         echo "✅ $service started"
         notify_webhook "provisioning" "service_started" "✅ $service started successfully"
-        sleep 3
+        sleep 5
     done
 
     # ==========================================================
-    # Wait for healthchecks
+    # Wait for healthchecks with improved sleep/retry
     # ==========================================================
-    MAX_WAIT=60
+    MAX_WAIT=90  # 90*5s = 7.5 minutes max
 
     wait_for_postgres() {
         local count=0
@@ -503,7 +565,7 @@ EOF
         notify_webhook "provisioning" "service_ready" "✅ MinIO ready"
     }
 
-    # Run all healthchecks
+    # Run healthchecks
     wait_for_postgres
     sleep 2
     wait_for_redis
@@ -512,7 +574,6 @@ EOF
     sleep 2
     wait_for_minio
     sleep 2
-
 
 
     # ==========================================================
