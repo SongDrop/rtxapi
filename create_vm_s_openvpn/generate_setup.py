@@ -292,50 +292,50 @@ def generate_setup(
     echo "[6/15] ⚙️ Writing docker-compose.yml..."
     notify_webhook "provisioning" "compose_file" "Writing OpenVPN docker-compose.yml"
 
-    cat > docker-compose.yml <<EOF
+cat > docker-compose.yml <<EOF
 version: "3.5"
 services:
-    openvpn:
+  openvpn:
     container_name: openvpn
     image: iamjanam/openvpn-server-with-ui:latest
     privileged: true
     ports:
-        - "${PORT_VPN}:1194/udp"
+      - "${PORT_VPN}:1194/udp"
     environment:
-        TRUST_SUB: "10.0.70.0/24"
-        GUEST_SUB: "10.0.71.0/24"
-        HOME_SUB: "192.168.88.0/24"
+      TRUST_SUB: "10.0.70.0/24"
+      GUEST_SUB: "10.0.71.0/24"
+      HOME_SUB: "192.168.88.0/24"
     volumes:
-        - ./pki:/etc/openvpn/pki
-        - ./clients:/etc/openvpn/clients
-        - ./config:/etc/openvpn/config
-        - ./staticclients:/etc/openvpn/staticclients
-        - ./log:/var/log/openvpn
-        - ./fw-rules.sh:/opt/app/fw-rules.sh
-        - ./checkpsw.sh:/opt/app/checkpsw.sh
+      - ./pki:/etc/openvpn/pki
+      - ./clients:/etc/openvpn/clients
+      - ./config:/etc/openvpn/config
+      - ./staticclients:/etc/openvpn/staticclients
+      - ./log:/var/log/openvpn
+      - ./fw-rules.sh:/opt/app/fw-rules.sh
+      - ./checkpsw.sh:/opt/app/checkpsw.sh
     cap_add:
-        - NET_ADMIN
+      - NET_ADMIN
     restart: always
     depends_on:
-        - openvpn-ui
+      - openvpn-ui
 
-    openvpn-ui:
+  openvpn-ui:
     container_name: openvpn-ui
     image: d3vilh/openvpn-ui:latest
     environment:
-        - OPENVPN_ADMIN_USERNAME=admin
-        - OPENVPN_ADMIN_PASSWORD=__ADMIN_PASSWORD__
+      - OPENVPN_ADMIN_USERNAME=admin
+      - OPENVPN_ADMIN_PASSWORD=__ADMIN_PASSWORD__
     privileged: true
     ports:
-        - "${PORT_UI}:8080/tcp"
+      - "${PORT_UI}:8080/tcp"
     volumes:
-        - ./:/etc/openvpn
-        - ./db:/opt/openvpn-ui/db
-        - ./pki:/usr/share/easy-rsa/pki
-        - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./:/etc/openvpn
+      - ./db:/opt/openvpn-ui/db
+      - ./pki:/usr/share/easy-rsa/pki
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: always
 EOF
-    sleep 2
+
 
     # ----------------------------------------------------------------------
     # Step 7: Start Containers
