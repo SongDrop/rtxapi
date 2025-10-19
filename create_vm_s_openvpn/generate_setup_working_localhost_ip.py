@@ -300,7 +300,7 @@ services:
     image: iamjanam/openvpn-server-with-ui:latest
     privileged: true
     ports:
-      - "0.0.0.0:${PORT_VPN}:1194/udp"
+      - "${PORT_VPN}:1194/udp"
     environment:
       TRUST_SUB: "10.0.70.0/24"
       GUEST_SUB: "10.0.71.0/24"
