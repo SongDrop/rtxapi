@@ -300,8 +300,9 @@ services:
     image: iamjanam/openvpn-server-with-ui:latest
     privileged: true
     ports:
-      - "${PORT_VPN}:1194/udp"
+      - "0.0.0.0:${PORT_VPN}:1194/udp"  # ← Explicitly bind to all interfaces
     environment:
+      - OPENVPN_HOSTNAME=__DOMAIN__      # ← Add this line
       TRUST_SUB: "10.0.70.0/24"
       GUEST_SUB: "10.0.71.0/24"
       HOME_SUB: "192.168.88.0/24"
