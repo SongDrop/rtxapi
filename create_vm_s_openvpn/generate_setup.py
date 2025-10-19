@@ -87,35 +87,194 @@ def generate_setup(
     done
     sleep 2
 
-    # ----------------------------------------------------------------------
+   # ==========================================================
     # Step 3: Install System Dependencies
-    # ----------------------------------------------------------------------
-    echo "[3/15] 🧩 Installing system dependencies..."
-    notify_webhook "provisioning" "dependencies" "Installing required system packages"
+    # ==========================================================
+    echo "[3/15] Installing system dependencies..."
+    notify_webhook "provisioning" "system_dependencies" "Installing base packages"
+
+    # Set non-interactive mode for apt
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get upgrade -y -qq
-    apt-get install -y -qq curl git nginx certbot python3-certbot-nginx python3-pip python3-venv jq ufw xxd lsb-release software-properties-common
+
+    # ----------------------------------------------------------
+    # Update package lists
+    # ----------------------------------------------------------
+    notify_webhook "provisioning" "apt_update" "Running apt-get update"
+    if ! apt-get update -q; then
+        notify_webhook "failed" "apt_update" "apt-get update failed"
+        exit 1
+    fi
+
+    # ----------------------------------------------------------
+    # Upgrade installed packages
+    # ----------------------------------------------------------
+    notify_webhook "provisioning" "apt_upgrade" "Running apt-get upgrade"
+    if ! apt-get upgrade -y -q; then
+        notify_webhook "failed" "apt_upgrade" "apt-get upgrade failed"
+        exit 1
+    fi
+
+    # ----------------------------------------------------------
+    # Ensure no locks block future operations
+    # ----------------------------------------------------------
+    sleep 3
+    fuser -vki /var/lib/dpkg/lock-frontend || true
+    dpkg --configure -a
+
+    # ----------------------------------------------------------
+    # Install required base packages
+    # ----------------------------------------------------------
+    notify_webhook "provisioning" "apt_install" "Installing required packages"
+    REQUIRED_PACKAGES=(
+        curl
+        git
+        nginx
+        certbot
+        python3-certbot-nginx
+        python3-pip
+        python3-venv
+        jq
+        make
+        ufw
+        xxd
+        software-properties-common
+    )
+
+    if ! apt-get install -y -q "${REQUIRED_PACKAGES[@]}"; then
+        notify_webhook "failed" "apt_install" "Base package install failed"
+        exit 1
+    fi
+
+    notify_webhook "provisioning" "system_dependencies_success" "✅ System dependencies installed successfully"
     sleep 5
 
-    # ----------------------------------------------------------------------
-    # Step 4: Install Docker
-    # ----------------------------------------------------------------------
-    echo "[4/15] 🐳 Installing Docker and Docker Compose..."
-    notify_webhook "provisioning" "docker_install" "Installing Docker engine and Compose"
-    apt-get install -y -qq ca-certificates curl gnupg lsb-release apt-transport-https
+    # ========== DOCKER INSTALLATION ==========
+    echo "[4/15] Installing Docker..."
+    notify_webhook "provisioning" "docker_install" "Installing Docker engine"
+    sleep 5
+
+    # Install prerequisites
+    apt-get install -y -q ca-certificates curl gnupg lsb-release apt-transport-https || {
+        echo "❌ Failed to install Docker prerequisites"
+        notify_webhook "failed" "docker_prereq" "Failed to install Docker prerequisites"
+        exit 1
+    }
+
+    # Remove old versions (ignore errors)
+    apt-get remove -y docker docker-engine docker.io containerd runc >/dev/null 2>&1 || true
+
+    # ==========================================================
+    # Install Docker (with retry on GPG key and package install)
+    # ==========================================================
+    echo "[4/15] Installing Docker..."
+    notify_webhook "provisioning" "docker_install" "Installing Docker with retries"
+
+    # Setup variables
+    DOCKER_GPG_URL="https://download.docker.com/linux/ubuntu/gpg"
+    DOCKER_KEYRING="/etc/apt/keyrings/docker.gpg"
+    RETRY_MAX=3
+    RETRY_DELAY=5
+
     mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-      https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
-      tee /etc/apt/sources.list.d/docker.list
-    apt-get update -qq
-    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    chmod a+r /etc/apt/keyrings || true
 
+    # --- Download Docker GPG key with retries ---
+    for attempt in $(seq 1 $RETRY_MAX); do
+        echo "Downloading Docker GPG key (attempt $attempt/$RETRY_MAX)..."
+        if curl -fsSL "$DOCKER_GPG_URL" | gpg --dearmor -o "$DOCKER_KEYRING"; then
+            chmod a+r "$DOCKER_KEYRING"
+            echo "✅ Docker GPG key downloaded successfully"
+            break
+        else
+            echo "⚠️ Attempt $attempt failed to download Docker GPG key"
+            notify_webhook "warning" "docker_gpg_retry" "Attempt $attempt to download Docker GPG key failed"
+            sleep $RETRY_DELAY
+            if [ $attempt -eq $RETRY_MAX ]; then
+                echo "❌ Docker GPG key download failed after $RETRY_MAX attempts"
+                notify_webhook "failed" "docker_gpg" "Failed to download Docker GPG key after retries"
+                exit 1
+            fi
+        fi
+    done
+
+    # --- Add Docker repository ---
+    ARCH=$(dpkg --print-architecture)
+    CODENAME=$(lsb_release -cs)
+    echo "deb [arch=$ARCH signed-by=$DOCKER_KEYRING] https://download.docker.com/linux/ubuntu $CODENAME stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # --- Update package list ---
+    apt-get update -q || {
+        echo "❌ Failed to update package list after adding Docker repo"
+        notify_webhook "failed" "docker_repo" "Failed to update package list"
+        exit 1
+    }
+
+    # --- Install Docker packages with retries ---
+    DOCKER_PACKAGES=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin)
+    for attempt in $(seq 1 $RETRY_MAX); do
+        echo "Installing Docker packages (attempt $attempt/$RETRY_MAX)..."
+        if apt-get install -y -q "${DOCKER_PACKAGES[@]}"; then
+            echo "✅ Docker installed successfully"
+            break
+        else
+            echo "⚠️ Docker install attempt $attempt failed, retrying in $RETRY_DELAY seconds..."
+            notify_webhook "warning" "docker_install_retry" "Attempt $attempt to install Docker failed"
+            sleep $RETRY_DELAY
+            if [ $attempt -eq $RETRY_MAX ]; then
+                echo "❌ Docker installation failed after $RETRY_MAX attempts"
+                notify_webhook "failed" "docker_install" "Docker install failed after retries"
+                exit 1
+            fi
+        fi
+    done
+
+
+    # ========== DOCKER COMPOSE INSTALLATION ==========
+    echo "[4.5/15] Installing Docker Compose..."
+    notify_webhook "provisioning" "docker_compose_install" "Installing Docker Compose"
+    
+    # Try Docker Compose plugin first (now that Docker repo is available)
+    if apt-get install -y -q docker-compose-plugin; then
+        echo "✅ Docker Compose plugin installed via apt"
+    else
+        echo "⚠️ Docker Compose plugin not available, installing via pip"
+        # Ensure pip is properly installed and updated
+        apt-get install -y -q python3-pip python3-venv || {
+            echo "❌ Failed to install python3-pip"
+            notify_webhook "failed" "docker_compose" "Failed to install python3-pip for Docker Compose"
+            exit 1
+        }
+        # Update pip and install docker-compose
+        pip3 install --upgrade pip || true
+        if pip3 install docker-compose; then
+            echo "✅ Docker Compose installed via pip"
+        else
+            echo "❌ Docker Compose installation failed via both apt and pip"
+            notify_webhook "failed" "docker_compose" "Docker Compose install failed via both apt and pip"
+            exit 1
+        fi
+    fi
+
+    # Enable and start Docker
     systemctl enable docker
-    systemctl start docker
-    sleep 5
+    if ! systemctl start docker; then
+        echo "❌ Failed to start Docker service"
+        journalctl -u docker --no-pager | tail -n 20
+        notify_webhook "failed" "docker_service" "Failed to start Docker service"
+        exit 1
+    fi
+    
+    # Verify Docker works
+    if ! docker info >/dev/null 2>&1; then
+        echo "❌ Docker daemon did not start correctly"
+        journalctl -u docker --no-pager | tail -n 30
+        notify_webhook "failed" "docker_daemon" "Docker daemon failed to start"
+        exit 1
+    fi
+
+    echo "✅ Docker installed and running"
+    notify_webhook "provisioning" "docker_ready" "✅ Docker installed successfully"
+    sleep 2
 
     # ----------------------------------------------------------------------
     # Step 5: Clone OpenVPN Repo
@@ -125,6 +284,8 @@ def generate_setup(
     git clone https://github.com/SongDrop/openvpnserver-with-ui.git "$OPENVPN_DIR"
     cd "$OPENVPN_DIR"
 
+    notify_webhook "provisioning" "clone_repo_completed" "✅ downloaded SongDrop/openvpnserver-with-ui"
+    sleep 5
     # ----------------------------------------------------------------------
     # Step 6: Override docker-compose.yml
     # ----------------------------------------------------------------------
@@ -132,48 +293,48 @@ def generate_setup(
     notify_webhook "provisioning" "compose_file" "Writing OpenVPN docker-compose.yml"
 
     cat > docker-compose.yml <<EOF
-    version: "3.5"
-    services:
-      openvpn:
-        container_name: openvpn
-        image: iamjanam/openvpn-server-with-ui:latest
-        privileged: true
-        ports:
-          - "${PORT_VPN}:1194/udp"
-        environment:
-          TRUST_SUB: "10.0.70.0/24"
-          GUEST_SUB: "10.0.71.0/24"
-          HOME_SUB: "192.168.88.0/24"
-        volumes:
-          - ./pki:/etc/openvpn/pki
-          - ./clients:/etc/openvpn/clients
-          - ./config:/etc/openvpn/config
-          - ./staticclients:/etc/openvpn/staticclients
-          - ./log:/var/log/openvpn
-          - ./fw-rules.sh:/opt/app/fw-rules.sh
-          - ./checkpsw.sh:/opt/app/checkpsw.sh
-        cap_add:
-          - NET_ADMIN
-        restart: always
-        depends_on:
-          - openvpn-ui
+version: "3.5"
+services:
+    openvpn:
+    container_name: openvpn
+    image: iamjanam/openvpn-server-with-ui:latest
+    privileged: true
+    ports:
+        - "${PORT_VPN}:1194/udp"
+    environment:
+        TRUST_SUB: "10.0.70.0/24"
+        GUEST_SUB: "10.0.71.0/24"
+        HOME_SUB: "192.168.88.0/24"
+    volumes:
+        - ./pki:/etc/openvpn/pki
+        - ./clients:/etc/openvpn/clients
+        - ./config:/etc/openvpn/config
+        - ./staticclients:/etc/openvpn/staticclients
+        - ./log:/var/log/openvpn
+        - ./fw-rules.sh:/opt/app/fw-rules.sh
+        - ./checkpsw.sh:/opt/app/checkpsw.sh
+    cap_add:
+        - NET_ADMIN
+    restart: always
+    depends_on:
+        - openvpn-ui
 
-      openvpn-ui:
-        container_name: openvpn-ui
-        image: d3vilh/openvpn-ui:latest
-        environment:
-          - OPENVPN_ADMIN_USERNAME=admin
-          - OPENVPN_ADMIN_PASSWORD=__ADMIN_PASSWORD__
-        privileged: true
-        ports:
-          - "${PORT_UI}:8080/tcp"
-        volumes:
-          - ./:/etc/openvpn
-          - ./db:/opt/openvpn-ui/db
-          - ./pki:/usr/share/easy-rsa/pki
-          - /var/run/docker.sock:/var/run/docker.sock:ro
-        restart: always
-    EOF
+    openvpn-ui:
+    container_name: openvpn-ui
+    image: d3vilh/openvpn-ui:latest
+    environment:
+        - OPENVPN_ADMIN_USERNAME=admin
+        - OPENVPN_ADMIN_PASSWORD=__ADMIN_PASSWORD__
+    privileged: true
+    ports:
+        - "${PORT_UI}:8080/tcp"
+    volumes:
+        - ./:/etc/openvpn
+        - ./db:/opt/openvpn-ui/db
+        - ./pki:/usr/share/easy-rsa/pki
+        - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: always
+EOF
     sleep 2
 
     # ----------------------------------------------------------------------
