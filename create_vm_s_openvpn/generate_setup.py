@@ -365,36 +365,65 @@ EOF
     echo "[9/15] ⏳ Waiting for OpenVPN UI readiness..."
     notify_webhook "provisioning" "ui_wait" "Waiting for UI to respond"
 
-    # First, verify the container is running
-    CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' openvpn-ui 2>/dev/null || echo "nonexistent")
-    echo "📦 Container status: $CONTAINER_STATUS"
-    if [ "$CONTAINER_STATUS" != "running" ]; then
+    # First, verify BOTH containers are running
+    echo "📦 Checking container statuses..."
+    OPENVPN_STATUS=$(docker inspect -f '{{.State.Status}}' openvpn 2>/dev/null || echo "nonexistent")
+    UI_STATUS=$(docker inspect -f '{{.State.Status}}' openvpn-ui 2>/dev/null || echo "nonexistent")
+
+    echo "🔍 OpenVPN container status: $OPENVPN_STATUS"
+    echo "🔍 UI container status: $UI_STATUS"
+
+    if [ "$UI_STATUS" != "running" ]; then
         echo "❌ OpenVPN UI container not running"
-        docker logs openvpn-ui 2>/dev/null | tail -20 || echo "No logs available"
-        notify_webhook "failed" "ui_probe" "OpenVPN UI container not running. Status: $CONTAINER_STATUS"
+        docker logs openvpn-ui 2>/dev/null | tail -20 || echo "No UI logs available"
+        notify_webhook "failed" "ui_probe" "OpenVPN UI container not running. Status: $UI_STATUS"
         exit 1
     fi
 
-    # Check if port is bound on host
-    echo "🔍 Checking port $PORT_UI binding..."
+    if [ "$OPENVPN_STATUS" != "running" ]; then
+        echo "❌ OpenVPN main container not running"
+        docker logs openvpn 2>/dev/null | tail -20 || echo "No OpenVPN logs available"
+        notify_webhook "failed" "openvpn_container" "OpenVPN main container not running. Status: $OPENVPN_STATUS"
+        exit 1
+    fi
+
+    # Check if ports are bound on host
+    echo "🔍 Checking port bindings..."
     if ss -tuln | grep ":$PORT_UI " >/dev/null; then
         echo "✅ Port $PORT_UI is bound on host"
     else
-        echo "⚠️ Port $PORT_UI is NOT bound on host - waiting anyway..."
+        echo "⚠️ Port $PORT_UI is NOT bound on host"
     fi
 
-    # Enhanced readiness check
+    if ss -tuln | grep ":$PORT_VPN " >/dev/null; then
+        echo "✅ Port $PORT_VPN is bound on host"
+    else
+        echo "⚠️ Port $PORT_VPN is NOT bound on host"
+    fi
+
+    # Enhanced readiness check for UI
     elapsed=0
     READY=false
     while [ $elapsed -lt $READY_TIMEOUT ]; do
-        # Verify container is still running
-        if [ "$(docker inspect -f '{{.State.Status}}' openvpn-ui 2>/dev/null)" != "running" ]; then
-            echo "❌ Container stopped during startup"
-            docker logs openvpn-ui --since "2m ago" 2>/dev/null | tail -15 || true
-            break
+        # Verify BOTH containers are still running
+        CURRENT_OPENVPN_STATUS=$(docker inspect -f '{{.State.Status}}' openvpn 2>/dev/null || echo "stopped")
+        CURRENT_UI_STATUS=$(docker inspect -f '{{.State.Status}}' openvpn-ui 2>/dev/null || echo "stopped")
+        
+        if [ "$CURRENT_OPENVPN_STATUS" != "running" ]; then
+            echo "❌ OpenVPN container stopped during startup"
+            docker logs openvpn --since "2m ago" 2>/dev/null | tail -15 || true
+            notify_webhook "failed" "openvpn_crash" "OpenVPN container crashed during UI readiness check"
+            exit 1
         fi
         
-        # Test UI endpoint with better diagnostics
+        if [ "$CURRENT_UI_STATUS" != "running" ]; then
+            echo "❌ UI container stopped during startup"
+            docker logs openvpn-ui --since "2m ago" 2>/dev/null | tail -15 || true
+            notify_webhook "failed" "ui_crash" "UI container crashed during readiness check"
+            exit 1
+        fi
+        
+        # Test UI endpoint
         echo "Testing UI at http://127.0.0.1:$PORT_UI/"
         if curl -sf -o /dev/null -w "HTTP %{http_code} - %{time_total}s\n" \
         -H "User-Agent: Bytestash-Provisioner" \
@@ -408,10 +437,12 @@ EOF
             echo "⏳ UI not ready yet (${elapsed}s elapsed)"
         fi
         
-        # Show logs every 30 seconds for debugging
+        # Show logs from BOTH containers every 30 seconds
         if [ $((elapsed % 30)) -eq 0 ]; then
-            echo "📋 Recent container logs:"
-            docker logs openvpn-ui --since "1m ago" 2>/dev/null | tail -8 || echo "No recent logs available"
+            echo "📋 Recent OpenVPN logs:"
+            docker logs openvpn --since "1m ago" 2>/dev/null | tail -5 || echo "No OpenVPN logs"
+            echo "📋 Recent UI logs:"
+            docker logs openvpn-ui --since "1m ago" 2>/dev/null | tail -5 || echo "No UI logs"
         fi
         
         sleep $SLEEP_INTERVAL
@@ -421,9 +452,12 @@ EOF
     if [ "$READY" = false ]; then
         echo "❌ OpenVPN UI did not respond within $READY_TIMEOUT seconds"
         echo "🔍 Final container status:"
-        docker inspect openvpn-ui 2>/dev/null | jq -r '.[].State' || docker inspect openvpn-ui
-        echo "📄 Final logs:"
-        docker logs openvpn-ui 2>/dev/null | tail -30 || echo "No logs available"
+        echo "OpenVPN:" && docker inspect openvpn 2>/dev/null | jq -r '.[].State' 2>/dev/null || docker inspect openvpn 2>/dev/null
+        echo "UI:" && docker inspect openvpn-ui 2>/dev/null | jq -r '.[].State' 2>/dev/null || docker inspect openvpn-ui 2>/dev/null
+        echo "📄 Final OpenVPN logs:"
+        docker logs openvpn 2>/dev/null | tail -20 || echo "No OpenVPN logs"
+        echo "📄 Final UI logs:"
+        docker logs openvpn-ui 2>/dev/null | tail -20 || echo "No UI logs"
         notify_webhook "failed" "ui_timeout" "OpenVPN UI failed to respond after $READY_TIMEOUT seconds"
         exit 1
     fi
