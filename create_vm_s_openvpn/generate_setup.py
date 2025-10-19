@@ -364,21 +364,75 @@ EOF
     # ----------------------------------------------------------------------
     echo "[9/15] ⏳ Waiting for OpenVPN UI readiness..."
     notify_webhook "provisioning" "ui_wait" "Waiting for UI to respond"
-    elapsed=0; READY=false
-    while [ $elapsed -lt $READY_TIMEOUT ]; do
-        if curl -sf http://127.0.0.1:$PORT_UI/ >/dev/null 2>&1; then
-            READY=true; break
-        fi
-        sleep $SLEEP_INTERVAL
-        elapsed=$((elapsed + SLEEP_INTERVAL))
-    done
-    if [ "$READY" = false ]; then
-        echo "❌ OpenVPN UI did not respond in time"
-        notify_webhook "failed" "ui_timeout" "OpenVPN UI failed to start"
+
+    # First, verify the container is running
+    CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' openvpn-ui 2>/dev/null || echo "nonexistent")
+    echo "📦 Container status: $CONTAINER_STATUS"
+    if [ "$CONTAINER_STATUS" != "running" ]; then
+        echo "❌ OpenVPN UI container not running"
+        docker logs openvpn-ui 2>/dev/null | tail -20 || echo "No logs available"
+        notify_webhook "failed" "ui_probe" "OpenVPN UI container not running. Status: $CONTAINER_STATUS"
         exit 1
     fi
 
-   # ========== NGINX CONFIG + SSL (OpenVPN / fail-safe style) ==========
+    # Check if port is bound on host
+    echo "🔍 Checking port $PORT_UI binding..."
+    if ss -tuln | grep ":$PORT_UI " >/dev/null; then
+        echo "✅ Port $PORT_UI is bound on host"
+    else
+        echo "⚠️ Port $PORT_UI is NOT bound on host - waiting anyway..."
+    fi
+
+    # Enhanced readiness check
+    elapsed=0
+    READY=false
+    while [ $elapsed -lt $READY_TIMEOUT ]; do
+        # Verify container is still running
+        if [ "$(docker inspect -f '{{.State.Status}}' openvpn-ui 2>/dev/null)" != "running" ]; then
+            echo "❌ Container stopped during startup"
+            docker logs openvpn-ui --since "2m ago" 2>/dev/null | tail -15 || true
+            break
+        fi
+        
+        # Test UI endpoint with better diagnostics
+        echo "Testing UI at http://127.0.0.1:$PORT_UI/"
+        if curl -sf -o /dev/null -w "HTTP %{http_code} - %{time_total}s\n" \
+        -H "User-Agent: Bytestash-Provisioner" \
+        --connect-timeout 10 \
+        --max-time 15 \
+        "http://127.0.0.1:$PORT_UI/" 2>/dev/null; then
+            echo "✅ OpenVPN UI is responding"
+            READY=true
+            break
+        else
+            echo "⏳ UI not ready yet (${elapsed}s elapsed)"
+        fi
+        
+        # Show logs every 30 seconds for debugging
+        if [ $((elapsed % 30)) -eq 0 ]; then
+            echo "📋 Recent container logs:"
+            docker logs openvpn-ui --since "1m ago" 2>/dev/null | tail -8 || echo "No recent logs available"
+        fi
+        
+        sleep $SLEEP_INTERVAL
+        elapsed=$((elapsed + SLEEP_INTERVAL))
+    done
+
+    if [ "$READY" = false ]; then
+        echo "❌ OpenVPN UI did not respond within $READY_TIMEOUT seconds"
+        echo "🔍 Final container status:"
+        docker inspect openvpn-ui 2>/dev/null | jq -r '.[].State' || docker inspect openvpn-ui
+        echo "📄 Final logs:"
+        docker logs openvpn-ui 2>/dev/null | tail -30 || echo "No logs available"
+        notify_webhook "failed" "ui_timeout" "OpenVPN UI failed to respond after $READY_TIMEOUT seconds"
+        exit 1
+    fi
+
+    echo "✅ OpenVPN UI is ready and responsive"
+    notify_webhook "provisioning" "ui_ready" "✅ OpenVPN UI readiness probe successful"
+    sleep 3
+
+    # ========== NGINX CONFIG + SSL (OpenVPN / fail-safe style) ==========
     echo "[10/15] Configuring nginx reverse proxy with SSL..."
     notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
 
@@ -488,7 +542,7 @@ EOF_SSL
 
     echo "✅ OpenVPN provisioning complete!"
     notify_webhook "provisioning" "completed" "✅ OpenVPN setup completed successfully"
-    """)
+""")
 
     # -------------------------------
     # Inject webhook function
@@ -519,7 +573,7 @@ EOF_SSL
     else:
         webhook_fn = "notify_webhook() { return 0; }"
 
-   # ========== TOKEN REPLACEMENT ==========
+    # ========== TOKEN REPLACEMENT ==========
     # Replace webhook function first
     final = script_template.replace("__WEBHOOK_FUNCTION__", webhook_fn)
 
