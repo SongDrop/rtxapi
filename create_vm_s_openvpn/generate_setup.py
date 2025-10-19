@@ -203,7 +203,7 @@ def generate_setup(
 
     echo "⚠️  Initializing PKI in non-interactive mode (no CA passphrase for automation)..."
 
-    # Disable interactive prompts and remove CA passphrase
+    # Disable interactive prompts
     export EASYRSA_BATCH=1
 
     if ! docker run -v "$DATA_VOLUME:/etc/openvpn" --log-driver=none --rm "$DOCKER_IMAGE" ovpn_initpki nopass; then
