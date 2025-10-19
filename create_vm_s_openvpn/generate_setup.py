@@ -1,6 +1,6 @@
 import textwrap
 
-def generate_openvpn_setup(
+def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
