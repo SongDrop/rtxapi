@@ -545,6 +545,42 @@ EOF
     fi
 
     # ==========================================================
+    # Pre-startup system checks
+    # ==========================================================
+    echo "🔍 Running system pre-checks..."
+    notify_webhook "provisioning" "system_checks" "Running system pre-checks"
+
+    # Check available disk space
+    echo "    Checking disk space..."
+    DISK_AVAILABLE=$(df /var/lib/docker /opt/plane /tmp . | awk 'NR>1 {print $4}' | sort -n | head -1)
+    if [ "$DISK_AVAILABLE" -lt 1048576 ]; then  # Less than 1GB
+        echo "    ❌ Insufficient disk space: ${DISK_AVAILABLE}KB available"
+        df -h
+        notify_webhook "failed" "low_disk_space" "Insufficient disk space for PostgreSQL - only ${DISK_AVAILABLE}KB available"
+        exit 1
+    fi
+    notify_webhook "provisioning" "disk_check" "✅ Disk space sufficient: ${DISK_AVAILABLE}KB available"
+    
+    # Check memory
+    echo "    Checking memory..."
+    MEM_AVAILABLE=$(free -m | awk 'NR==2{print $7}')
+    if [ "$MEM_AVAILABLE" -lt 512 ]; then  # Less than 512MB
+        echo "    ⚠️ Low memory available: ${MEM_AVAILABLE}MB (PostgreSQL needs at least 256MB)"
+        notify_webhook "warning" "low_memory" "Low memory available: ${MEM_AVAILABLE}MB"
+    else
+        notify_webhook "provisioning" "memory_check" "✅ Memory sufficient: ${MEM_AVAILABLE}MB available"
+    fi
+    
+    # Clean up any existing containers that might conflict
+    echo "    Cleaning up any existing containers..."
+    notify_webhook "provisioning" "cleanup" "Cleaning up existing containers"
+    $DOCKER_COMPOSE_CMD down --remove-orphans >/dev/null 2>&1 || true
+    sleep 2
+    
+    echo "✅ System pre-checks passed"
+    notify_webhook "provisioning" "system_checks_passed" "✅ All system pre-checks passed"
+
+    # ==========================================================
     # Start infrastructure services (IMPROVED VERSION)
     # ==========================================================
     echo "🚀 Starting infrastructure services..."
@@ -553,16 +589,24 @@ EOF
     INFRA_SERVICES=("plane-db" "plane-redis" "plane-mq" "plane-minio")
     for service in "${INFRA_SERVICES[@]}"; do
         echo "  Starting $service..."
-        
+        notify_webhook "provisioning" "service_start" "Starting $service"
+
         # Pull image first to avoid download delays during startup
         echo "    Pulling image for $service..."
+        notify_webhook "provisioning" "pulling_image" "Pulling Docker image for $service"
         if ! $DOCKER_COMPOSE_CMD pull "$service" --quiet; then
             echo "    ⚠️ Failed to pull $service image, but continuing..."
+            notify_webhook "warning" "image_pull_failed" "Failed to pull $service image, but continuing"
+        else
+            notify_webhook "provisioning" "image_pulled" "✅ Docker image pulled for $service"
         fi
         
         # Start service with timeout and better error handling
+        echo "    Starting $service container..."
+        notify_webhook "provisioning" "container_start" "Starting $service container"
         if timeout 60s $DOCKER_COMPOSE_CMD up -d "$service"; then
             echo "    ✅ $service started successfully"
+            notify_webhook "provisioning" "container_started" "✅ $service container started successfully"
             
             # Check if container is actually running (not just created)
             sleep 3
@@ -572,9 +616,10 @@ EOF
                 $DOCKER_COMPOSE_CMD ps "$service"
                 echo "    🔍 Container logs:"
                 $DOCKER_COMPOSE_CMD logs "$service" --tail=20
-                notify_webhook "failed" "service_start_failed" "Container $service started but failed to run"
+                notify_webhook "failed" "service_start_failed" "Container $service started but failed to run - check logs"
                 exit 1
             fi
+            notify_webhook "provisioning" "container_running" "✅ $service container is running"
         else
             echo "    ❌ Failed to start $service"
             echo "    🔍 Docker Compose output:"
@@ -583,21 +628,23 @@ EOF
             $DOCKER_COMPOSE_CMD ps "$service"
             echo "    🔍 Recent system logs:"
             journalctl -u docker --no-pager | tail -n 20
-            notify_webhook "failed" "service_start_failed" "Failed to start $service"
+            notify_webhook "failed" "service_start_failed" "Failed to start $service - check Docker logs"
             exit 1
         fi
         
         echo "    ✅ $service is running"
+        notify_webhook "provisioning" "service_ready" "✅ $service is running and ready"
         sleep 8  # Give more time between services
     done
 
     echo "✅ All infrastructure services started"
-    notify_webhook "provisioning" "infrastructure_started" "All infrastructure services started, waiting for readiness..."
+    notify_webhook "provisioning" "infrastructure_started" "✅ All infrastructure services started, waiting for readiness..."
 
     # ==========================================================
     # Wait for infrastructure health checks (IMPROVED)
     # ==========================================================
     echo "⏳ Waiting for infrastructure services to be ready..."
+    notify_webhook "provisioning" "health_checks_start" "Starting health checks for infrastructure services"
     MAX_WAIT=180  # Increased to 3 minutes
 
     wait_for_service() {
@@ -606,17 +653,20 @@ EOF
         local count=0
         
         echo "  Waiting for $service to be ready..."
+        notify_webhook "provisioning" "service_health_check" "Waiting for $service to be ready"
         
         # First, wait for container to be in running state
         local running_count=0
         while [ $running_count -lt 12 ]; do  # Wait up to 60 seconds for container to be running
             if $DOCKER_COMPOSE_CMD ps "$service" | grep -q "Up"; then
+                notify_webhook "provisioning" "container_ready" "✅ $service container is in 'Up' state"
                 break
             fi
             sleep 5
             running_count=$((running_count + 1))
             if [ $running_count -eq 12 ]; then
                 echo "    ❌ $service container never reached 'Up' state"
+                notify_webhook "failed" "container_not_ready" "$service container never reached 'Up' state after 60 seconds"
                 return 1
             fi
         done
@@ -629,6 +679,7 @@ EOF
             # Show progress every 30 seconds
             if [ $((count % 6)) -eq 0 ]; then
                 echo "    Still waiting for $service... (${count}s)"
+                notify_webhook "provisioning" "health_check_progress" "Still waiting for $service to be ready... (${count}s)"
                 # Show container status
                 $DOCKER_COMPOSE_CMD ps "$service" | grep "$service"
             fi
@@ -638,6 +689,7 @@ EOF
                 echo "    ❌ $service container stopped running!"
                 echo "    🔍 $service logs:"
                 $DOCKER_COMPOSE_CMD logs "$service" --tail=30
+                notify_webhook "failed" "container_stopped" "$service container stopped running during health check"
                 return 1
             fi
             
@@ -647,49 +699,85 @@ EOF
                 $DOCKER_COMPOSE_CMD logs "$service" --tail=50
                 echo "    🔍 Current status:"
                 $DOCKER_COMPOSE_CMD ps "$service"
+                notify_webhook "failed" "health_check_timeout" "$service did not become ready within $((MAX_WAIT * 5)) seconds"
                 return 1
             fi
         done
         echo "    ✅ $service is ready"
+        notify_webhook "provisioning" "service_healthy" "✅ $service is healthy and ready"
         return 0
     }
 
     # Wait for services with better error handling
     echo "  Checking PostgreSQL..."
+    notify_webhook "provisioning" "postgresql_check" "Starting PostgreSQL health check"
+    
+    # Enhanced PostgreSQL debugging
+    echo "    Checking PostgreSQL container status..."
+    if ! $DOCKER_COMPOSE_CMD ps plane-db | grep -q "Up"; then
+        echo "    ❌ PostgreSQL container is not running!"
+        echo "    🔍 PostgreSQL container status:"
+        $DOCKER_COMPOSE_CMD ps plane-db
+        echo "    🔍 PostgreSQL container logs:"
+        $DOCKER_COMPOSE_CMD logs plane-db --tail=50
+        echo "    🔍 Checking if volumes were created:"
+        docker volume ls | grep pgdata || echo "    ❌ pgdata volume not found"
+        notify_webhook "failed" "postgresql_not_running" "PostgreSQL container is not running - check logs and volumes"
+        exit 1
+    fi
+    notify_webhook "provisioning" "postgresql_running" "✅ PostgreSQL container is running"
+
+    # Now try the health check with better debugging
+    echo "    PostgreSQL container is running, waiting for database readiness..."
     wait_for_service "PostgreSQL" "docker exec plane-db pg_isready -U $POSTGRES_USER -q" || {
         echo "❌ PostgreSQL health check failed"
-        echo "🔍 Detailed PostgreSQL logs:"
+        echo "🔍 Detailed PostgreSQL investigation:"
+        echo "    Container status:"
+        $DOCKER_COMPOSE_CMD ps plane-db
+        echo "    Recent PostgreSQL logs:"
         $DOCKER_COMPOSE_CMD logs plane-db --tail=50
-        notify_webhook "failed" "postgresql_failed" "PostgreSQL failed health check"
+        echo "    Checking PostgreSQL process inside container:"
+        docker exec plane-db ps aux 2>/dev/null || echo "    Cannot check processes"
+        echo "    Checking if database directory exists:"
+        docker exec plane-db ls -la /var/lib/postgresql/data 2>/dev/null || echo "    Cannot check data directory"
+        echo "    Checking PostgreSQL port:"
+        docker exec plane-db netstat -tuln 2>/dev/null | grep 5432 || echo "    PostgreSQL not listening on 5432"
+        echo "    Checking PostgreSQL configuration:"
+        docker exec plane-db cat /var/lib/postgresql/data/postgresql.conf 2>/dev/null | head -20 || echo "    Cannot read postgresql.conf"
+        notify_webhook "failed" "postgresql_health_failed" "PostgreSQL failed health check - detailed investigation in logs"
         exit 1
     }
 
     echo "  Checking Redis..."
+    notify_webhook "provisioning" "redis_check" "Starting Redis health check"
     wait_for_service "Redis" "docker exec plane-redis redis-cli ping | grep -q PONG" || {
         echo "❌ Redis health check failed"
         $DOCKER_COMPOSE_CMD logs plane-redis --tail=30
-        notify_webhook "failed" "redis_failed" "Redis failed health check"
+        notify_webhook "failed" "redis_health_failed" "Redis failed health check"
         exit 1
     }
 
     echo "  Checking RabbitMQ..."
+    notify_webhook "provisioning" "rabbitmq_check" "Starting RabbitMQ health check"
     wait_for_service "RabbitMQ" "docker exec plane-mq rabbitmqctl await_startup" || {
         echo "❌ RabbitMQ health check failed"
         $DOCKER_COMPOSE_CMD logs plane-mq --tail=30
-        notify_webhook "failed" "rabbitmq_failed" "RabbitMQ failed health check"
+        notify_webhook "failed" "rabbitmq_health_failed" "RabbitMQ failed health check"
         exit 1
     }
 
     echo "  Checking MinIO..."
+    notify_webhook "provisioning" "minio_check" "Starting MinIO health check"
     wait_for_service "MinIO" "curl -f http://localhost:9000/minio/health/live >/dev/null 2>&1" || {
         echo "❌ MinIO health check failed"
         $DOCKER_COMPOSE_CMD logs plane-minio --tail=30
-        notify_webhook "failed" "minio_failed" "MinIO failed health check"
+        notify_webhook "failed" "minio_health_failed" "MinIO failed health check"
         exit 1
     }
 
     echo "✅ All infrastructure services are healthy"
     notify_webhook "provisioning" "infrastructure_ready" "✅ Database, cache, and queue services ready"
+    
     # ==========================================================
     # Setup MinIO bucket
     # ==========================================================
