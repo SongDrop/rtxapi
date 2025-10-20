@@ -290,11 +290,11 @@ AWS_REGION=us-east-1
 
 # Application
 SECRET_KEY=$SECRET_KEY
-WEB_URL=http://localhost
+WEB_URL=http://localhost:80
 DEBUG=0
 
 # CORS
-CORS_ALLOWED_ORIGINS=http://localhost
+CORS_ALLOWED_ORIGINS=http://localhost:80
 
 # File upload
 FILE_SIZE_LIMIT=5242880
@@ -313,13 +313,26 @@ EMAIL_FROM=noreply@plane.so
 
 # Machine Signature
 MACHINE_SIGNATURE=$MACHINE_SIGNATURE
+                                    
+# Proxy Ports
+NGINX_PORT=80
+LISTEN_HTTP_PORT=80
+LISTEN_HTTPS_PORT=443
+
+# Service URLs for proxy
+PROXY_HOST=localhost
+API_BASE_URL=http://api:8000
+WEB_BASE_URL=http://web:3000
+SPACE_BASE_URL=http://space:3002
+ADMIN_BASE_URL=http://admin:3001
+LIVE_BASE_URL=http://live:3100
 EOF
 
     echo "✅ .env created with secure credentials"
     notify_webhook "provisioning" "credentials_ready" "✅ Credentials generated"
 
     # ==========================================================
-    # Create docker-compose.yml
+    # Create docker-compose.yml (FIXED VERSION)
     # ==========================================================
     echo "🐳 Creating docker-compose.yml..."
     cat > "docker-compose.yml" <<'EOF'
@@ -328,9 +341,8 @@ version: '3.9'
 services:
 web:
     container_name: web
-    image: makeplane/plane-frontend
+    image: makeplane/plane-frontend:latest
     restart: always
-    command: node web/server.js web
     depends_on:
     - api
     networks:
@@ -338,9 +350,8 @@ web:
 
 admin:
     container_name: admin
-    image: makeplane/plane-admin
+    image: makeplane/plane-admin:latest
     restart: always
-    command: node admin/server.js admin
     depends_on:
     - api
     - web
@@ -349,9 +360,8 @@ admin:
 
 space:
     container_name: space
-    image: makeplane/plane-space
+    image: makeplane/plane-space:latest
     restart: always
-    command: node space/server.js space
     depends_on:
     - api
     - web
@@ -360,7 +370,7 @@ space:
 
 api:
     container_name: api
-    image: makeplane/plane-backend
+    image: makeplane/plane-backend:latest
     restart: always
     command: ./bin/docker-entrypoint-api.sh
     env_file:
@@ -373,7 +383,7 @@ api:
 
 worker:
     container_name: bgworker
-    image: makeplane/plane-backend
+    image: makeplane/plane-backend:latest
     restart: always
     command: ./bin/docker-entrypoint-worker.sh
     env_file:
@@ -387,7 +397,7 @@ worker:
 
 beat-worker:
     container_name: beatworker
-    image: makeplane/plane-backend
+    image: makeplane/plane-backend:latest
     restart: always
     command: ./bin/docker-entrypoint-beat.sh
     env_file:
@@ -401,7 +411,7 @@ beat-worker:
 
 migrator:
     container_name: plane-migrator
-    image: makeplane/plane-backend
+    image: makeplane/plane-backend:latest
     restart: "no"
     command: ./bin/docker-entrypoint-migrator.sh
     env_file:
@@ -414,9 +424,8 @@ migrator:
 
 live:
     container_name: plane-live
-    image: makeplane/plane-live
+    image: makeplane/plane-live:latest
     restart: always
-    command: node live/dist/server.js
     networks:
     - plane-network
 
@@ -476,7 +485,7 @@ plane-minio:
 
 proxy:
     container_name: proxy
-    image: makeplane/plane-proxy
+    image: makeplane/plane-proxy:latest
     restart: always
     ports:
     - "${NGINX_PORT:-80}:80"
@@ -532,10 +541,10 @@ EOF
     done
 
     # ==========================================================
-    # Wait for infrastructure health checks
+    # Wait for infrastructure health checks (FIXED)
     # ==========================================================
     echo "⏳ Waiting for infrastructure services to be ready..."
-    MAX_WAIT=90
+    MAX_WAIT=120
 
     wait_for_service() {
         local service="$1"
@@ -558,13 +567,30 @@ EOF
         return 0
     }
 
-    wait_for_service "PostgreSQL" "$DOCKER_COMPOSE_CMD exec -T plane-db pg_isready -U $POSTGRES_USER"
-    wait_for_service "Redis" "$DOCKER_COMPOSE_CMD exec -T plane-redis redis-cli ping"
-    wait_for_service "RabbitMQ" "$DOCKER_COMPOSE_CMD exec -T plane-mq rabbitmqctl await_startup"
-    wait_for_service "MinIO" "$DOCKER_COMPOSE_CMD exec -T plane-minio mc alias set local http://localhost:9000 $MINIO_USER $MINIO_PASSWORD"
+    # FIXED: Use direct docker commands instead of compose exec
+    wait_for_service "PostgreSQL" "docker exec plane-db pg_isready -U $POSTGRES_USER"
+    wait_for_service "Redis" "docker exec plane-redis redis-cli ping"
+    wait_for_service "RabbitMQ" "docker exec plane-mq rabbitmqctl await_startup"
+    wait_for_service "MinIO" "curl -f http://localhost:9000/minio/health/live >/dev/null 2>&1"
 
     echo "✅ All infrastructure services are healthy"
     notify_webhook "provisioning" "infrastructure_ready" "✅ Database, cache, and queue services ready"
+
+    # ==========================================================
+    # Setup MinIO bucket
+    # ==========================================================
+    echo "📦 Setting up MinIO bucket..."
+    sleep 10
+    # Install mc command if not exists
+    if ! command -v mc &>/dev/null; then
+        curl -s https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
+        chmod +x /usr/local/bin/mc
+    fi
+
+    # Create bucket
+    docker exec plane-minio mc alias set local http://localhost:9000 $MINIO_USER $MINIO_PASSWORD || true
+    docker exec plane-minio mc mb local/uploads --ignore-existing || true
+    echo "✅ MinIO bucket configured"
 
     # ==========================================================
     # Run database migrations
@@ -575,6 +601,7 @@ EOF
     $DOCKER_COMPOSE_CMD run --rm migrator || {
         echo "❌ Migrations failed"
         $DOCKER_COMPOSE_CMD logs plane-db --tail=20
+        $DOCKER_COMPOSE_CMD logs migrator --tail=30
         notify_webhook "failed" "migrations_failed" "Database migrations failed"
         exit 1
     }
@@ -593,18 +620,19 @@ EOF
         echo "  Starting $service..."
         $DOCKER_COMPOSE_CMD up -d "$service" || {
             echo "❌ Failed to start $service"
+            $DOCKER_COMPOSE_CMD logs "$service" --tail=10
             notify_webhook "failed" "app_service_failed" "Failed to start $service"
             exit 1
         }
         echo "  ✅ $service started"
-        sleep 3
+        sleep 5
     done
 
     echo "✅ All Plane services started"
     notify_webhook "provisioning" "app_services_ready" "✅ All Plane application services running"
 
     # ==========================================================
-    # Verify API health
+    # Verify API health (FIXED PORT)
     # ==========================================================
     echo "[9/15] Verifying Plane API health..."
     READY_TIMEOUT=300
@@ -616,13 +644,16 @@ EOF
 
     while [ $elapsed -lt $READY_TIMEOUT ]; do
         if $DOCKER_COMPOSE_CMD ps api | grep -q "Up" && \
-        curl -f -s http://localhost/api/ >/dev/null 2>&1; then
+        curl -f -s http://localhost:8000/api/ >/dev/null 2>&1; then
             READY=true
             break
         fi
         echo "  Waiting for API to be ready... (${elapsed}s elapsed)"
         if [ $((elapsed % 30)) -eq 0 ]; then
             notify_webhook "provisioning" "health_check_progress" "API health check in progress... (${elapsed}s)"
+            # Show some debug info
+            $DOCKER_COMPOSE_CMD ps api
+            $DOCKER_COMPOSE_CMD logs api --tail=5
         fi
         sleep $SLEEP_INTERVAL
         elapsed=$((elapsed + SLEEP_INTERVAL))
@@ -633,7 +664,9 @@ EOF
         echo "🔍 Container status:"
         $DOCKER_COMPOSE_CMD ps
         echo "🔍 API logs:"
-        $DOCKER_COMPOSE_CMD logs api --tail=30
+        $DOCKER_COMPOSE_CMD logs api --tail=50
+        echo "🔍 Worker logs:"
+        $DOCKER_COMPOSE_CMD logs worker --tail=20
         notify_webhook "failed" "api_health_failed" "Plane API health check failed"
         exit 1
     fi
@@ -649,7 +682,7 @@ EOF
 
     echo "🎉 Plane deployment completed successfully!"
     notify_webhook "provisioning" "plane_deployment_complete" "✅ Plane deployment completed successfully - Access at http://localhost"
-                                                        
+                                                                                     
     # ========== FIREWALL ==========
     echo "[8/15] Configuring firewall..."
     notify_webhook "provisioning" "firewall" "Setting up UFW"

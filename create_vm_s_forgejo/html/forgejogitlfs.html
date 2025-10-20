@@ -5,11 +5,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Forgejo Team Setup & Clone Script Generator</title>
+    <link rel="icon" href="https://i.postimg.cc/vmqqX12L/gitlfs.png">
     <style>
         body {
             font-family: Arial, sans-serif;
             margin: 20px;
             line-height: 1.6;
+            padding-bottom: 80px;
         }
 
         h1,
@@ -136,7 +138,27 @@
     </div>
 
     <div class="section" id="step2">
-        <h2>Step 2 — Adding Collaborators</h2>
+        <h2>Step 2 — Clone Scripts Generator</h2>
+        <label for="forgejoUrl">Forgejo URL</label>
+        <input type="text" id="forgejoUrl" placeholder="https://forgejo.example.com">
+
+        <label for="username">Username</label>
+        <input type="text" id="username" placeholder="username">
+
+        <label for="token">Personal Access Token</label>
+        <input type="text" id="token" placeholder="1c9ca278c04f1713f3ff29ac03f81179a11acf85">
+
+        <label for="vscodeScript">VSCode Online (bash) Script</label>
+        <textarea id="vscodeScript" class="script-box" readonly></textarea>
+        <button onclick="downloadScript('vscode')">Download VSCode Script (.sh)</button>
+
+        <label for="vsScript">Visual Studio 2022 (PowerShell) Script</label>
+        <textarea id="vsScript" class="script-box" readonly></textarea>
+        <button onclick="downloadScript('vs')">Download PowerShell Script (.ps1)</button>
+    </div>
+
+    <div class="section" id="step3">
+        <h2>Step 3 — Adding Collaborators</h2>
         <ol>
             <li>New team members create their own Forgejo accounts at <strong>https://forgejo.example.com</strong></li>
             <li>As project manager, go to your repo → <strong>Settings → Collaboration</strong></li>
@@ -145,8 +167,8 @@
         </ol>
     </div>
 
-    <div class="section" id="step3">
-        <h2>Step 3 — Setup Team Access</h2>
+    <div class="section" id="step4">
+        <h2>Step 4 — Setup Team Access</h2>
         <p>Forgejo supports multiple users on a repo without sharing accounts:</p>
         <ol>
             <li>Each team member creates their own Forgejo account.</li>
@@ -181,8 +203,8 @@
         </ul>
     </div>
 
-    <div class="section" id="step4">
-        <h2>Step 4 — Setup VSCode and Visual Studio 2022</h2>
+    <div class="section" id="step5">
+        <h2>Step 5 — Setup VSCode and Visual Studio 2022</h2>
         <p>Your project enables you to utilize two powerful text editors:</p>
         <ul>
             <li><strong>VSCode Online</strong> — accessible via <a
@@ -197,26 +219,6 @@
         </p>
     </div>
 
-
-    <div class="section" id="step5">
-        <h2>Step 5 — Clone Scripts Generator</h2>
-        <label for="forgejoUrl">Forgejo URL</label>
-        <input type="text" id="forgejoUrl" placeholder="https://forgejo.example.com">
-
-        <label for="username">Username</label>
-        <input type="text" id="username" placeholder="username">
-
-        <label for="token">Personal Access Token</label>
-        <input type="text" id="token" placeholder="1c9ca278c04f1713f3ff29ac03f81179a11acf85">
-
-        <label for="vscodeScript">VSCode Online (bash) Script</label>
-        <textarea id="vscodeScript" class="script-box" readonly></textarea>
-        <button onclick="downloadScript('vscode')">Download VSCode Script (.sh)</button>
-
-        <label for="vsScript">Visual Studio 2022 (PowerShell) Script</label>
-        <textarea id="vsScript" class="script-box" readonly></textarea>
-        <button onclick="downloadScript('vs')">Download PowerShell Script (.ps1)</button>
-    </div>
     <div class="section" id="step6">
         <h2>Step 6 — Enable Git LFS on Developer Machines</h2>
         <p>To manage large binary files in video game projects (like UE3 assets), Git LFS should be initialized on every
@@ -384,6 +386,7 @@ echo "✅ Git LFS tracking applied successfully for $ENGINE!"
             LFS,
             reducing repository size and improving collaboration.</p>
     </div>
+
     <section class="section" id="step7">
         <h2>Step 7 — Setting up Webhooks</h2>
         <p>Forgejo supports <strong>webhooks</strong>, which let your repository send real-time updates to external
@@ -463,31 +466,46 @@ echo "✅ Git LFS tracking applied successfully for $ENGINE!"
     </section>
     <!-- Step Guide -->
     <div class="step-guide">
-        <a href="#step1">Step 1<span>Setup Forgejo</span></a>
-        <a href="#step2">Step 2<span>Add Collaborators</span></a>
-        <a href="#step3">Step 3<span>Team Access</span></a>
-        <a href="#step4">Step 4<span>VSCode/VS</span></a>
-        <a href="#step5">Step 5<span>Clone Scripts</span></a>
+        <a href="#step1" class="active">Step 1<span>Setup Forgejo</span></a>
+        <a href="#step2">Step 2<span>Clone Scripts</span></a>
+        <a href="#step3">Step 3<span>Add Collaborators</span></a>
+        <a href="#step4">Step 4<span>Team Access</span></a>
+        <a href="#step5">Step 5<span>VSCode/VS</span></a>
         <a href="#step6">Step 6<span>Git LFS</span></a>
         <a href="#step7">Step 7<span>Webhooks</span></a>
     </div>
     <script>
         // Highlight active step in bottom bar
         const stepLinks = document.querySelectorAll('.step-guide a');
-        window.addEventListener('scroll', () => {
+
+        function updateActiveStep() {
             let current = '';
             document.querySelectorAll('.section').forEach(section => {
-                if (pageYOffset >= section.offsetTop - 120) {
+                const sectionTop = section.offsetTop;
+                const sectionHeight = section.offsetHeight;
+                if (window.pageYOffset >= sectionTop - 120 &&
+                    window.pageYOffset < sectionTop + sectionHeight - 120) {
                     current = section.getAttribute('id');
                 }
             });
+
             stepLinks.forEach(link => {
                 link.classList.remove('active');
                 if (link.getAttribute('href') === '#' + current) {
                     link.classList.add('active');
                 }
             });
-        });
+
+            // If no section is active, make first step active
+            if (!current && stepLinks.length > 0) {
+                stepLinks[0].classList.add('active');
+            }
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', updateActiveStep);
+        window.addEventListener('scroll', updateActiveStep);
+
         function generateScripts() {
             const url = document.getElementById('forgejoUrl').value.trim();
             const user = document.getElementById('username').value.trim();
@@ -564,6 +582,55 @@ git config --global credential.helper manager-core`;
         document.getElementById('username').addEventListener('input', generateScripts);
         document.getElementById('token').addEventListener('input', generateScripts);
 
+        // Load saved values when page loads
+        window.addEventListener('DOMContentLoaded', function () {
+            const forgejoUrl = document.getElementById('forgejoUrl');
+            const username = document.getElementById('username');
+            const token = document.getElementById('token');
+
+            // Load saved values from localStorage
+            if (localStorage.getItem('forgejoUrl')) {
+                forgejoUrl.value = localStorage.getItem('forgejoUrl');
+            }
+            if (localStorage.getItem('username')) {
+                username.value = localStorage.getItem('username');
+            }
+            if (localStorage.getItem('token')) {
+                token.value = localStorage.getItem('token');
+            }
+
+            // Generate scripts with saved values
+            generateScripts();
+        });
+
+        // Save values when inputs change
+        document.getElementById('forgejoUrl').addEventListener('input', function () {
+            localStorage.setItem('forgejoUrl', this.value);
+            generateScripts();
+        });
+
+        document.getElementById('username').addEventListener('input', function () {
+            localStorage.setItem('username', this.value);
+            generateScripts();
+        });
+
+        document.getElementById('token').addEventListener('input', function () {
+            localStorage.setItem('token', this.value);
+            generateScripts();
+        });
+
+        // Add clear button functionality
+        function clearSavedData() {
+            localStorage.removeItem('forgejoUrl');
+            localStorage.removeItem('username');
+            localStorage.removeItem('token');
+
+            document.getElementById('forgejoUrl').value = '';
+            document.getElementById('username').value = '';
+            document.getElementById('token').value = '';
+
+            generateScripts();
+        }
         // Generate initial empty scripts
         generateScripts();
     </script>
