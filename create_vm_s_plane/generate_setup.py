@@ -545,7 +545,7 @@ EOF
     fi
 
     # ==========================================================
-    # Start infrastructure services
+    # Start infrastructure services (IMPROVED VERSION)
     # ==========================================================
     echo "🚀 Starting infrastructure services..."
     notify_webhook "provisioning" "infrastructure_start" "Starting database, cache, and queue services"
@@ -553,51 +553,143 @@ EOF
     INFRA_SERVICES=("plane-db" "plane-redis" "plane-mq" "plane-minio")
     for service in "${INFRA_SERVICES[@]}"; do
         echo "  Starting $service..."
-        $DOCKER_COMPOSE_CMD up -d "$service" || {
-            echo "❌ Failed to start $service"
+        
+        # Pull image first to avoid download delays during startup
+        echo "    Pulling image for $service..."
+        if ! $DOCKER_COMPOSE_CMD pull "$service" --quiet; then
+            echo "    ⚠️ Failed to pull $service image, but continuing..."
+        fi
+        
+        # Start service with timeout and better error handling
+        if timeout 60s $DOCKER_COMPOSE_CMD up -d "$service"; then
+            echo "    ✅ $service started successfully"
+            
+            # Check if container is actually running (not just created)
+            sleep 3
+            if ! $DOCKER_COMPOSE_CMD ps "$service" | grep -q "Up"; then
+                echo "    ❌ $service container started but failed to run"
+                echo "    🔍 Container status:"
+                $DOCKER_COMPOSE_CMD ps "$service"
+                echo "    🔍 Container logs:"
+                $DOCKER_COMPOSE_CMD logs "$service" --tail=20
+                notify_webhook "failed" "service_start_failed" "Container $service started but failed to run"
+                exit 1
+            fi
+        else
+            echo "    ❌ Failed to start $service"
+            echo "    🔍 Docker Compose output:"
+            $DOCKER_COMPOSE_CMD up -d "$service"  # Run again to see the error
+            echo "    🔍 Container status:"
+            $DOCKER_COMPOSE_CMD ps "$service"
+            echo "    🔍 Recent system logs:"
+            journalctl -u docker --no-pager | tail -n 20
             notify_webhook "failed" "service_start_failed" "Failed to start $service"
             exit 1
-        }
-        echo "  ✅ $service started"
-        sleep 5
+        fi
+        
+        echo "    ✅ $service is running"
+        sleep 8  # Give more time between services
     done
 
+    echo "✅ All infrastructure services started"
+    notify_webhook "provisioning" "infrastructure_started" "All infrastructure services started, waiting for readiness..."
+
     # ==========================================================
-    # Wait for infrastructure health checks (FIXED)
+    # Wait for infrastructure health checks (IMPROVED)
     # ==========================================================
     echo "⏳ Waiting for infrastructure services to be ready..."
-    MAX_WAIT=120
+    MAX_WAIT=180  # Increased to 3 minutes
 
     wait_for_service() {
         local service="$1"
         local check_cmd="$2"
         local count=0
         
-        echo "  Waiting for $service..."
+        echo "  Waiting for $service to be ready..."
+        
+        # First, wait for container to be in running state
+        local running_count=0
+        while [ $running_count -lt 12 ]; do  # Wait up to 60 seconds for container to be running
+            if $DOCKER_COMPOSE_CMD ps "$service" | grep -q "Up"; then
+                break
+            fi
+            sleep 5
+            running_count=$((running_count + 1))
+            if [ $running_count -eq 12 ]; then
+                echo "    ❌ $service container never reached 'Up' state"
+                return 1
+            fi
+        done
+        
+        # Now wait for the actual service health check
         until eval "$check_cmd" >/dev/null 2>&1; do
             sleep 5
             count=$((count + 1))
-            if [ $count -ge $MAX_WAIT ]; then
-                echo "❌ $service did not become ready within $((MAX_WAIT * 5)) seconds"
+            
+            # Show progress every 30 seconds
+            if [ $((count % 6)) -eq 0 ]; then
+                echo "    Still waiting for $service... (${count}s)"
+                # Show container status
+                $DOCKER_COMPOSE_CMD ps "$service" | grep "$service"
+            fi
+            
+            # Check if container is still running
+            if ! $DOCKER_COMPOSE_CMD ps "$service" | grep -q "Up"; then
+                echo "    ❌ $service container stopped running!"
+                echo "    🔍 $service logs:"
+                $DOCKER_COMPOSE_CMD logs "$service" --tail=30
                 return 1
             fi
-            if [ $((count % 6)) -eq 0 ]; then
-                echo "  Still waiting for $service... (${count}s)"
+            
+            if [ $count -ge $MAX_WAIT ]; then
+                echo "    ❌ $service did not become ready within $((MAX_WAIT * 5)) seconds"
+                echo "    🔍 $service logs:"
+                $DOCKER_COMPOSE_CMD logs "$service" --tail=50
+                echo "    🔍 Current status:"
+                $DOCKER_COMPOSE_CMD ps "$service"
+                return 1
             fi
         done
-        echo "  ✅ $service is ready"
+        echo "    ✅ $service is ready"
         return 0
     }
 
-    # FIXED: Use direct docker commands instead of compose exec
-    wait_for_service "PostgreSQL" "docker exec plane-db pg_isready -U $POSTGRES_USER"
-    wait_for_service "Redis" "docker exec plane-redis redis-cli ping"
-    wait_for_service "RabbitMQ" "docker exec plane-mq rabbitmqctl await_startup"
-    wait_for_service "MinIO" "curl -f http://localhost:9000/minio/health/live >/dev/null 2>&1"
+    # Wait for services with better error handling
+    echo "  Checking PostgreSQL..."
+    wait_for_service "PostgreSQL" "docker exec plane-db pg_isready -U $POSTGRES_USER -q" || {
+        echo "❌ PostgreSQL health check failed"
+        echo "🔍 Detailed PostgreSQL logs:"
+        $DOCKER_COMPOSE_CMD logs plane-db --tail=50
+        notify_webhook "failed" "postgresql_failed" "PostgreSQL failed health check"
+        exit 1
+    }
+
+    echo "  Checking Redis..."
+    wait_for_service "Redis" "docker exec plane-redis redis-cli ping | grep -q PONG" || {
+        echo "❌ Redis health check failed"
+        $DOCKER_COMPOSE_CMD logs plane-redis --tail=30
+        notify_webhook "failed" "redis_failed" "Redis failed health check"
+        exit 1
+    }
+
+    echo "  Checking RabbitMQ..."
+    wait_for_service "RabbitMQ" "docker exec plane-mq rabbitmqctl await_startup" || {
+        echo "❌ RabbitMQ health check failed"
+        $DOCKER_COMPOSE_CMD logs plane-mq --tail=30
+        notify_webhook "failed" "rabbitmq_failed" "RabbitMQ failed health check"
+        exit 1
+    }
+
+    echo "  Checking MinIO..."
+    wait_for_service "MinIO" "curl -f http://localhost:9000/minio/health/live >/dev/null 2>&1" || {
+        echo "❌ MinIO health check failed"
+        $DOCKER_COMPOSE_CMD logs plane-minio --tail=30
+        notify_webhook "failed" "minio_failed" "MinIO failed health check"
+        exit 1
+    }
 
     echo "✅ All infrastructure services are healthy"
     notify_webhook "provisioning" "infrastructure_ready" "✅ Database, cache, and queue services ready"
-
     # ==========================================================
     # Setup MinIO bucket
     # ==========================================================
@@ -706,7 +798,7 @@ EOF
     notify_webhook "provisioning" "plane_deployment_complete" "✅ Plane deployment completed successfully - Access at http://localhost"
                                                                                      
     # ========== FIREWALL ==========
-    echo "[8/15] Configuring firewall..."
+    echo "[10/15] Configuring firewall..."
     notify_webhook "provisioning" "firewall" "Setting up UFW"
 
     # SSH access
@@ -734,7 +826,7 @@ EOF
 
 
     # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
-    echo "[18/20] Configuring nginx reverse proxy with SSL..."
+    echo "[11/15] Configuring nginx reverse proxy with SSL..."
     notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
 
     rm -f /etc/nginx/sites-enabled/default
