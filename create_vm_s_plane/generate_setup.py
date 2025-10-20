@@ -270,16 +270,18 @@ def generate_setup(
 POSTGRES_USER=$POSTGRES_USER
 POSTGRES_DB=$POSTGRES_DB
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-DATABASE_URL=postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@plane-db:5432/$POSTGRES_DB
+# NOTE: Do NOT set DATABASE_URL here - it causes duplication bugs in Plane
+# The image will construct it automatically from the other variables
 
 # Redis
 REDIS_URL=redis://plane-redis:6379/
+# Note: Remove any duplicate REDIS_URL definitions
 
 # RabbitMQ
-CELERY_BROKER_URL=amqp://$RABBITMQ_USER:$RABBITMQ_PASSWORD@plane-mq:5672/$RABBITMQ_VHOST
 RABBITMQ_USER=$RABBITMQ_USER
 RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD
 RABBITMQ_VHOST=$RABBITMQ_VHOST
+# CELERY_BROKER_URL will be auto-constructed
 
 # MinIO/S3
 AWS_ACCESS_KEY_ID=$MINIO_USER
@@ -313,7 +315,7 @@ EMAIL_FROM=noreply@plane.so
 
 # Machine Signature
 MACHINE_SIGNATURE=$MACHINE_SIGNATURE
-                                    
+                                      
 # Proxy Ports
 NGINX_PORT=80
 LISTEN_HTTP_PORT=80
@@ -339,175 +341,195 @@ EOF
 version: '3.9'
 
 services:
-web:
+  web:
     container_name: web
     image: makeplane/plane-frontend:latest
     restart: always
     depends_on:
-    - api
+      - api
     networks:
-    - plane-network
+      - plane-network
 
-admin:
+  admin:
     container_name: admin
     image: makeplane/plane-admin:latest
     restart: always
     depends_on:
-    - api
-    - web
+      - api
+      - web
     networks:
-    - plane-network
+      - plane-network
 
-space:
+  space:
     container_name: space
     image: makeplane/plane-space:latest
     restart: always
     depends_on:
-    - api
-    - web
+      - api
+      - web
     networks:
-    - plane-network
+      - plane-network
 
-api:
+  api:
     container_name: api
     image: makeplane/plane-backend:latest
     restart: always
     command: ./bin/docker-entrypoint-api.sh
     env_file:
-    - .env
+      - .env
+    environment:
+      # Explicitly set URLs to prevent duplication bugs in Plane images
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://plane-redis:6379/
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@plane-mq:5672/${RABBITMQ_VHOST}
     depends_on:
-    - plane-db
-    - plane-redis
+      - plane-db
+      - plane-redis
     networks:
-    - plane-network
+      - plane-network
 
-worker:
+  worker:
     container_name: bgworker
     image: makeplane/plane-backend:latest
     restart: always
     command: ./bin/docker-entrypoint-worker.sh
     env_file:
-    - .env
+      - .env
+    environment:
+      # Explicitly set URLs to prevent duplication bugs in Plane images
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://plane-redis:6379/
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@plane-mq:5672/${RABBITMQ_VHOST}
     depends_on:
-    - api
-    - plane-db
-    - plane-redis
+      - api
+      - plane-db
+      - plane-redis
     networks:
-    - plane-network
+      - plane-network
 
-beat-worker:
+  beat-worker:
     container_name: beatworker
     image: makeplane/plane-backend:latest
     restart: always
     command: ./bin/docker-entrypoint-beat.sh
     env_file:
-    - .env
+      - .env
+    environment:
+      # Explicitly set URLs to prevent duplication bugs in Plane images
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://plane-redis:6379/
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@plane-mq:5672/${RABBITMQ_VHOST}
     depends_on:
-    - api
-    - plane-db
-    - plane-redis
+      - api
+      - plane-db
+      - plane-redis
     networks:
-    - plane-network
+      - plane-network
 
-migrator:
+  migrator:
     container_name: plane-migrator
     image: makeplane/plane-backend:latest
     restart: "no"
     command: ./bin/docker-entrypoint-migrator.sh
     env_file:
-    - .env
+      - .env
+    environment:
+      # Explicitly set URLs to prevent duplication bugs in Plane images
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://plane-redis:6379/
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@plane-mq:5672/${RABBITMQ_VHOST}
     depends_on:
-    - plane-db
-    - plane-redis
+      - plane-db
+      - plane-redis
     networks:
-    - plane-network
+      - plane-network
 
-live:
+  live:
     container_name: plane-live
     image: makeplane/plane-live:latest
     restart: always
     networks:
-    - plane-network
+      - plane-network
 
-plane-db:
+  plane-db:
     container_name: plane-db
     image: postgres:15.7-alpine
     restart: always
     command: postgres -c 'max_connections=1000'
     volumes:
-    - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     env_file:
-    - .env
+      - .env
     environment:
-    POSTGRES_USER: ${POSTGRES_USER}
-    POSTGRES_DB: ${POSTGRES_DB}
-    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    PGDATA: /var/lib/postgresql/data
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data
     networks:
-    - plane-network
+      - plane-network
 
-plane-redis:
+  plane-redis:
     container_name: plane-redis
     image: valkey/valkey:7.2.5-alpine
     restart: always
     volumes:
-    - redisdata:/data
+      - redisdata:/data
     networks:
-    - plane-network
+      - plane-network
 
-plane-mq:
+  plane-mq:
     container_name: plane-mq
     image: rabbitmq:3.13.6-management-alpine
     restart: always
     env_file:
-    - .env
+      - .env
     environment:
-    RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
-    RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
-    RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST}
     volumes:
-    - rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq_data:/var/lib/rabbitmq
     networks:
-    - plane-network
+      - plane-network
 
-plane-minio:
+  plane-minio:
     container_name: plane-minio
     image: minio/minio
     restart: always
     command: server /export --console-address ":9090"
     volumes:
-    - uploads:/export
+      - uploads:/export
     environment:
-    MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID}
-    MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY}
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY}
     networks:
-    - plane-network
+      - plane-network
 
-proxy:
+  proxy:
     container_name: proxy
     image: makeplane/plane-proxy:latest
     restart: always
     ports:
-    - "${NGINX_PORT:-80}:80"
+      - "${NGINX_PORT:-80}:80"
     environment:
-    FILE_SIZE_LIMIT: ${FILE_SIZE_LIMIT:-5242880}
-    BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-uploads}
+      FILE_SIZE_LIMIT: ${FILE_SIZE_LIMIT:-5242880}
+      BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-uploads}
     depends_on:
-    - web
-    - api
-    - space
-    - admin
+      - web
+      - api
+      - space
+      - admin
     networks:
-    - plane-network
+      - plane-network
 
 volumes:
-pgdata:
-redisdata:
-uploads:
-rabbitmq_data:
+  pgdata:
+  redisdata:
+  uploads:
+  rabbitmq_data:
 
 networks:
-plane-network:
+  plane-network:
     driver: bridge
 EOF
 
