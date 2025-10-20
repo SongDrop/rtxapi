@@ -169,7 +169,7 @@ def generate_setup(
     apt-get install -y -q \
       curl wget gnupg2 lsb-release ca-certificates apt-transport-https \
       nginx certbot python3-certbot-nginx ufw git build-essential sudo cron \
-      python3 python3-pip jq software-properties-common gnupg2 xdg-utils
+      python3 python3-pip jq software-properties-common gnupg2 xdg-utils unzip
 
     # Create service user if missing
     if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then

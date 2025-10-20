@@ -1,338 +1,731 @@
-def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed", WEBHOOK_URL=""):
-    github_url = "https://github.com/moonlight-stream/moonlight-embedded.git"
+import textwrap
+
+def generate_setup(
+    DOMAIN_NAME,
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    PORT=5000,
+    WEBHOOK_URL="",
+    location="",
+    resource_group="",
+    UPLOAD_SIZE_MB=256,
+    DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh",
+):
+    """
+    Returns a full 15-step OpenSpyPro provisioning script in your style.
+    """
+    # ========== TOKEN DEFINITIONS ==========
+    tokens = {
+        "__DOMAIN__": DOMAIN_NAME,
+        "__ADMIN_EMAIL__": ADMIN_EMAIL,
+        "__ADMIN_PASSWORD__": ADMIN_PASSWORD,
+        "__PORT__": str(PORT),
+        "__DNS_HOOK_SCRIPT__": DNS_HOOK_SCRIPT,
+        "__WEBHOOK_URL__": WEBHOOK_URL,
+        "__LOCATION__": location,
+        "__RESOURCE_GROUP__": resource_group,
+        "__OPENSPYPRO_DIR__": "/opt/OpenSpyPro",
+        "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
+        "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
+        "__MAX_UPLOAD_SIZE_MB__": f"{UPLOAD_SIZE_MB}M",
+        "__MAX_UPLOAD_SIZE_BYTES__": str(UPLOAD_SIZE_MB * 1024 * 1024),
+    }
+
+    # ------------------ SCRIPT TEMPLATE ------------------
+    script_template = textwrap.dedent(r"""
+    #!/bin/bash
+    set -euo pipefail
+
+    # ----------------------------------------------------------------------
+    # Plane Provisioning Script (Forgejo style)
+    # ----------------------------------------------------------------------
+
+    # --- Webhook Notification System ---
+    __WEBHOOK_FUNCTION__
+
+    # Enhanced error logging
+    error_handler() {
+        local exit_code=$?
+        local line_number=$1
+        echo "ERROR: Script failed at line $line_number with exit code $exit_code"
+        notify_webhook "failed" "unexpected_error" "Script exited on line $line_number with code $exit_code"
+        exit $exit_code
+    }
+    trap 'error_handler ${LINENO}' ERR
+                                      
+    # --- Logging ---
+    LOG_FILE="/var/log/OpenSpyPro_setup.log"
+    exec > >(tee -a "$LOG_FILE") 2>&1
+                                      
+    # --- Environment Variables ---
+    DOMAIN="__DOMAIN__"
+    ADMIN_EMAIL="__ADMIN_EMAIL__"
+    ADMIN_PASSWORD="__ADMIN_PASSWORD__"
+    PORT="__PORT__"
+    OPENSPYPRO_DIR="__OPENSPYPRO_DIR__"
+    DNS_HOOK_SCRIPT="__DNS_HOOK_SCRIPT__"
+    WEBHOOK_URL="__WEBHOOK_URL__"
+    MAX_UPLOAD_SIZE_MB="__MAX_UPLOAD_SIZE_MB__"
+    MAX_UPLOAD_SIZE_BYTES="__MAX_UPLOAD_SIZE_BYTES__"
+
+    # Add missing variables
+    READY_TIMEOUT=300
+    SLEEP_INTERVAL=10
+
+    echo "[1/15] Starting OpenSpyPro provisioning..."
+    notify_webhook "provisioning" "starting" "Beginning OpenSpyPro setup"  
+
+    # --- Step 1: Validate Inputs ---
+    echo "[2/15] Validating inputs..."
+    notify_webhook "provisioning" "validation" "Validating domain and port"
+   
+    if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        echo "ERROR: Invalid domain format: $DOMAIN"
+        notify_webhook "failed" "validation" "Invalid domain format: $DOMAIN"
+        exit 1
+    fi
     
-    # Define the Moonlight Embedded directory path
-    MOONLIGHT_EMBEDDED_DIR = f"{VOLUME_DIR}/moonlight-embedded"
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
+        echo "ERROR: Invalid port number: $PORT"
+        notify_webhook "failed" "validation" "Invalid port: $PORT"
+        exit 1
+    fi
 
-    libnice_git_url = "https://gitlab.freedesktop.org/libnice/libnice"
-    libsrtp_tar_url = "https://github.com/cisco/libsrtp/archive/v2.2.0.tar.gz"
-    usrsctp_git_url = "https://github.com/sctplab/usrsctp"
-    libwebsockets_git_url = "https://github.com/warmcat/libwebsockets.git"
-    janus_git_url = "https://github.com/meetecho/janus-gateway.git"
-    letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
-    ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
-
-    # Webhook notification function with proper JSON structure
-    webhook_notification = ""
-    if WEBHOOK_URL:
-        webhook_notification = f'''
-notify_webhook() {{
-  local status=$1
-  local step=$2
-  local message=$3
-  
-  if [ -z "${{WEBHOOK_URL}}" ]; then
-    return 0
-  fi
-  
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Notifying webhook: status=$status step=$step"
-  
-  # Prepare the JSON payload matching Azure Function expectations
-  JSON_PAYLOAD=$(cat <<EOF
-{{
-  "vm_name": "$(hostname)",
-  "status": "$status",
-  "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-  "details": {{
-    "step": "$step",
-    "message": "$message"
-  }}
-}}
-EOF
-  )
-
-  curl -X POST \\
-    "${{WEBHOOK_URL}}" \\
-    -H "Content-Type: application/json" \\
-    -d "$JSON_PAYLOAD" \\
-    --connect-timeout 10 \\
-    --max-time 30 \\
-    --retry 2 \\
-    --retry-delay 5 \\
-    --silent \\
-    --output /dev/null \\
-    --write-out "Webhook notification result: %{{http_code}}"
-
-  return $?
-}}
-'''
-    else:
-        webhook_notification = '''
-notify_webhook() {
-  # No webhook URL configured
-  return 0
-}
-'''
-
-    script_template = f'''#!/bin/bash
-
-set -e
-
-export DEBIAN_FRONTEND=noninteractive
-
-# === User config ===
-DOMAIN_NAME="{DOMAIN_NAME}"
-ADMIN_EMAIL="{ADMIN_EMAIL}"
-FRONTEND_PORT={FRONTEND_PORT}
-BACKEND_PORT={BACKEND_PORT}
-VM_IP="{VM_IP}"
-PIN_URL="{PIN_URL}"
-INSTALL_DIR="{VOLUME_DIR}"
-LOG_DIR="${{INSTALL_DIR}}/logs"
-DOCKER_IMAGE_NAME="moonlight-embed-app"
-DOCKER_CONTAINER_NAME="moonlight-embed-container"
-JANUS_INSTALL_DIR="/opt/janus"
-MOONLIGHT_EMBEDDED_DIR="{MOONLIGHT_EMBEDDED_DIR}"
-WEBHOOK_URL="{WEBHOOK_URL}"
-
-{webhook_notification}
-
-# === Validate domain format ===
-if ! [[ "${{DOMAIN_NAME}}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
-    echo "ERROR: Invalid domain format"
-    notify_webhook "failed" "validation" "Invalid domain format"
-    exit 1
-fi
-
-notify_webhook "provisioning" "starting" "Beginning system setup"
-
-echo "[1/10] Updating system and installing base dependencies..."
-notify_webhook "provisioning" "system_update" "Updating system packages"
-apt-get update
-apt-get install -y --no-install-recommends \\
-    curl git nginx certbot python3-certbot-nginx \\
-    docker.io ufw build-essential cmake autoconf automake libtool pkg-config \\
-    libmicrohttpd-dev libjansson-dev libssl-dev libsofia-sip-ua-dev \\
-    libglib2.0-dev libopus-dev libogg-dev libcurl4-openssl-dev libconfig-dev \\
-    libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
-
-echo "[2/10] Installing libsrtp..."
-notify_webhook "provisioning" "install_libsrtp" "Installing libsrtp"
-cd /tmp
-wget {libsrtp_tar_url} -O libsrtp.tar.gz
-tar xzf libsrtp.tar.gz
-cd libsrtp-2.2.0
-./configure --prefix=/usr --enable-openssl
-make shared_library && make install
-ldconfig
-cd -
-
-echo "[3/10] Installing usrsctp..."
-notify_webhook "provisioning" "install_usrsctp" "Installing usrsctp"
-cd /tmp
-git clone {usrsctp_git_url}
-cd usrsctp
-./bootstrap
-./configure --prefix=/usr
-make && make install
-ldconfig
-cd -
-
-echo "[4/10] Installing libwebsockets..."
-notify_webhook "provisioning" "install_libwebsockets" "Installing libwebsockets"
-cd /tmp
-git clone {libwebsockets_git_url}
-cd libwebsockets
-git checkout v4.3-stable
-mkdir build
-cd build
-cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS="-fpic" ..
-make && make install
-ldconfig
-cd -
-
-echo "[5/10] Installing libnice..."
-notify_webhook "provisioning" "install_libnice" "Installing libnice"
-cd /tmp
-git clone {libnice_git_url}
-cd libnice
-./autogen.sh
-./configure --prefix=/usr
-make && make install
-ldconfig
-cd -
-
-echo "[6/10] Setting up installation directory..."
-notify_webhook "provisioning" "setup_directories" "Creating installation directories"
-mkdir -p "${{INSTALL_DIR}}"
-mkdir -p "${{LOG_DIR}}"
-cd "${{INSTALL_DIR}}"
-
-echo "[7/10] Installing Moonlight Embedded..."
-notify_webhook "provisioning" "install_moonlight" "Installing Moonlight Embedded"
-mkdir -p "${{MOONLIGHT_EMBEDDED_DIR}}"
-if [ ! -d "${{MOONLIGHT_EMBEDDED_DIR}}/.git" ]; then
-    git clone {github_url} "${{MOONLIGHT_EMBEDDED_DIR}}"
-fi
-
-cd "${{MOONLIGHT_EMBEDDED_DIR}}"
-git pull
-mkdir -p build
-cd build
-cmake .. && make -j$(nproc) && make install
-
-echo "[8/10] Installing Janus Gateway..."
-notify_webhook "provisioning" "install_janus" "Installing Janus Gateway"
-if [ ! -d "${{JANUS_INSTALL_DIR}}" ]; then
-    git clone {janus_git_url} /tmp/janus-gateway
-    cd /tmp/janus-gateway
-    sh autogen.sh
-    ./configure --prefix="${{JANUS_INSTALL_DIR}}" --enable-post-processing \\
-        --enable-data-channels --enable-websockets --enable-rest \\
-        --enable-plugin-streaming
-    make
-    make install
-    make configs
+    # Generate 64-byte JWT secret (128 hex chars)
+    if [ -z "${OpenSpyPro_JWT_SECRET:-}" ]; then
+        OpenSpyPro_JWT_SECRET=$(head -c 64 /dev/urandom | xxd -p -c 64 | head -1)
+        export OpenSpyPro_JWT_SECRET
+    fi
     
-    # Configure Janus for Moonlight streaming
-    cat > ${{JANUS_INSTALL_DIR}}/etc/janus/janus.plugin.streaming.jcfg <<EOF
-streaming: {{
-    enabled: true,
-    type: "rtp",
-    audio: true,
-    video: true,
-    videoport: 5004,
-    videopt: 96,
-    videortpmap: "H264/90000",
-    audiopt: 111,
-    audiortpmap: "opus/48000/2",
-    secret: "moonlightstream",
-    permanent: true
-}}
+    echo "[2/15] JWT secret generated"
+    notify_webhook "provisioning" "jwt_generated" "JWT secret generated"
+    sleep 5
+                                      
+    # ==========================================================
+    # Step 3: Install System Dependencies
+    # ==========================================================
+    echo "[3/15] Installing system dependencies..."
+    notify_webhook "provisioning" "system_dependencies" "Installing base packages"
+
+    # Set non-interactive mode for apt
+    export DEBIAN_FRONTEND=noninteractive
+
+    # ----------------------------------------------------------
+    # Update package lists
+    # ----------------------------------------------------------
+    notify_webhook "provisioning" "apt_update" "Running apt-get update"
+    if ! apt-get update -q; then
+        notify_webhook "failed" "apt_update" "apt-get update failed"
+        exit 1
+    fi
+
+    # ----------------------------------------------------------
+    # Upgrade installed packages
+    # ----------------------------------------------------------
+    notify_webhook "provisioning" "apt_upgrade" "Running apt-get upgrade"
+    if ! apt-get upgrade -y -q; then
+        notify_webhook "failed" "apt_upgrade" "apt-get upgrade failed"
+        exit 1
+    fi
+
+    # ----------------------------------------------------------
+    # Ensure no locks block future operations
+    # ----------------------------------------------------------
+    sleep 3
+    fuser -vki /var/lib/dpkg/lock-frontend || true
+    dpkg --configure -a
+
+    # ----------------------------------------------------------
+    # Install required base packages
+    # ----------------------------------------------------------
+    notify_webhook "provisioning" "apt_install" "Installing required packages"
+    REQUIRED_PACKAGES=(
+        curl
+        git
+        nginx
+        certbot
+        python3-certbot-nginx
+        python3-pip
+        python3-venv
+        jq
+        make
+        ufw
+        xxd
+        software-properties-common
+    )
+
+    if ! apt-get install -y -q "${REQUIRED_PACKAGES[@]}"; then
+        notify_webhook "failed" "apt_install" "Base package install failed"
+        exit 1
+    fi
+
+    notify_webhook "provisioning" "system_dependencies_success" "✅ System dependencies installed successfully"
+    sleep 5
+
+    # ========== DOCKER INSTALLATION ==========
+    echo "[4/15] Installing Docker..."
+    notify_webhook "provisioning" "docker_install" "Installing Docker engine"
+    sleep 5
+
+    # Install prerequisites
+    apt-get install -y -q ca-certificates curl gnupg lsb-release apt-transport-https || {
+        echo "❌ Failed to install Docker prerequisites"
+        notify_webhook "failed" "docker_prereq" "Failed to install Docker prerequisites"
+        exit 1
+    }
+
+    # Remove old versions (ignore errors)
+    apt-get remove -y docker docker-engine docker.io containerd runc >/dev/null 2>&1 || true
+
+    # ==========================================================
+    # Install Docker (with retry on GPG key and package install)
+    # ==========================================================
+    echo "[4/15] Installing Docker..."
+    notify_webhook "provisioning" "docker_install" "Installing Docker with retries"
+
+    # Setup variables
+    DOCKER_GPG_URL="https://download.docker.com/linux/ubuntu/gpg"
+    DOCKER_KEYRING="/etc/apt/keyrings/docker.gpg"
+    RETRY_MAX=3
+    RETRY_DELAY=5
+
+    mkdir -p /etc/apt/keyrings
+    chmod a+r /etc/apt/keyrings || true
+
+    # --- Download Docker GPG key with retries ---
+    for attempt in $(seq 1 $RETRY_MAX); do
+        echo "Downloading Docker GPG key (attempt $attempt/$RETRY_MAX)..."
+        if curl -fsSL "$DOCKER_GPG_URL" | gpg --dearmor -o "$DOCKER_KEYRING"; then
+            chmod a+r "$DOCKER_KEYRING"
+            echo "✅ Docker GPG key downloaded successfully"
+            break
+        else
+            echo "⚠️ Attempt $attempt failed to download Docker GPG key"
+            notify_webhook "warning" "docker_gpg_retry" "Attempt $attempt to download Docker GPG key failed"
+            sleep $RETRY_DELAY
+            if [ $attempt -eq $RETRY_MAX ]; then
+                echo "❌ Docker GPG key download failed after $RETRY_MAX attempts"
+                notify_webhook "failed" "docker_gpg" "Failed to download Docker GPG key after retries"
+                exit 1
+            fi
+        fi
+    done
+
+    # --- Add Docker repository ---
+    ARCH=$(dpkg --print-architecture)
+    CODENAME=$(lsb_release -cs)
+    echo "deb [arch=$ARCH signed-by=$DOCKER_KEYRING] https://download.docker.com/linux/ubuntu $CODENAME stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # --- Update package list ---
+    apt-get update -q || {
+        echo "❌ Failed to update package list after adding Docker repo"
+        notify_webhook "failed" "docker_repo" "Failed to update package list"
+        exit 1
+    }
+
+    # --- Install Docker packages with retries ---
+    DOCKER_PACKAGES=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin)
+    for attempt in $(seq 1 $RETRY_MAX); do
+        echo "Installing Docker packages (attempt $attempt/$RETRY_MAX)..."
+        if apt-get install -y -q "${DOCKER_PACKAGES[@]}"; then
+            echo "✅ Docker installed successfully"
+            break
+        else
+            echo "⚠️ Docker install attempt $attempt failed, retrying in $RETRY_DELAY seconds..."
+            notify_webhook "warning" "docker_install_retry" "Attempt $attempt to install Docker failed"
+            sleep $RETRY_DELAY
+            if [ $attempt -eq $RETRY_MAX ]; then
+                echo "❌ Docker installation failed after $RETRY_MAX attempts"
+                notify_webhook "failed" "docker_install" "Docker install failed after retries"
+                exit 1
+            fi
+        fi
+    done
+
+
+    # ========== DOCKER COMPOSE INSTALLATION ==========
+    echo "[4.5/15] Installing Docker Compose..."
+    notify_webhook "provisioning" "docker_compose_install" "Installing Docker Compose"
+    
+    # Try Docker Compose plugin first (now that Docker repo is available)
+    if apt-get install -y -q docker-compose-plugin; then
+        echo "✅ Docker Compose plugin installed via apt"
+    else
+        echo "⚠️ Docker Compose plugin not available, installing via pip"
+        # Ensure pip is properly installed and updated
+        apt-get install -y -q python3-pip python3-venv || {
+            echo "❌ Failed to install python3-pip"
+            notify_webhook "failed" "docker_compose" "Failed to install python3-pip for Docker Compose"
+            exit 1
+        }
+        # Update pip and install docker-compose
+        pip3 install --upgrade pip || true
+        if pip3 install docker-compose; then
+            echo "✅ Docker Compose installed via pip"
+        else
+            echo "❌ Docker Compose installation failed via both apt and pip"
+            notify_webhook "failed" "docker_compose" "Docker Compose install failed via both apt and pip"
+            exit 1
+        fi
+    fi
+
+    # Enable and start Docker
+    systemctl enable docker
+    if ! systemctl start docker; then
+        echo "❌ Failed to start Docker service"
+        journalctl -u docker --no-pager | tail -n 20
+        notify_webhook "failed" "docker_service" "Failed to start Docker service"
+        exit 1
+    fi
+    
+    # Verify Docker works
+    if ! docker info >/dev/null 2>&1; then
+        echo "❌ Docker daemon did not start correctly"
+        journalctl -u docker --no-pager | tail -n 30
+        notify_webhook "failed" "docker_daemon" "Docker daemon failed to start"
+        exit 1
+    fi
+
+    echo "✅ Docker installed and running"
+    notify_webhook "provisioning" "docker_ready" "✅ Docker installed successfully"
+    sleep 2
+                                      
+    # ========== OpenSpyPro DIRECTORY SETUP ==========
+    echo "[5/15] Creating OpenSpyPro directories..."
+    notify_webhook "provisioning" "directories" "Creating OpenSpyPro directories"
+
+    mkdir -p "$OPENSPYPRO_DIR" || {
+        echo "ERROR: Failed to create Plane data directory"
+        notify_webhook "failed" "directory_creation" "Failed to create Plane directory"
+        exit 1
+    }
+    chown -R 1000:1000 "$OPENSPYPRO_DIR"
+    cd "$OPENSPYPRO_DIR"
+    echo "✅ OpenSpyPro directory ready"
+    notify_webhook "provisioning" "directory_ready" "✅ OpenSpyPro directory created successfully"
+    
+    sleep 5
+                                      
+    # --- Step 4: Docker Compose ---
+    echo "[6/15] Creating Docker Compose configuration..."
+    notify_webhook "provisioning" "docker_compose" "Creating docker-compose.yml"
+
+    cat > "$OPENSPYPRO_DIR/docker-compose.yml" <<EOF
+version: "3.8"
+
+include:
+  - openspy-web-backend/docker-compose.yaml
+  - openspy-core/docker-compose.yaml
+  - webservices/docker-compose.yaml
+services:
+  nginx:
+    image: nginx:1-alpine
+    restart: on-failure
+    depends_on:
+      - authservices
+      - commerceservice
+      - competitionservice
+      - storageservice
+    ports:
+      - 8089:80
+    volumes:
+      - ./nginx-conf/default.conf:/etc/nginx/conf.d/default.conf
+  natneg-helper:
+    image: "chcniz/openspy-natneg-helper"
+    hostname: "natneg-helper"
+    restart: on-failure
+    depends_on:
+      - rabbit
+    environment:
+      RABBITMQ_URL: amqp://rabbitmq:rabbitmq@rabbit
+      UNSOLICITED_PORT_PROBE_DRIVER: 0.0.0.0:30695
+      UNSOLICITED_IP_PROBE_DRIVER: unset
+      UNSOLICITED_IPPORT_PROBE_DRIVER: unset
+      SKIP_ERTL: 1
+  qr-service:
+    image: "chcniz/openspy-qr-service"
+    hostname: "qr-service"
+    restart: on-failure
+    depends_on:
+      - rabbit
+    environment:
+      RABBITMQ_URL: amqp://rabbitmq:rabbitmq@rabbit
+      REDIS_URL: redis://redis:6379
+      GEOIP_DB_PATH: /GeoLite2-City.mmdb
+    volumes:
+      - ./geoip/GeoLite2-City.mmdb:/GeoLite2-City.mmdb
+  gamestats-web:
+    image: "chcniz/openspy-gamestats-web"
+    hostname: "gamestats-web"
+    restart: on-failure
+    environment:
+      GAMESTATS_MONGODB_URI: mongodb://OpenSpy:OpenSpy123@mongo:27017
+      PORT: 4000
+  stella-web:
+    image: "chcniz/openspy-bf2142-stella-web"
+    hostname: "stella-web"
+    restart: on-failure
+    environment:
+      API_KEY: ELGAoKHyFPfsWhmWF5F/8uNz2YcdTrojCZbRfvlFwBKJIhDUdvMwM4bmljSsEBq57riyXRij8FoqmxWR8C2BQIEaGG68uFJKcQmJlLY2ntAFOYUloccRCr/eBW8sJZsTIGaIdVdsDeDOrRJR487tfFGNHW2Ezp+oVrZVsd3C9e0VobSE1fXdSFz3R5MIqH3bLprfcDLJL/U8gtvUBegOQI22Vviha24W0/76SQSo72Z7i6GrpU/OnrsjcHQSwyC6VeCTv5JjCP/BSsaCK0Zxw3OlzQsPAprQug9Pwm5MrH/pkkxhqLKcCxjsU25Zj+ipkKOzsO+rmqaIMsK6ILke6w==
+      API_ENDPOINT: http://core-web:8080
+      MONGODB_URI: mongodb://OpenSpy:OpenSpy123@mongo:27017
+      PORT: 4000
 EOF
-fi
 
-echo "[9/10] Setting up systemd services..."
-notify_webhook "provisioning" "setup_services" "Configuring system services"
 
-# Janus service
-cat > /etc/systemd/system/janus.service <<EOF
-[Unit]
-Description=Janus WebRTC Server
-After=network.target
+    sleep 5
 
-[Service]
-Type=simple
-User=root
-ExecStart=${{JANUS_INSTALL_DIR}}/bin/janus
-Restart=on-failure
-RestartSec=5
+    # --- Step 5: Start Docker container ---
+    echo "[7/15] Starting OpenSpyPro container..."
+    notify_webhook "provisioning" "container_start" "Starting OpenSpyPro container"
+    cd "$OPENSPYPRO_DIR"
 
-[Install]
-WantedBy=multi-user.target
-EOF
+    # Create the data directory with proper permissions
+    mkdir -p data
+    chown -R 1000:1000 data
 
-# Moonlight streaming service
-cat > /etc/systemd/system/moonlight-stream.service <<EOF
-[Unit]
-Description=Moonlight to Janus Streaming Service
-After=network.target janus.service
+    # Export the JWT secret for docker-compose
+    export OpenSpyPro_JWT_SECRET
 
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/moonlight stream ${{VM_IP}} -app Steam -codec h264 -bitrate 20000 -fps 60 -unsupported -remote -rtp 127.0.0.1 5004 5005
-Restart=on-failure
-RestartSec=5
+    # Debug: Show environment
+    echo "Debug: Current directory: $(pwd)"
+    echo "Debug: JWT secret length: ${#OpenSpyPro_JWT_SECRET}"
+    echo "Debug: Docker Compose file:"
+    cat docker-compose.yml
 
-[Install]
-WantedBy=multi-user.target
-EOF
+    # Determine docker-compose command
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+    elif command -v docker-compose &> /dev/null; then
+        COMPOSE_CMD="docker-compose"
+    else
+        echo "ERROR: Neither docker compose nor docker-compose available"
+        notify_webhook "failed" "container_start" "Docker compose not available"
+        exit 1
+    fi
 
-systemctl daemon-reload
-systemctl enable janus.service moonlight-stream.service
-systemctl start janus.service moonlight-stream.service
+    # Pull & start (don't exit immediately on failure so we can collect diagnostics)
+    $COMPOSE_CMD pull || echo "Warning: Image pull failed, will try to run anyway"
+    $COMPOSE_CMD up -d || echo "Warning: docker compose up returned non-zero (continuing to collect diagnostics)"
 
-echo "[10/10] Configuring firewall and SSL..."
-notify_webhook "provisioning" "security_setup" "Configuring firewall and SSL"
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 5004:5005/udp
-ufw allow 7088/tcp
-ufw allow 8088/tcp
-ufw allow 10000-10200/udp
-ufw --force enable
+    # Wait for container to initialize briefly so logs appear
+    echo "Waiting for container to initialize..."
+    sleep 5
 
-mkdir -p /etc/letsencrypt
-curl -s {letsencrypt_options_url} > /etc/letsencrypt/options-ssl-nginx.conf
-curl -s {ssl_dhparams_url} > /etc/letsencrypt/ssl-dhparams.pem
+    # --- Always collect diagnostics and send to webhook (even if container exited) ---
+    # docker ps -a (no-trunc) and focus on OpenSpyPro if present
+    DOCKER_PS_OUTPUT=$(docker ps -a --no-trunc 2>/dev/null || echo "docker ps failed")
+    SHORT_PS=$(echo "$DOCKER_PS_OUTPUT" | grep -i openspypro || echo "$DOCKER_PS_OUTPUT" | head -n 20)
+    SHORT_PS_ESCAPED=$(echo "$SHORT_PS" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+    notify_webhook "provisioning" "docker_ps" "=== docker ps output ===\\n$SHORT_PS_ESCAPED"
 
-notify_webhook "provisioning" "ssl_setup" "Requesting SSL certificates"
-certbot --nginx -d "${{DOMAIN_NAME}}" --staging --agree-tos --email "${{ADMIN_EMAIL}}" --redirect --no-eff-email
+    # docker inspect (first chunk)
+    INSPECT_OUTPUT=$(docker inspect openspypro 2>/dev/null || echo "inspect failed")
+    INSPECT_ESCAPED=$(echo "$INSPECT_OUTPUT" | head -n 50 | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+    notify_webhook "provisioning" "docker_inspect" "=== docker inspect (first 50 lines) ===\\n$INSPECT_ESCAPED"
 
-rm -f /etc/nginx/sites-enabled/default
+    # docker logs (last 100 lines if available)
+    LOG_TAIL=$(docker logs openspypro --tail 100 2>/dev/null || echo "no logs")
+    LOG_ESCAPED=$(echo "$LOG_TAIL" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+    notify_webhook "provisioning" "docker_logs" "=== container logs (last 100 lines) ===\\n$LOG_ESCAPED"
 
-cat > /etc/nginx/sites-available/moonlightembed <<EOF
-server {{
+    sleep 5
+
+    # Show compose/service status locally (keeps original debugging behavior)
+    echo "=== Docker Compose Status ==="
+    if docker compose version &> /dev/null; then
+        docker compose ps || true
+    else
+        docker-compose ps || true
+    fi
+
+    echo "=== Port Mapping Check ==="
+    docker port openspypro 2>/dev/null || echo "Could not check port mapping"
+
+    notify_webhook "provisioning" "container_started" "✅ Docker container start attempted and diagnostics sent"
+
+    sleep 5
+
+    # Now evaluate container lifecycle status and fail fast if needed
+    CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' openspypro 2>/dev/null || echo "nonexistent")
+    echo "Container status: $CONTAINER_STATUS"
+    if [ "$CONTAINER_STATUS" != "running" ]; then
+        # Send an extra diagnostics burst (in case it died after the earlier snapshot)
+        DOCKER_PS_OUTPUT2=$(docker ps -a --no-trunc 2>/dev/null || echo "docker ps failed")
+        PS2_ESCAPED=$(echo "$DOCKER_PS_OUTPUT2" | head -n 50 | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+        notify_webhook "provisioning" "docker_ps_followup" "=== docker ps (follow-up) ===\\n$PS2_ESCAPED"
+
+        LOG_TAIL2=$(docker logs openspypro --tail 200 2>/dev/null || echo "no logs")
+        LOG2_ESCAPED=$(echo "$LOG_TAIL2" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+        notify_webhook "provisioning" "docker_logs_followup" "=== container logs (follow-up last 200 lines) ===\\n$LOG2_ESCAPED"
+
+        echo "❌ OpenSpyPro container is not running. Status: $CONTAINER_STATUS"
+        notify_webhook "failed" "container_start" "OpenSpyPro failed to start (status: $CONTAINER_STATUS). Diagnostics posted."
+        exit 1
+    fi
+
+    echo "✅ OpenSpyPro container is running"
+    notify_webhook "provisioning" "container_running" "OpenSpyPro container running successfully"
+    sleep 5
+
+
+    # --- Firewall ---
+    echo "[8/15] Configuring firewall..."
+    notify_webhook "provisioning" "firewall" "Setting up UFW"
+    ufw allow 22/tcp
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+    ufw allow "$PORT"/tcp
+    ufw --force enable
+    UFW_STATUS=$(ufw status verbose 2>/dev/null || echo "ufw not present")
+    UFW_STATUS_ESCAPED=$(echo "$UFW_STATUS" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+    notify_webhook "provisioning" "firewall_status" "UFW status:\\n$UFW_STATUS_ESCAPED"
+
+    # --- Step 9: Wait for readiness (HTTP probe) ---
+    echo "[9/15] Waiting for OpenSpyPro readiness..."
+    notify_webhook "provisioning" "http_probe" "Waiting for HTTP readiness"
+
+    CONTAINER_STATUS=$(docker inspect -f '{{.State.Status}}' openspypro 2>/dev/null || echo "nonexistent")
+    echo "Container status: $CONTAINER_STATUS"
+    if [ "$CONTAINER_STATUS" != "running" ]; then
+        docker logs openspypro 2>/dev/null || echo "No logs available"
+        notify_webhook "failed" "http_probe" "OpenSpyPro container not running. Status: $CONTAINER_STATUS"
+        exit 1
+    fi
+
+    docker top openspypro || echo "Could not check container processes"
+
+    elapsed=0
+    READY=false
+    while [ $elapsed -lt $READY_TIMEOUT ]; do
+        if [ "$(docker inspect -f '{{.State.Status}}' OpenSpyPro 2>/dev/null)" != "running" ]; then
+            echo "❌ Container stopped during startup"
+            docker logs OpenSpyPro 2>/dev/null || true
+            break
+        fi
+
+        echo "Testing connection to port $PORT..."
+        if netstat -tuln | grep ":$PORT " >/dev/null; then
+            echo "✅ Port $PORT is bound on host"
+        else
+            echo "❌ Port $PORT is NOT bound on host"
+        fi
+
+        for endpoint in "/" "/health" "/api/health" "/status"; do
+            if curl -v "http://127.0.0.1:$PORT$endpoint" 2>&1 | grep -q "HTTP.*200"; then
+                echo "✅ Successfully connected to $endpoint"
+                READY=true
+                break 2
+            fi
+        done
+
+        if [ $((elapsed % 30)) -eq 0 ]; then
+            docker logs OpenSpyPro --since "1m ago" 2>/dev/null | tail -10 || echo "No recent logs"
+        fi
+
+        sleep $SLEEP_INTERVAL
+        elapsed=$((elapsed + SLEEP_INTERVAL))
+    done
+
+    if [ "$READY" = false ]; then
+        notify_webhook "failed" "http_probe" "OpenSpyPro not responding after $READY_TIMEOUT seconds"
+        exit 1
+    fi
+
+    echo "✅ OpenSpyPro is ready and responding"
+    notify_webhook "provisioning" "http_ready" "✅ OpenSpyPro HTTP probe successful"
+    sleep 5
+
+    # ========== NGINX CONFIG + SSL (OpenSpyPro / fail-safe) ==========
+    echo "[11/15] Configuring nginx reverse proxy with SSL..."
+    notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
+
+    rm -f /etc/nginx/sites-enabled/default
+    rm -f /etc/nginx/sites-available/openspypro
+
+    # Download Let's Encrypt recommended configs
+    mkdir -p /etc/letsencrypt
+    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf
+    curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
+
+    # Temporary HTTP server for certbot validation
+    cat > /etc/nginx/sites-available/openspypro <<'EOF_TEMP'
+server {
     listen 80;
-    server_name {DOMAIN_NAME};
+    server_name __DOMAIN__;
+    root /var/www/html;
+
+    location / {
+        return 200 'Certbot validation ready';
+        add_header Content-Type text/plain;
+    }
+}
+EOF_TEMP
+
+    ln -sf /etc/nginx/sites-available/openspypro /etc/nginx/sites-enabled/openspypro
+    nginx -t && systemctl restart nginx
+
+    # Create webroot for certbot
+    mkdir -p /var/www/html
+    chown www-data:www-data /var/www/html
+
+    # Attempt to obtain SSL certificate
+    # Use --staging if you hit the daily limit
+    # certbot --nginx -d "__DOMAIN__" --staging --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
+    if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
+        echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
+        systemctl start nginx || true
+        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__" || true
+    fi
+
+    # Fail-safe check
+    if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+        echo "⚠️ SSL certificate not found! Continuing without SSL..."
+        notify_webhook "warning" "ssl" "OpenSpyPro Certbot failed, SSL not installed for __DOMAIN__"
+    else
+        echo "✅ SSL certificate obtained"
+        notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
+
+        # Replace nginx config for HTTPS proxy only if SSL exists
+        cat > /etc/nginx/sites-available/OpenSpyPro <<'EOF_SSL'
+server {
+    listen 80;
+    server_name __DOMAIN__;
     return 301 https://$host$request_uri;
-}}
+}
 
-server {{
+server {
     listen 443 ssl http2;
-    server_name {DOMAIN_NAME};
+    server_name __DOMAIN__;
 
-    ssl_certificate /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{DOMAIN_NAME}/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    location / {{
-        proxy_pass http://localhost:8088;
-        proxy_set_header Host \$host;
-    }}
+    client_max_body_size __MAX_UPLOAD_SIZE_MB__;
 
-    location /janus-ws {{
-        proxy_pass http://localhost:7088;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
+    location / {
+        proxy_pass http://127.0.0.1:__PORT__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-    }}
+        proxy_read_timeout 86400;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+}
+EOF_SSL
 
-    client_max_body_size 1024M;
-}}
-EOF
+        ln -sf /etc/nginx/sites-available/openspypro /etc/nginx/sites-enabled/openspypro
+        nginx -t && systemctl reload nginx
+    fi
 
-ln -sf /etc/nginx/sites-available/moonlightembed /etc/nginx/sites-enabled/
-nginx -t && systemctl restart nginx
+    echo "[12/15] Setup Cron for renewal..."
+    notify_webhook "provisioning" "cron_setup" "Setup Cron for renewal..."
+    # Setup cron for renewal (runs daily and reloads nginx on change)
+    (crontab -l 2>/dev/null | grep -v -F "certbot renew" || true; \
+    echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
 
-notify_webhook "completed" "finished" "Setup completed successfully"
+    # ========== FINAL CHECKS ==========
+    echo "[13/15] Final verification..."
+    notify_webhook "provisioning" "verification" "Performing verification checks"
 
-echo "============================================================"
-echo "✅ Moonlight to Browser Streaming Setup Complete!"
-echo "============================================================"
-echo ""
-echo "🌐 Connection Information:"
-echo "------------------------------------------------------------"
-echo "🔗 Moonlight PIN Service: https://pin.{DOMAIN_NAME}"
-echo "🔑 PIN: {ADMIN_PASSWORD}"
-echo "------------------------------------------------------------"
-echo ""
-echo "🎥 Streaming Access:"
-echo "------------------------------------------------------------"
-echo "1. Open https://{DOMAIN_NAME}/janus/streaming/test.html"
-echo "2. Use these settings:"
-echo "   - Video: H.264"
-echo "   - Audio: Opus"
-echo "   - Port: 5004"
-echo "   - Secret: moonlightstream"
-echo "------------------------------------------------------------"
-echo ""
-echo "⚙️ Service Status Commands:"
-echo "------------------------------------------------------------"
-echo "Janus Gateway: systemctl status janus.service"
-echo "Moonlight Stream: systemctl status moonlight-stream.service"
-echo "Nginx: systemctl status nginx"
-echo "------------------------------------------------------------"
-echo ""
-echo "🔧 IMPORTANT Setup Notes:"
-echo "------------------------------------------------------------"
-echo "1. On your Windows 10 machine:"
-echo "   - Install Sunshine from https://github.com/LizardByte/Sunshine"
-echo "   - Use PIN: {ADMIN_PASSWORD} when pairing"
-echo "2. The stream will be available at the Janus test page"
-echo "============================================================"
-'''
-    return script_template
+    if ! nginx -t; then
+        echo "ERROR: nginx config test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
+        exit 1
+    fi
+
+    if [ -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+        HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://__DOMAIN__ || echo "000")
+        echo "HTTPS check returned: $HTTPS_RESPONSE"
+        if [ "$HTTPS_RESPONSE" != "200" ]; then
+            notify_webhook "warning" "verification" "HTTPS check returned $HTTPS_RESPONSE"
+        else
+            notify_webhook "provisioning" "verification" "HTTPS OK"
+        fi
+    fi
+
+    # Test and apply the new config
+    if nginx -t; then
+        systemctl reload nginx
+        echo "✅ Nginx configuration test passed"
+        notify_webhook "provisioning" "verification" "✅ Nginx configuration test passed"
+    else
+        echo "❌ Nginx configuration test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
+        exit 1
+    fi
+
+    echo "[14/15] Final system checks..."
+    # Verify Docker container is running
+    if ! docker ps | grep -q openspypro; then
+        echo "❌ OpenSpyPro container is not running"
+        notify_webhook "failed" "verification" "OpenSpyPro container not running"
+        exit 1
+    fi
+                                      
+    # --- Step 15: Final summary ---
+    echo "[15/15] OpenSpyPro provisioning complete!"
+    notify_webhook "provisioning" "openspypro_installed" "✅ OpenSpyPro setup completed successfully"
+    
+    sleep 10
+
+""")
+
+    # ------------------ WEBHOOK FUNCTION HANDLING ------------------
+    if tokens["__WEBHOOK_URL__"]:
+        webhook_fn = textwrap.dedent(r"""
+            notify_webhook() {
+                local status="$1"
+                local step="$2"
+                local message="$3"
+                JSON_PAYLOAD=$(cat <<JSON_EOF
+            {
+                "vm_name": "$(hostname)",
+                "status": "$status",
+                "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+                "location": "__LOCATION__",
+                "resource_group": "__RESOURCE_GROUP__",
+                "details": {
+                    "step": "$step",
+                    "message": "$message"
+                }
+            }
+JSON_EOF
+                )
+                curl -s -X POST "__WEBHOOK_URL__" \
+                    -H "Content-Type: application/json" \
+                    -d "$JSON_PAYLOAD" \
+                    --retry 2 --retry-delay 5 --connect-timeout 10 --max-time 30 || true
+            }
+        """)
+    else:
+        webhook_fn = textwrap.dedent(r"""
+            notify_webhook() {
+                # Webhook disabled - stub function
+                return 0
+            }
+        """)
+
+    # ========== TOKEN REPLACEMENT ==========
+    # Replace webhook function first
+    final = script_template.replace("__WEBHOOK_FUNCTION__", webhook_fn)
+
+    # Replace all other tokens
+    for token, value in tokens.items():
+        final = final.replace(token, value)
+
+    # Replace webhook-specific tokens in the webhook function
+    final = final.replace("__LOCATION__", tokens["__LOCATION__"])
+    final = final.replace("__RESOURCE_GROUP__", tokens["__RESOURCE_GROUP__"])
+    final = final.replace("__WEBHOOK_URL__", tokens["__WEBHOOK_URL__"])
+    # Replace SSL configuration URLs
+    final = final.replace("__LET_OPTIONS_URL__", tokens["__LET_OPTIONS_URL__"])
+    final = final.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
+
+    return final
