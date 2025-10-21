@@ -712,17 +712,68 @@ EOF
     echo "  Checking PostgreSQL..."
     notify_webhook "provisioning" "postgresql_check" "Starting PostgreSQL health check"
     
+    # Wait for services with better error handling
+    echo "  Checking PostgreSQL..."
+    notify_webhook "provisioning" "postgresql_check" "Starting PostgreSQL health check"
+    
     # Enhanced PostgreSQL debugging
     echo "    Checking PostgreSQL container status..."
     if ! $DOCKER_COMPOSE_CMD ps plane-db | grep -q "Up"; then
         echo "    ❌ PostgreSQL container is not running!"
+        notify_webhook "failed" "postgresql_container_down" "PostgreSQL container is not in 'Up' state"
+        
         echo "    🔍 PostgreSQL container status:"
-        $DOCKER_COMPOSE_CMD ps plane-db
+        CONTAINER_STATUS=$($DOCKER_COMPOSE_CMD ps plane-db 2>&1)
+        echo "$CONTAINER_STATUS"
+        notify_webhook "debug" "container_status" "PostgreSQL container status: $CONTAINER_STATUS"
+        
         echo "    🔍 PostgreSQL container logs:"
-        $DOCKER_COMPOSE_CMD logs plane-db --tail=50
+        CONTAINER_LOGS=$($DOCKER_COMPOSE_CMD logs plane-db --tail=50 2>&1)
+        echo "$CONTAINER_LOGS"
+        notify_webhook "debug" "container_logs" "PostgreSQL container logs (last 50 lines): $CONTAINER_LOGS"
+        
         echo "    🔍 Checking if volumes were created:"
-        docker volume ls | grep pgdata || echo "    ❌ pgdata volume not found"
-        notify_webhook "failed" "postgresql_not_running" "PostgreSQL container is not running - check logs and volumes"
+        VOLUME_STATUS=$(docker volume ls | grep pgdata 2>&1)
+        echo "$VOLUME_STATUS"
+        if echo "$VOLUME_STATUS" | grep -q "pgdata"; then
+            notify_webhook "debug" "volume_status" "✅ pgdata volume exists"
+        else
+            notify_webhook "debug" "volume_status" "❌ pgdata volume not found"
+        fi
+        
+        # Container inspection
+        echo "    🔍 Checking container state:"
+        CONTAINER_STATE=$(docker inspect plane-db --format='{{.State.Status}}' 2>&1)
+        echo "$CONTAINER_STATE"
+        notify_webhook "debug" "container_state" "Container state: $CONTAINER_STATE"
+        
+        echo "    🔍 Checking container exit code:"
+        EXIT_CODE=$(docker inspect plane-db --format='{{.State.ExitCode}}' 2>&1)
+        echo "$EXIT_CODE"
+        notify_webhook "debug" "container_exit_code" "Container exit code: $EXIT_CODE"
+        
+        echo "    🔍 Checking container error:"
+        CONTAINER_ERROR=$(docker inspect plane-db --format='{{.State.Error}}' 2>&1)
+        echo "$CONTAINER_ERROR"
+        notify_webhook "debug" "container_error" "Container error: $CONTAINER_ERROR"
+        
+        echo "    🔍 Checking container health:"
+        CONTAINER_HEALTH=$(docker inspect plane-db --format='{{.State.Health.Status}}' 2>&1)
+        echo "$CONTAINER_HEALTH"
+        notify_webhook "debug" "container_health" "Container health: $CONTAINER_HEALTH"
+        
+        # Additional system checks
+        echo "    🔍 Checking system resources:"
+        DOCKER_INFO=$(docker info 2>&1 | grep -E "(Storage Driver|Total Memory|CPUs)" | head -5)
+        echo "$DOCKER_INFO"
+        notify_webhook "debug" "docker_system_info" "Docker system info: $DOCKER_INFO"
+        
+        echo "    🔍 Checking disk space:"
+        DISK_SPACE=$(df -h /var/lib/docker /opt/plane 2>&1)
+        echo "$DISK_SPACE"
+        notify_webhook "debug" "disk_space" "Disk space: $DISK_SPACE"
+        
+        notify_webhook "failed" "postgresql_investigation_complete" "PostgreSQL investigation complete - container never reached 'Up' state"
         exit 1
     fi
     notify_webhook "provisioning" "postgresql_running" "✅ PostgreSQL container is running"
