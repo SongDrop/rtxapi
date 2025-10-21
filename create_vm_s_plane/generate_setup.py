@@ -716,6 +716,38 @@ EOF
     echo "  Checking PostgreSQL..."
     notify_webhook "provisioning" "postgresql_check" "Starting PostgreSQL health check"
     
+    # ==========================================================
+    # Special PostgreSQL Initialization Wait
+    # ==========================================================
+    echo "⏳ Giving PostgreSQL extra time for first-time initialization..."
+    notify_webhook "provisioning" "postgresql_init" "PostgreSQL first-time initialization may take 60+ seconds"
+    
+    # Wait longer for PostgreSQL initial setup
+    POSTGRES_INIT_WAIT=90
+    echo "    Waiting up to ${POSTGRES_INIT_WAIT} seconds for PostgreSQL to initialize..."
+    INIT_COUNT=0
+    while [ $INIT_COUNT -lt $POSTGRES_INIT_WAIT ]; do
+        if $DOCKER_COMPOSE_CMD ps plane-db | grep -q "Up"; then
+            echo "    ✅ PostgreSQL container is running after ${INIT_COUNT}s"
+            notify_webhook "provisioning" "postgresql_running" "✅ PostgreSQL container running after ${INIT_COUNT}s"
+            break
+        fi
+        sleep 5
+        INIT_COUNT=$((INIT_COUNT + 5))
+        if [ $((INIT_COUNT % 30)) -eq 0 ]; then
+            echo "    Still waiting for PostgreSQL to start... (${INIT_COUNT}s)"
+            notify_webhook "provisioning" "postgresql_waiting" "Still waiting for PostgreSQL to start... (${INIT_COUNT}s)"
+        fi
+    done
+    
+    if ! $DOCKER_COMPOSE_CMD ps plane-db | grep -q "Up"; then
+        echo "    ❌ PostgreSQL never started within ${POSTGRES_INIT_WAIT} seconds"
+        # Fall through to the detailed debugging below
+    else
+        echo "    ✅ PostgreSQL container is ready for health checks"
+        notify_webhook "provisioning" "postgresql_ready_for_checks" "✅ PostgreSQL container ready for health checks"
+    fi
+                                      
     # Enhanced PostgreSQL debugging
     echo "    Checking PostgreSQL container status..."
     if ! $DOCKER_COMPOSE_CMD ps plane-db | grep -q "Up"; then
