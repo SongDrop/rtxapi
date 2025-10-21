@@ -820,7 +820,7 @@ EOF
 
     echo "✅ All infrastructure services are healthy"
     notify_webhook "provisioning" "infrastructure_ready" "✅ All infrastructure services are healthy and ready"
-                                        
+                                            
     # ==========================================================
     # Setup MinIO bucket
     # ==========================================================
