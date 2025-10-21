@@ -455,9 +455,17 @@ services:
 
   plane-db:
     container_name: plane-db
-    image: postgres:15.7-alpine
-    restart: always
-    command: postgres -c 'max_connections=1000'
+    image: postgres:15.7
+    restart: unless-stopped
+    command: |
+        sh -c "
+            # Ensure data directory exists and has correct permissions
+            mkdir -p /var/lib/postgresql/data
+            chown -R postgres:postgres /var/lib/postgresql/data
+            chmod 700 /var/lib/postgresql/data
+            # Start PostgreSQL with minimal config
+            exec postgres -c 'max_connections=1000' -c 'shared_buffers=128MB'
+        "
     volumes:
       - pgdata:/var/lib/postgresql/data
     env_file:
