@@ -208,7 +208,7 @@ def generate_setup(
     rm -f write_test.file
 
     # ==========================================================
-    # 🔐 Generate Secure Credentials
+    # 🔐 Generate SIMPLIFIED Secure Credentials
     # ==========================================================
     echo "🔐 Generating secure credentials..."
     notify_webhook "provisioning" "credentials_generation" "Creating secure passwords and keys"
@@ -223,7 +223,8 @@ def generate_setup(
             if [ "$type" = "hex" ]; then
                 result=$(openssl rand -hex "$length" 2>/dev/null || true)
             else
-                result=$(openssl rand -base64 "$length" 2>/dev/null | tr -d '\n' || true)
+                # Use simpler base64 without special characters for PostgreSQL
+                result=$(openssl rand -base64 "$length" 2>/dev/null | tr -d '\n+/=' | head -c "$length" || true)
             fi
         fi
 
@@ -232,7 +233,8 @@ def generate_setup(
             if [ "$type" = "hex" ]; then
                 result=$(head -c "$length" /dev/urandom | xxd -p -c "$length" 2>/dev/null || true)
             else
-                result=$(head -c "$length" /dev/urandom | base64 | tr -d '\n' | head -c $((length*2)) 2>/dev/null || true)
+                # Simple alphanumeric for PostgreSQL compatibility
+                result=$(head -c "$length" /dev/urandom | base64 | tr -d '\n+/=' | head -c "$length" 2>/dev/null || true)
             fi
         fi
 
@@ -245,17 +247,17 @@ def generate_setup(
         echo "$result"
     }
 
-    # Generate credentials
+    # Generate SIMPLIFIED credentials (PostgreSQL can be picky about passwords)
     POSTGRES_USER="plane"
     POSTGRES_DB="plane"
-    POSTGRES_PASSWORD=$(generate_secure_random base64 32)
+    POSTGRES_PASSWORD="plane_$(generate_secure_random hex 16)"  # Simple prefix + hex only
 
     RABBITMQ_USER="plane"
     RABBITMQ_VHOST="plane"
-    RABBITMQ_PASSWORD=$(generate_secure_random base64 32)
+    RABBITMQ_PASSWORD="rabbit_$(generate_secure_random hex 16)"
 
     MINIO_USER="plane"
-    MINIO_PASSWORD=$(generate_secure_random base64 32)
+    MINIO_PASSWORD="minio_$(generate_secure_random hex 16)"
 
     SECRET_KEY=$(generate_secure_random hex 32)
     MACHINE_SIGNATURE=$(generate_secure_random hex 32)
