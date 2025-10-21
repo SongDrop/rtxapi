@@ -1004,7 +1004,7 @@ EOF
     notify_webhook "provisioning" "migrations_complete" "✅ Database migrations completed"
 
     # ==========================================================
-    # Start application services (UPDATED WITH PROXY FIXES)
+    # Start application services (PROXY-SPECIFIC FIX)
     # ==========================================================
     echo "🚀 Starting Plane application services..."
     notify_webhook "provisioning" "app_services_start" "Starting Plane application containers"
@@ -1021,86 +1021,66 @@ EOF
             notify_webhook "warning" "app_image_pull_failed" "Failed to pull $service image, but continuing"
         fi
         
-        # Start service with timeout and better error handling
-        echo "    Starting $service container..."
-        if timeout 120s $DOCKER_COMPOSE_CMD up -d "$service"; then
-            echo "    ✅ $service started successfully"
-            notify_webhook "provisioning" "app_service_started" "✅ $service container started successfully"
+        # SPECIAL HANDLING FOR PROXY - Simplified approach
+        if [ "$service" = "proxy" ]; then
+            echo "    🔧 Special handling for proxy service..."
+            notify_webhook "debug" "proxy_special_handling" "Applying special handling for proxy service"
             
-            # Wait and verify service is actually running
-            sleep 8
+            # Clean up any existing proxy
+            $DOCKER_COMPOSE_CMD stop proxy 2>/dev/null || true
+            $DOCKER_COMPOSE_CMD rm -f proxy 2>/dev/null || true
+            sleep 2
             
-            # Special handling for proxy service
-            if [ "$service" = "proxy" ]; then
-                echo "    🔍 Verifying proxy service..."
+            # Check for port conflicts
+            echo "    🔍 Checking for port conflicts..."
+            if netstat -tuln | grep -q ":80 "; then
+                echo "    ⚠️ Port 80 is in use, stopping conflicting service..."
+                # Try to identify and stop what's using port 80
+                lsof -ti:80 | xargs -r kill -9 2>/dev/null || true
+                sleep 2
+            fi
+            
+            # Start proxy with simple approach
+            echo "    🚀 Starting proxy service..."
+            if $DOCKER_COMPOSE_CMD up -d proxy; then
+                echo "    ✅ Proxy started successfully"
+                notify_webhook "provisioning" "proxy_started" "✅ Proxy service started successfully"
+                
+                # Wait and check status
+                sleep 10
                 if $DOCKER_COMPOSE_CMD ps proxy | grep -q "Up"; then
-                    echo "    ✅ Proxy is running"
-                    notify_webhook "provisioning" "proxy_running" "✅ Proxy service is running"
+                    echo "    ✅ Proxy is running and healthy"
+                    notify_webhook "provisioning" "proxy_healthy" "✅ Proxy service is running and healthy"
                 else
-                    echo "    ⚠️ Proxy started but not in 'Up' state"
+                    echo "    ⚠️ Proxy container exists but not in 'Up' state"
                     echo "    🔍 Proxy logs:"
-                    $DOCKER_COMPOSE_CMD logs proxy --tail=15
-                    
-                    # Check for port conflicts
-                    echo "    🔍 Checking for port conflicts..."
-                    if netstat -tuln | grep -q ":80 "; then
-                        echo "    ⚠️ Port 80 is already in use"
-                        notify_webhook "warning" "port_80_in_use" "Port 80 is occupied, proxy may not start"
-                    fi
-                    if netstat -tuln | grep -q ":443 "; then
-                        echo "    ⚠️ Port 443 is already in use" 
-                        notify_webhook "warning" "port_443_in_use" "Port 443 is occupied, proxy may not start"
-                    fi
-                    
-                    # Try restarting proxy
-                    echo "    🔧 Attempting proxy restart..."
-                    $DOCKER_COMPOSE_CMD stop proxy
-                    sleep 3
-                    $DOCKER_COMPOSE_CMD up -d proxy
-                    sleep 10
-                    
-                    if $DOCKER_COMPOSE_CMD ps proxy | grep -q "Up"; then
-                        echo "    ✅ Proxy started after restart"
-                        notify_webhook "provisioning" "proxy_restart_success" "Proxy service started successfully after restart"
-                    else
-                        echo "    ⚠️ Proxy still not up, but continuing without it"
-                        notify_webhook "warning" "proxy_continue_despite_issues" "Continuing despite proxy service issues - app will use direct ports"
-                    fi
+                    $DOCKER_COMPOSE_CMD logs proxy --tail=10
+                    notify_webhook "warning" "proxy_container_exists" "Proxy container exists but not fully up - continuing"
                 fi
             else
-                # For other services, simple check
+                echo "    ⚠️ Proxy failed to start, but continuing without it"
+                notify_webhook "warning" "proxy_skipped" "Proxy service failed to start, app will use direct ports"
+            fi
+        else
+            # Standard startup for other services
+            echo "    Starting $service container..."
+            if timeout 120s $DOCKER_COMPOSE_CMD up -d "$service"; then
+                echo "    ✅ $service started successfully"
+                notify_webhook "provisioning" "app_service_started" "✅ $service container started successfully"
+                
+                # Wait and verify service is actually running
+                sleep 8
+                
                 if $DOCKER_COMPOSE_CMD ps "$service" | grep -q "Up"; then
                     echo "    ✅ $service is running"
                 else
                     echo "    ⚠️ $service started but not in 'Up' state"
                     echo "    🔍 $service logs:"
-                    $DOCKER_COMPOSE_CMD logs "$service" --tail=10
-                fi
-            fi
-        else
-            echo "    ❌ Failed to start $service"
-            echo "    🔍 Docker Compose output:"
-            $DOCKER_COMPOSE_CMD up -d "$service"  # Run again to see error
-            
-            # Special handling for proxy failure
-            if [ "$service" = "proxy" ]; then
-                echo "    🔧 Implementing proxy fallback strategy..."
-                notify_webhook "debug" "proxy_fallback" "Proxy failed to start, implementing fallback"
-                
-                # Clean up and try alternative approach
-                $DOCKER_COMPOSE_CMD stop proxy 2>/dev/null || true
-                $DOCKER_COMPOSE_CMD rm -f proxy 2>/dev/null || true
-                sleep 2
-                
-                echo "    🔧 Starting proxy with simplified configuration..."
-                if $DOCKER_COMPOSE_CMD up -d proxy; then
-                    echo "    ✅ Proxy started with fallback method"
-                    notify_webhook "provisioning" "proxy_fallback_success" "Proxy started successfully with fallback method"
-                else
-                    echo "    ⚠️ Proxy failed completely, continuing without reverse proxy"
-                    notify_webhook "warning" "proxy_skipped" "Proxy service failed to start, app will use direct port access"
+                    $DOCKER_COMPOSE_CMD logs "$service" --tail=5
                 fi
             else
+                echo "    ❌ Failed to start $service"
+                
                 # For critical services, exit; for optional ones, continue
                 case "$service" in
                     "api"|"worker"|"web")
@@ -1125,7 +1105,7 @@ EOF
     notify_webhook "provisioning" "app_services_ready" "✅ All Plane application services running"
 
     # ==========================================================
-    # Verify API health (ENHANCED WITH FALLBACK PORTS)
+    # Verify API health (SIMPLIFIED)
     # ==========================================================
     echo "🔍 Verifying Plane API health..."
     READY_TIMEOUT=300
@@ -1135,21 +1115,11 @@ EOF
 
     notify_webhook "provisioning" "health_check_start" "Checking Plane API health..."
 
-    # Try multiple endpoints - proxy (80/443) and direct (8000/3000)
-    API_ENDPOINTS=("http://localhost:8000/api/" "http://localhost:80/api/" "http://localhost/api/")
-    WEB_ENDPOINTS=("http://localhost:3000/" "http://localhost:80/" "http://localhost/")
-
     while [ $elapsed -lt $READY_TIMEOUT ]; do
-        # Check if API container is running
-        if $DOCKER_COMPOSE_CMD ps api | grep -q "Up"; then
-            # Try multiple endpoints
-            for endpoint in "${API_ENDPOINTS[@]}"; do
-                if curl -f -s "$endpoint" >/dev/null 2>&1; then
-                    READY=true
-                    ACTIVE_ENDPOINT="$endpoint"
-                    break 2
-                fi
-            done
+        # Check if API container is running and responding on port 8000
+        if $DOCKER_COMPOSE_CMD ps api | grep -q "Up" && curl -f -s http://localhost:8000/api/ >/dev/null 2>&1; then
+            READY=true
+            break
         fi
         
         echo "  Waiting for API to be ready... (${elapsed}s elapsed)"
@@ -1160,17 +1130,9 @@ EOF
             
             # Show debug info
             echo "    🔍 Container status:"
-            $DOCKER_COMPOSE_CMD ps api web proxy
+            $DOCKER_COMPOSE_CMD ps api web
             echo "    🔍 Recent API logs:"
-            $DOCKER_COMPOSE_CMD logs api --tail=8
-            echo "    🔍 Testing endpoints:"
-            for endpoint in "${API_ENDPOINTS[@]}"; do
-                if curl -s -o /dev/null -w "%{http_code}" "$endpoint" 2>/dev/null | grep -q "200"; then
-                    echo "      ✅ $endpoint - OK"
-                else
-                    echo "      ❌ $endpoint - Failed"
-                fi
-            done
+            $DOCKER_COMPOSE_CMD logs api --tail=5
         fi
         
         sleep $SLEEP_INTERVAL
@@ -1182,16 +1144,13 @@ EOF
         echo "🔍 Full container status:"
         $DOCKER_COMPOSE_CMD ps
         echo "🔍 API logs:"
-        $DOCKER_COMPOSE_CMD logs api --tail=50
-        echo "🔍 Worker logs:"
-        $DOCKER_COMPOSE_CMD logs worker --tail=20
-        echo "🔍 Web logs:"
-        $DOCKER_COMPOSE_CMD logs web --tail=20
+        $DOCKER_COMPOSE_CMD logs api --tail=30
         notify_webhook "failed" "api_health_failed" "Plane API health check failed"
         exit 1
     fi
 
     echo "✅ Plane is fully running and responsive!"
+    
         notify_webhook "provisioning" "plane_healthy" "✅ Plane is fully operational and responsive"
 
     # ==========================================================
