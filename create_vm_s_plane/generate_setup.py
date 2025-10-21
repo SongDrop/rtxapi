@@ -572,7 +572,7 @@ EOF
     notify_webhook "provisioning" "disk_check" "✅ Disk space sufficient: ${DISK_AVAILABLE}KB available"
     
     # Check memory
-    echo "    Checking memory..."
+    echo "Checking memory..."
     MEM_AVAILABLE=$(free -m | awk 'NR==2{print $7}')
     if [ "$MEM_AVAILABLE" -lt 512 ]; then  # Less than 512MB
         echo "    ⚠️ Low memory available: ${MEM_AVAILABLE}MB (PostgreSQL needs at least 256MB)"
@@ -582,7 +582,7 @@ EOF
     fi
     
     # Clean up any existing containers that might conflict
-    echo "    Cleaning up any existing containers..."
+    echo "Cleaning up any existing containers..."
     notify_webhook "provisioning" "cleanup" "Cleaning up existing containers"
     $DOCKER_COMPOSE_CMD down --remove-orphans >/dev/null 2>&1 || true
     sleep 2
@@ -591,7 +591,7 @@ EOF
     notify_webhook "provisioning" "system_checks_passed" "✅ All system pre-checks passed"
 
     # ==========================================================
-    # Start infrastructure services (IMPROVED VERSION)
+    # Start infrastructure services (INTENSIVE DEBUGGING VERSION)
     # ==========================================================
     echo "🚀 Starting infrastructure services..."
     notify_webhook "provisioning" "infrastructure_start" "Starting database, cache, and queue services"
@@ -620,6 +620,57 @@ EOF
             
             # Check if container is actually running (not just created)
             sleep 3
+            
+            # INTENSIVE DEBUGGING FOR POSTGRESQL
+            if [ "$service" = "plane-db" ]; then
+                echo "    🔍 Intensive PostgreSQL debugging..."
+                notify_webhook "debug" "postgresql_debug" "Starting intensive PostgreSQL debugging"
+                
+                # Check if container is still running
+                if ! $DOCKER_COMPOSE_CMD ps plane-db | grep -q "Up"; then
+                    echo "    ❌ PostgreSQL container died within 3 seconds!"
+                    echo "    🔍 Last logs before death:"
+                    POSTGRES_LOGS=$($DOCKER_COMPOSE_CMD logs plane-db --tail=50 2>&1)
+                    echo "$POSTGRES_LOGS"
+                    notify_webhook "debug" "postgresql_logs" "PostgreSQL logs before death: $POSTGRES_LOGS"
+                    
+                    # Check container exit status
+                    echo "    🔍 Container exit investigation:"
+                    EXIT_CODE=$(docker inspect plane-db --format='{{.State.ExitCode}}' 2>&1)
+                    echo "    Exit Code: $EXIT_CODE"
+                    ERROR_MSG=$(docker inspect plane-db --format='{{.State.Error}}' 2>&1)
+                    echo "    Error: $ERROR_MSG"
+                    notify_webhook "debug" "container_exit_info" "PostgreSQL exit code: $EXIT_CODE, error: $ERROR_MSG"
+                    
+                    # Check volume status
+                    echo "    🔍 Volume investigation:"
+                    VOLUME_INFO=$(docker volume ls | grep pgdata 2>&1)
+                    echo "$VOLUME_INFO"
+                    notify_webhook "debug" "volume_info" "Volume status: $VOLUME_INFO"
+                    
+                    # Check container state
+                    echo "    🔍 Container state:"
+                    CONTAINER_STATE=$(docker inspect plane-db --format='{{.State.Status}}' 2>&1)
+                    echo "    State: $CONTAINER_STATE"
+                    notify_webhook "failed" "postgresql_crash" "PostgreSQL container crashed immediately - check initialization logs"
+                    exit 1
+                else
+                    echo "    ✅ PostgreSQL container is stable after 3 seconds"
+                    notify_webhook "provisioning" "postgresql_stable" "✅ PostgreSQL container stable after initial startup"
+                    
+                    # Additional PostgreSQL process checks
+                    echo "    🔍 Checking PostgreSQL processes..."
+                    if docker exec plane-db ps aux 2>/dev/null | grep -q "[p]ostgres"; then
+                        echo "    ✅ PostgreSQL processes are running"
+                        notify_webhook "debug" "postgresql_processes" "PostgreSQL processes detected and running"
+                    else
+                        echo "    ⚠️ No PostgreSQL processes found yet"
+                        notify_webhook "warning" "no_postgresql_processes" "No PostgreSQL processes detected yet"
+                    fi
+                fi
+            fi
+            
+            # Regular container check for other services
             if ! $DOCKER_COMPOSE_CMD ps "$service" | grep -q "Up"; then
                 echo "    ❌ $service container started but failed to run"
                 echo "    🔍 Container status:"
@@ -649,7 +700,7 @@ EOF
 
     echo "✅ All infrastructure services started"
     notify_webhook "provisioning" "infrastructure_started" "✅ All infrastructure services started, waiting for readiness..."
-
+                                      
     # ==========================================================
     # Wait for infrastructure health checks (IMPROVED)
     # ==========================================================
