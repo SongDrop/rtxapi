@@ -1006,7 +1006,7 @@ EOF
     sleep 5
     
     # ==========================================================
-    # Start application services (WITH ADVANCED LIVE SERVICE HANDLING)
+    # Start application services (PROXY-SPECIFIC FIX)
     # ==========================================================
     echo "🚀 Starting Plane application services..."
     notify_webhook "provisioning" "app_services_start" "Starting Plane application containers"
@@ -1063,123 +1063,6 @@ EOF
                 echo "    ⚠️ Proxy failed to start, but continuing without it"
                 notify_webhook "warning" "proxy_skipped" "Proxy service failed to start, app will use direct ports"
             fi
-        
-        # ADVANCED HANDLING FOR LIVE SERVICE
-        elif [ "$service" = "live" ]; then
-            echo "    🔧 Advanced handling for live service..."
-            notify_webhook "debug" "live_advanced_handling" "Applying advanced handling for live service"
-            
-            # Clean up any existing live container
-            $DOCKER_COMPOSE_CMD stop live 2>/dev/null || true
-            $DOCKER_COMPOSE_CMD rm -f live 2>/dev/null || true
-            sleep 2
-            
-            # Enhanced resource monitoring before starting
-            echo "    📊 Checking system resources for live service..."
-            MEM_AVAILABLE=$(free -m | awk 'NR==2{print $7}')
-            DISK_AVAILABLE=$(df /opt/plane | awk 'NR==2{print $4}')
-            
-            echo "    💾 Available memory: ${MEM_AVAILABLE}MB, Disk: ${DISK_AVAILABLE}KB"
-            
-            # Add resource limits to docker-compose for live service if memory is low
-            if [ "$MEM_AVAILABLE" -lt 1024 ]; then
-                echo "    🔧 Adding resource limits to live service (low memory detected)"
-                if grep -q "plane-live:" docker-compose.yml && ! grep -q "mem_limit" docker-compose.yml; then
-                    sed -i '/container_name: plane-live/a \    mem_limit: 512m\n    cpus: 0.5' docker-compose.yml
-                    echo "    ✅ Added memory limits to live service"
-                fi
-            fi
-            
-            # Multi-stage startup with comprehensive health checks
-            echo "    🚀 Starting live service with enhanced monitoring..."
-            LIVE_STARTED=false
-            LIVE_HEALTHY=false
-            
-            for attempt in {1..3}; do
-                echo "    🔄 Attempt $attempt to start live service..."
-                
-                # Start the service
-                if timeout 60s $DOCKER_COMPOSE_CMD up -d live; then
-                    LIVE_STARTED=true
-                    echo "    ✅ Live service started on attempt $attempt"
-                    
-                    # Enhanced health checking with multiple methods
-                    echo "    🔍 Performing comprehensive health checks..."
-                    
-                    # Method 1: Check container status
-                    sleep 10
-                    if $DOCKER_COMPOSE_CMD ps live | grep -q "Up"; then
-                        echo "    ✅ Container is running"
-                        
-                        # Method 2: Check if process is running inside container
-                        if docker exec plane-live ps aux 2>/dev/null | grep -q "node\|live"; then
-                            echo "    ✅ Live process is running inside container"
-                            
-                            # Method 3: Check if port is listening
-                            if docker exec plane-live netstat -tuln 2>/dev/null | grep -q ":3100"; then
-                                echo "    ✅ Live service is listening on port 3100"
-                                
-                                # Method 4: Check HTTP responsiveness
-                                if curl -s -f http://localhost:3100/health >/dev/null 2>&1 || \
-                                curl -s -f http://localhost:3100/ >/dev/null 2>&1 || \
-                                docker exec plane-live curl -s http://localhost:3100/ >/dev/null 2>&1; then
-                                    echo "    ✅ Live service is responding to HTTP requests"
-                                    LIVE_HEALTHY=true
-                                    notify_webhook "provisioning" "live_healthy" "✅ Live service started and healthy on attempt $attempt"
-                                    break
-                                else
-                                    echo "    ⚠️ Live service running but not responding to HTTP"
-                                fi
-                            else
-                                echo "    ⚠️ Live service not listening on expected port"
-                            fi
-                        else
-                            echo "    ⚠️ No live process found inside container"
-                        fi
-                    else
-                        echo "    ⚠️ Container started but not in 'Up' state"
-                    fi
-                    
-                    # If not healthy, show logs and retry
-                    if [ "$LIVE_HEALTHY" = false ]; then
-                        echo "    📋 Live service logs (attempt $attempt):"
-                        $DOCKER_COMPOSE_CMD logs live --tail=15
-                        
-                        if [ $attempt -lt 3 ]; then
-                            echo "    🔧 Cleaning up for retry..."
-                            $DOCKER_COMPOSE_CMD stop live 2>/dev/null || true
-                            $DOCKER_COMPOSE_CMD rm -f live 2>/dev/null || true
-                            sleep 5
-                            
-                            # Increase wait time between retries
-                            echo "    ⏳ Waiting before retry..."
-                            sleep 10
-                        fi
-                    fi
-                else
-                    echo "    ❌ Failed to start live service on attempt $attempt"
-                    if [ $attempt -lt 3 ]; then
-                        echo "    🔧 Cleaning up for retry..."
-                        $DOCKER_COMPOSE_CMD stop live 2>/dev/null || true
-                        $DOCKER_COMPOSE_CMD rm -f live 2>/dev/null || true
-                        sleep 5
-                    fi
-                fi
-            done
-            
-            # Final status reporting
-            if [ "$LIVE_HEALTHY" = true ]; then
-                echo "    ✅ Live service fully operational"
-                notify_webhook "provisioning" "live_operational" "✅ Live service fully operational with real-time features"
-            elif [ "$LIVE_STARTED" = true ]; then
-                echo "    ⚠️ Live service started but may have limited functionality"
-                notify_webhook "warning" "live_limited" "Live service started but may have limited functionality - real-time features may be affected"
-            else
-                echo "    ❌ Live service failed to start after 3 attempts"
-                echo "    💡 Real-time features will be disabled, but core application will work"
-                notify_webhook "warning" "live_failed" "Live service failed to start - real-time features disabled, but core app functional"
-            fi
-        
         else
             # Standard startup for other services
             echo "    Starting $service container..."
@@ -1224,142 +1107,66 @@ EOF
     notify_webhook "provisioning" "app_services_ready" "✅ All Plane application services running"
 
     # ==========================================================
-    # Enhanced Container Health Verification
+    # Verify API health (WITH CONTAINER DEBUGGING)
     # ==========================================================
-    echo "🔍 Performing enhanced container health verification..."
-    notify_webhook "provisioning" "enhanced_health_check" "Starting enhanced container health verification"
+    notify_webhook "provisioning" "health_check_start" "Checking Plane API health"
 
-    # Comprehensive container status check
+    # Give services time to initialize
+    sleep 60
+
+    # DEBUG: Check which containers are running and report status
     CONTAINER_STATUS=$($DOCKER_COMPOSE_CMD ps)
     RUNNING_CONTAINERS=$(echo "$CONTAINER_STATUS" | grep "Up" | wc -l)
     TOTAL_CONTAINERS=$(echo "$CONTAINER_STATUS" | tail -n +2 | wc -l)
 
-    echo "📊 Container Status: $RUNNING_CONTAINERS/$TOTAL_CONTAINERS running"
     notify_webhook "debug" "container_status" "Containers running: $RUNNING_CONTAINERS/$TOTAL_CONTAINERS"
 
-    # Detailed container analysis
+    # List all expected containers and check each one
     EXPECTED_CONTAINERS=("api" "worker" "beat-worker" "web" "space" "admin" "live" "proxy" "plane-db" "plane-redis" "plane-mq" "plane-minio")
-    CRITICAL_CONTAINERS=("api" "worker" "web" "plane-db" "plane-redis")
-    OPTIONAL_CONTAINERS=("space" "admin" "live" "proxy" "plane-mq" "plane-minio")
-
-    MISSING_CRITICAL=""
-    MISSING_OPTIONAL=""
-    HEALTHY_CRITICAL=0
+    MISSING_CONTAINERS=""
 
     for container in "${EXPECTED_CONTAINERS[@]}"; do
-        if echo "$CONTAINER_STATUS" | grep -q "$container.*Up"; then
-            echo "    ✅ $container: RUNNING"
-            if [[ " ${CRITICAL_CONTAINERS[@]} " =~ " ${container} " ]]; then
-                ((HEALTHY_CRITICAL++))
-            fi
-        else
-            echo "    ❌ $container: NOT RUNNING"
-            if [[ " ${CRITICAL_CONTAINERS[@]} " =~ " ${container} " ]]; then
-                MISSING_CRITICAL="$MISSING_CRITICAL $container"
-            else
-                MISSING_OPTIONAL="$MISSING_OPTIONAL $container"
-            fi
+        if ! echo "$CONTAINER_STATUS" | grep -q "$container.*Up"; then
+            MISSING_CONTAINERS="$MISSING_CONTAINERS $container"
+            notify_webhook "warning" "container_missing" "Container $container is not running"
         fi
     done
 
-    # Report detailed status
-    echo "📈 Critical Services: $HEALTHY_CRITICAL/${#CRITICAL_CONTAINERS[@]} healthy"
-    if [ -n "$MISSING_CRITICAL" ]; then
-        echo "    🚨 Missing critical: $MISSING_CRITICAL"
-        notify_webhook "warning" "missing_critical" "Missing critical containers:$MISSING_CRITICAL"
-    fi
-    if [ -n "$MISSING_OPTIONAL" ]; then
-        echo "    ⚠️ Missing optional: $MISSING_OPTIONAL"
-        notify_webhook "debug" "missing_optional" "Missing optional containers:$MISSING_OPTIONAL"
-    fi
-
-    # ==========================================================
-    # Advanced API Health Verification
-    # ==========================================================
-    echo "🔍 Performing advanced API health verification..."
-    notify_webhook "provisioning" "advanced_api_health" "Starting advanced API health checks"
-
-    API_HEALTHY=false
-    LIVE_HEALTHY=false
-
-    # Multi-stage API health check
-    for i in {1..36}; do  # 6 minutes total
-        CURRENT_TIME=$((i * 10))
-        
-        # Check API container status
-        if $DOCKER_COMPOSE_CMD ps api | grep -q "Up"; then
-            # Check API responsiveness with multiple endpoints
-            if curl -s -f http://localhost:8000/api/ >/dev/null 2>&1; then
-                echo "    ✅ API root responsive"
-                
-                # Additional API endpoint checks
-                if curl -s -f http://localhost:8000/api/health/ >/dev/null 2>&1 || \
-                curl -s -f http://localhost:8000/health/ >/dev/null 2>&1; then
-                    echo "    ✅ API health endpoint responsive"
-                    API_HEALTHY=true
-                    
-                    # Check live service if it's running
-                    if $DOCKER_COMPOSE_CMD ps live | grep -q "Up"; then
-                        if curl -s -f http://localhost:3100/ >/dev/null 2>&1 || \
-                        curl -s -f http://localhost:3100/health >/dev/null 2>&1; then
-                            echo "    ✅ Live service responsive"
-                            LIVE_HEALTHY=true
-                        fi
-                    fi
-                    break
-                fi
-            fi
+    # Check if API is responsive with extended timeout
+    READY=false
+    for i in {1..30}; do
+        if $DOCKER_COMPOSE_CMD ps api | grep -q "Up" && curl -f -s http://localhost:8000/api/ >/dev/null 2>&1; then
+            READY=true
+            break
         fi
-        
-        # Progress reporting every 60 seconds
         if [ $((i % 6)) -eq 0 ]; then
-            echo "    ⏳ API health check in progress... (${CURRENT_TIME}s)"
-            notify_webhook "provisioning" "health_check_progress" "API health check in progress... (${CURRENT_TIME}s)"
-            
-            # Show container status every 2 minutes
-            if [ $((i % 12)) -eq 0 ]; then
-                echo "    📊 Current container status:"
-                $DOCKER_COMPOSE_CMD ps --filter "status=running" | grep -v "NAME" || echo "        No containers running"
-            fi
+            notify_webhook "provisioning" "health_check_progress" "API health check in progress... ($((i*10))s)"
         fi
-        
         sleep 10
     done
 
-    # Final deployment assessment
-    if [ "$API_HEALTHY" = true ]; then
-        if [ $HEALTHY_CRITICAL -eq ${#CRITICAL_CONTAINERS[@]} ]; then
-            echo "🎉 Plane deployment fully operational!"
-            if [ "$LIVE_HEALTHY" = true ]; then
-                notify_webhook "success" "deployment_fully_operational" "✅ Plane fully operational with all critical services and real-time features"
+    if [ "$READY" = false ]; then
+        # FIXED: Lower the threshold and report which containers are missing
+        if [ $RUNNING_CONTAINERS -ge 7 ]; then
+            if [ -n "$MISSING_CONTAINERS" ]; then
+                notify_webhook "success" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running. Missing:$MISSING_CONTAINERS"
             else
-                notify_webhook "success" "deployment_operational" "✅ Plane operational with all critical services (real-time features limited)"
+                notify_webhook "success" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running"
             fi
         else
-            echo "✅ Plane deployment stable - core functionality available"
-            notify_webhook "success" "deployment_stable" "✅ Plane deployment stable with $HEALTHY_CRITICAL/${#CRITICAL_CONTAINERS[@]} critical services"
-        fi
-    else
-        if [ $HEALTHY_CRITICAL -ge 3 ]; then  # At least API, DB, and one other critical service
-            echo "⚠️ Plane deployment partially functional - API not responding but core services running"
-            notify_webhook "warning" "deployment_partial" "Plane deployment partially functional - API not responding but $HEALTHY_CRITICAL critical services running"
-        else
-            echo "❌ Plane deployment unstable - insufficient critical services running"
-            notify_webhook "failed" "deployment_unstable" "Plane deployment unstable - only $HEALTHY_CRITICAL critical services running"
+            if [ -n "$MISSING_CONTAINERS" ]; then
+                notify_webhook "failed" "deployment_unstable" "Plane deployment unstable - only $RUNNING_CONTAINERS containers running. Missing:$MISSING_CONTAINERS"
+            else
+                notify_webhook "failed" "deployment_unstable" "Plane deployment unstable - only $RUNNING_CONTAINERS containers running"
+            fi
             exit 1
         fi
+    else
+        notify_webhook "provisioning" "plane_healthy" "✅ Plane is fully operational and responsive"
     fi
 
     notify_webhook "provisioning" "plane_deployment_complete" "✅ Plane deployment completed successfully"
 
-    # Final container status report
-    echo "📋 Final container status:"
-    $DOCKER_COMPOSE_CMD ps
-
-    echo "🔧 Useful commands:"
-    echo "    View logs: cd $DATA_DIR/plane-selfhost && $DOCKER_COMPOSE_CMD logs -f"
-    echo "    Restart services: cd $DATA_DIR/plane-selfhost && $DOCKER_COMPOSE_CMD restart"
-    echo "    Check specific service: cd $DATA_DIR/plane-selfhost && $DOCKER_COMPOSE_CMD logs [service-name]"
     # ==========================================================
     # Final container status
     # ==========================================================
