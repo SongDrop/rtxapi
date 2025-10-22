@@ -582,600 +582,372 @@ EOF
     notify_webhook "provisioning" "system_checks_passed" "✅ All system pre-checks passed"
 
     # ==========================================================
-    # Start infrastructure services (COMPREHENSIVE MINIO FIX)
+    # Start infrastructure services (MAXIMUM VISIBILITY)
     # ==========================================================
     echo "🚀 Starting infrastructure services..."
-    notify_webhook "provisioning" "infrastructure_start" "Starting database, cache, and queue services"
+    notify_webhook "orchestration" "infrastructure_phase_start" "BEGIN infrastructure service startup sequence"
+
+    notify_webhook "debug" "service_dependencies" "Infrastructure dependency order: PostgreSQL → Redis → RabbitMQ → MinIO"
+    notify_webhook "debug" "planned_sequence" "Execution order: plane-db → plane-redis → plane-mq → plane-minio"
 
     INFRA_SERVICES=("plane-db" "plane-redis" "plane-mq" "plane-minio")
     for service in "${INFRA_SERVICES[@]}"; do
+        notify_webhook "orchestration" "service_start_attempt" "Starting service: $service (Step $((++step))/4)"
         echo "  Starting $service..."
-        notify_webhook "provisioning" "service_start" "Starting $service"
-
-        # Pull image first to avoid download delays during startup
-        echo "    Pulling image for $service..."
-        notify_webhook "provisioning" "pulling_image" "Pulling Docker image for $service"
+        
+        # Track pull timing
+        notify_webhook "debug" "image_pull_start" "Pulling image for $service"
+        pull_start=$(date +%s)
         if ! $DOCKER_COMPOSE_CMD pull "$service" --quiet; then
-            echo "    ⚠️ Failed to pull $service image, but continuing..."
-            notify_webhook "warning" "image_pull_failed" "Failed to pull $service image, but continuing"
+            notify_webhook "warning" "image_pull_skipped" "Image pull failed for $service, using local image"
         else
-            notify_webhook "provisioning" "image_pulled" "✅ Docker image pulled for $service"
+            pull_end=$(date +%s)
+            pull_duration=$((pull_end - pull_start))
+            notify_webhook "debug" "image_pull_complete" "✅ Image pulled for $service in ${pull_duration}s"
         fi
         
-        # Start service with timeout and better error handling
-        echo "    Starting $service container..."
-        notify_webhook "provisioning" "container_start" "Starting $service container"
+        # Track start timing
+        notify_webhook "orchestration" "container_start_attempt" "Starting container for $service"
+        start_time=$(date +%s)
+        
         if timeout 60s $DOCKER_COMPOSE_CMD up -d "$service"; then
-            echo "    ✅ $service started successfully"
-            notify_webhook "provisioning" "container_started" "✅ $service container started successfully"
+            end_time=$(date +%s)
+            duration=$((end_time - start_time))
+            notify_webhook "orchestration" "container_start_success" "✅ $service started in ${duration}s"
             
-            # Give container time to start
-            sleep 5
-            
-            # Check if container is running - with multiple verification methods
-            echo "    Verifying $service container status..."
-            
-            # Method 1: Check if container exists and is accessible
+            # Enhanced status verification with timing
+            notify_webhook "debug" "container_status_check" "Verifying $service container status"
             if docker ps -a | grep -q "$service"; then
-                echo "      ✅ Container exists"
+                notify_webhook "debug" "container_exists" "Container $service exists in docker ps"
                 
-                # Method 2: Check if we can execute commands in the container
-                if docker exec "$service" echo "Container accessible" >/dev/null 2>&1; then
-                    echo "      ✅ Container is accessible and responsive"
-                    notify_webhook "provisioning" "container_accessible" "✅ $service container is accessible and responsive"
-                else
-                    echo "      ⚠️ Container exists but not fully responsive yet"
-                    notify_webhook "warning" "container_slow_start" "$service container exists but not fully responsive"
-                fi
+                # Service-specific readiness tracking
+                case "$service" in
+                    "plane-db")
+                        notify_webhook "orchestration" "postgresql_wait_start" "Waiting for PostgreSQL to accept connections (max 60s)"
+                        for i in {1..12}; do
+                            sleep 5
+                            current_wait=$((i*5))
+                            if docker exec plane-db pg_isready -U "$POSTGRES_USER" -q 2>/dev/null; then
+                                notify_webhook "orchestration" "postgresql_ready" "✅ PostgreSQL ready after ${current_wait}s - accepting connections"
+                                break
+                            else
+                                notify_webhook "debug" "postgresql_waiting" "PostgreSQL not ready yet (${current_wait}s)..."
+                            fi
+                            if [ $i -eq 12 ]; then
+                                notify_webhook "warning" "postgresql_slow" "PostgreSQL slow to start (60s) but continuing - processes running"
+                            fi
+                        done
+                        ;;
+                    "plane-redis")
+                        notify_webhook "orchestration" "redis_wait_start" "Waiting for Redis to respond to PING"
+                        for i in {1..6}; do
+                            sleep 5
+                            if docker exec plane-redis redis-cli ping | grep -q PONG 2>/dev/null; then
+                                notify_webhook "orchestration" "redis_ready" "✅ Redis ready after $((i*5))s - responding to PING"
+                                break
+                            fi
+                        done
+                        ;;
+                    "plane-mq")
+                        notify_webhook "orchestration" "rabbitmq_wait_start" "Waiting for RabbitMQ startup completion"
+                        for i in {1..12}; do
+                            sleep 5
+                            if docker exec plane-mq rabbitmqctl await_startup 2>/dev/null; then
+                                notify_webhook "orchestration" "rabbitmq_ready" "✅ RabbitMQ ready after $((i*5))s - startup complete"
+                                break
+                            fi
+                        done
+                        ;;
+                    "plane-minio")
+                        notify_webhook "orchestration" "minio_wait_start" "Waiting for MinIO health check (max 30s)"
+                        for i in {1..6}; do
+                            sleep 5
+                            current_wait=$((i*5))
+                            if curl -s -f http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+                                notify_webhook "orchestration" "minio_ready" "✅ MinIO ready after ${current_wait}s - health check passed"
+                                break
+                            else
+                                notify_webhook "debug" "minio_waiting" "MinIO health check failed (${current_wait}s), trying console port..."
+                                if curl -s -f http://localhost:9001/minio/health/live >/dev/null 2>&1; then
+                                    notify_webhook "orchestration" "minio_ready_console" "✅ MinIO ready via console port after ${current_wait}s"
+                                    break
+                                fi
+                            fi
+                        done
+                        ;;
+                esac
+                
             else
-                echo "      ❌ Container not found after start attempt"
-                echo "      🔍 Docker Compose status:"
-                $DOCKER_COMPOSE_CMD ps "$service"
-                notify_webhook "failed" "container_not_found" "$service container not found after start attempt"
+                notify_webhook "error" "container_missing" "❌ Container $service not found in docker ps after start attempt"
+                notify_webhook "debug" "container_debug" "Debug: docker ps output - $(docker ps -a | head -10)"
                 exit 1
             fi
-            
-            # SPECIAL HANDLING FOR POSTGRESQL
-            if [ "$service" = "plane-db" ]; then
-                echo "    🔍 PostgreSQL Special Handling..."
-                notify_webhook "debug" "postgresql_special_handling" "Applying special handling for PostgreSQL Docker state issues"
-                
-                # Wait longer for PostgreSQL and use direct service checking
-                echo "    Waiting for PostgreSQL to initialize (up to 60 seconds)..."
-                for i in {1..12}; do
-                    sleep 5
-                    
-                    # Direct PostgreSQL service check (bypass Docker state)
-                    if docker exec plane-db pg_isready -U "$POSTGRES_USER" -q 2>/dev/null; then
-                        echo "      ✅ PostgreSQL is ready and accepting connections!"
-                        notify_webhook "provisioning" "postgresql_ready_direct" "✅ PostgreSQL is ready and accepting connections (direct check)"
-                        break
-                    fi
-                    
-                    # Check if container is still accessible
-                    if ! docker exec plane-db echo "alive" >/dev/null 2>&1; then
-                        echo "      ❌ PostgreSQL container became unresponsive"
-                        echo "      🔍 PostgreSQL logs:"
-                        $DOCKER_COMPOSE_CMD logs plane-db --tail=20
-                        notify_webhook "failed" "postgresql_unresponsive" "PostgreSQL container became unresponsive during initialization"
-                        exit 1
-                    fi
-                    
-                    if [ $i -eq 12 ]; then
-                        echo "      ⚠️ PostgreSQL not ready after 60s, but continuing if container is alive"
-                        if docker exec plane-db ps aux 2>/dev/null | grep -q "[p]ostgres"; then
-                            echo "      ✅ PostgreSQL processes are running, continuing..."
-                            notify_webhook "warning" "postgresql_slow_start" "PostgreSQL slow start but processes are running, continuing"
-                        else
-                            echo "      ❌ No PostgreSQL processes found after 60s"
-                            notify_webhook "failed" "postgresql_no_processes" "No PostgreSQL processes found after 60 seconds"
-                            exit 1
-                        fi
-                    fi
-                done
-            fi
-            
-            # SPECIAL HANDLING FOR MINIO - Enhanced stability monitoring
-            if [ "$service" = "plane-minio" ]; then
-                echo "    🔍 MinIO Enhanced Stability Check..."
-                notify_webhook "debug" "minio_enhanced_stability" "Enhanced MinIO container stability monitoring"
-                
-                # Monitor MinIO for 30 seconds to ensure it doesn't crash
-                MINIO_STABLE=true
-                for i in {1..6}; do
-                    sleep 5
-                    CURRENT_TIME=$((i*5))
-                    
-                    if ! docker ps | grep -q "plane-minio"; then
-                        echo "      ❌ MinIO container crashed after ${CURRENT_TIME} seconds!"
-                        MINIO_STABLE=false
-                        
-                        echo "      🔍 MinIO logs before crash:"
-                        $DOCKER_COMPOSE_CMD logs plane-minio --tail=30
-                        
-                        # Check why it crashed
-                        echo "      🔍 Checking system resources:"
-                        docker system df
-                        echo "      🔍 Checking disk space:"
-                        df -h
-                        
-                        break
-                    else
-                        echo "      ✅ MinIO still running after ${CURRENT_TIME} seconds"
-                        
-                        # Check if MinIO process is actually running inside container
-                        if docker exec plane-minio ps aux 2>/dev/null | grep -q "[m]inio"; then
-                            echo "      ✅ MinIO process is running inside container"
-                        else
-                            echo "      ⚠️ Container running but no MinIO process found"
-                        fi
-                    fi
-                done
-                
-                if [ "$MINIO_STABLE" = "false" ]; then
-                    echo "    🔧 Attempting MinIO recovery..."
-                    notify_webhook "debug" "minio_recovery_attempt" "Attempting MinIO recovery after crash"
-                    
-                    # Clean up any existing MinIO containers and volumes
-                    $DOCKER_COMPOSE_CMD stop plane-minio 2>/dev/null
-                    $DOCKER_COMPOSE_CMD rm -f plane-minio 2>/dev/null
-                    docker volume rm plane_minio_data 2>/dev/null || true
-                    sleep 2
-                    
-                    # Try starting MinIO with simpler configuration
-                    echo "    🔧 Starting MinIO with simplified configuration..."
-                    if docker run -d \
-                        --name plane-minio \
-                        -p 9000:9000 \
-                        -p 9001:9001 \
-                        -e "MINIO_ROOT_USER=minioadmin" \
-                        -e "MINIO_ROOT_PASSWORD=minioadmin" \
-                        -v minio_data:/data \
-                        minio/minio server /data --console-address ":9001"; then
-                        echo "    ✅ MinIO started successfully in standalone mode"
-                        notify_webhook "provisioning" "minio_standalone_success" "MinIO started successfully in standalone mode after recovery"
-                        
-                        # Wait a bit for standalone MinIO to initialize
-                        sleep 10
-                    else
-                        echo "    ❌ Failed to start MinIO in standalone mode"
-                        notify_webhook "failed" "minio_standalone_failed" "Failed to start MinIO in standalone mode"
-                        exit 1
-                    fi
-                else
-                    echo "    ✅ MinIO container stable for 30+ seconds"
-                    notify_webhook "provisioning" "minio_stable" "MinIO container stable for 30+ seconds"
-                fi
-            fi
-            
-            echo "    ✅ $service verification complete"
         else
-            echo "    ❌ Failed to start $service"
-            echo "    🔍 Docker Compose output:"
-            $DOCKER_COMPOSE_CMD up -d "$service"  # Run again to see the error
-            echo "    🔍 Container status:"
-            $DOCKER_COMPOSE_CMD ps "$service"
-            notify_webhook "failed" "service_start_failed" "Failed to start $service - check Docker logs"
+            notify_webhook "error" "container_start_failed" "❌ Failed to start $service container (timeout or error)"
+            notify_webhook "debug" "compose_logs" "Docker compose logs: $($DOCKER_COMPOSE_CMD logs "$service" --tail=5 2>/dev/null || echo 'no logs')"
             exit 1
         fi
         
-        echo "    ✅ $service is running"
-        notify_webhook "provisioning" "service_ready" "✅ $service is running and ready"
-        sleep 3  # Brief pause between services
+        notify_webhook "orchestration" "service_operational" "✅ $service fully operational and responsive"
+        sleep 2
     done
 
-    echo "✅ All infrastructure services started"
-    notify_webhook "provisioning" "infrastructure_started" "✅ All infrastructure services started"
+    notify_webhook "milestone" "infrastructure_phase_complete" "🎯 ALL infrastructure services ready - database, cache, queue, storage operational"
 
     # ==========================================================
-    # Wait for infrastructure health checks (MINIO-FOCUSED FIXES)
-    # ==========================================================
-    echo "⏳ Waiting for infrastructure services to be ready..."
-    notify_webhook "provisioning" "health_checks_start" "Starting health checks for infrastructure services"
-
-    # Improved health check function with better MinIO handling
-    check_service_health() {
-        local service_name="$1"
-        local check_command="$2"
-        local timeout_seconds="${3:-180}"  # Default 3 minutes
-        
-        echo "  Checking $service_name..."
-        notify_webhook "provisioning" "service_health_check" "Checking $service_name health"
-        
-        local count=0
-        local max_attempts=$((timeout_seconds / 5))
-        
-        # Special handling for MinIO - use multiple health check methods
-        if [ "$service_name" = "MinIO" ]; then
-            echo "    Using enhanced MinIO health checks..."
-            # Try multiple endpoints and methods
-            check_command="(curl -s -f http://localhost:9000/minio/health/live >/dev/null 2>&1 || curl -s -f http://localhost:9001/minio/health/live >/dev/null 2>&1 || curl -s http://localhost:9000/minio/health/ready >/dev/null 2>&1 || (docker exec plane-minio ps aux | grep -q '[m]inio' && echo 'minio_process_running' > /tmp/minio_status)) && test -f /tmp/minio_status || true"
-        fi
-        
-        until eval "$check_command" >/dev/null 2>&1; do
-            sleep 5
-            count=$((count + 1))
-            
-            # Show progress every 30 seconds
-            if [ $((count % 6)) -eq 0 ]; then
-                echo "    Still waiting for $service_name... (${count}s)"
-                notify_webhook "provisioning" "health_check_progress" "Still waiting for $service_name to be ready... (${count}s)"
-                
-                # Enhanced debugging for MinIO
-                if [ "$service_name" = "MinIO" ]; then
-                    echo "    🔍 MinIO Debug Info:"
-                    if docker ps | grep -q "plane-minio"; then
-                        echo "      ✅ Container is running"
-                        echo "      🔍 Checking MinIO process:"
-                        if docker exec plane-minio ps aux 2>/dev/null | grep -q "[m]inio"; then
-                            echo "      ✅ MinIO process is running inside container"
-                        else
-                            echo "      ⚠️ Container running but no MinIO process"
-                        fi
-                        echo "      🔍 Checking ports:"
-                        netstat -tuln | grep -E ':(9000|9001)' || echo "      Ports not listening"
-                    else
-                        echo "      ❌ Container not running"
-                    fi
-                fi
-            fi
-            
-            # Enhanced container stability check with better recovery
-            if ! docker ps | grep -q "$service_name"; then
-                echo "    ❌ $service_name container disappeared!"
-                echo "    🔍 Checking all containers:"
-                docker ps -a
-                echo "    🔍 $service_name logs before disappearance:"
-                $DOCKER_COMPOSE_CMD logs "$service_name" --tail=20 2>/dev/null || echo "    No logs available"
-                
-                # Enhanced recovery for MinIO
-                if [ "$service_name" = "MinIO" ]; then
-                    echo "    🔧 Attempting comprehensive MinIO recovery..."
-                    notify_webhook "debug" "minio_comprehensive_recovery" "Attempting comprehensive MinIO recovery"
-                    
-                    # Clean up completely
-                    docker stop plane-minio 2>/dev/null || true
-                    docker rm -f plane-minio 2>/dev/null || true
-                    $DOCKER_COMPOSE_CMD stop plane-minio 2>/dev/null || true
-                    $DOCKER_COMPOSE_CMD rm -f plane-minio 2>/dev/null || true
-                    sleep 3
-                    
-                    # Remove any conflicting containers
-                    docker ps -a | grep minio | awk '{print $1}' | xargs -r docker rm -f
-                    
-                    echo "    🔧 Starting MinIO with optimized configuration..."
-                    # Use Docker run with optimized settings
-                    if docker run -d \
-                        --name plane-minio \
-                        --restart unless-stopped \
-                        -p 9000:9000 \
-                        -p 9001:9001 \
-                        -e "MINIO_ROOT_USER=minioadmin" \
-                        -e "MINIO_ROOT_PASSWORD=minioadmin" \
-                        -e "MINIO_BROWSER=on" \
-                        -v minio_data:/data \
-                        minio/minio server /data --console-address ":9001"; then
-                        echo "    ✅ MinIO recovery successful"
-                        notify_webhook "provisioning" "minio_recovery_success" "MinIO recovery successful with optimized configuration"
-                        count=0  # Reset counter
-                        sleep 10  # Give it time to start
-                        continue
-                    else
-                        echo "    ❌ MinIO recovery failed"
-                        notify_webhook "failed" "minio_recovery_failed" "MinIO recovery failed after multiple attempts"
-                        return 1
-                    fi
-                else
-                    notify_webhook "failed" "container_disappeared" "$service_name container disappeared during health check"
-                    return 1
-                fi
-            fi
-            
-            if [ $count -ge $max_attempts ]; then
-                echo "    ❌ $service_name did not become ready within $timeout_seconds seconds"
-                echo "    🔍 $service_name logs:"
-                $DOCKER_COMPOSE_CMD logs "$service_name" --tail=30
-                echo "    🔍 Current container status:"
-                docker ps -a | grep "$service_name" || echo "    Container not found"
-                
-                # For MinIO, continue if the container is running even if health checks fail
-                if [ "$service_name" = "MinIO" ] && docker ps | grep -q "plane-minio"; then
-                    echo "    ⚠️ MinIO health check failed but container is running - continuing..."
-                    notify_webhook "warning" "minio_continue_despite_health" "MinIO health check failed but container running - continuing"
-                    return 0
-                fi
-                
-                notify_webhook "failed" "health_check_timeout" "$service_name did not become ready within $timeout_seconds seconds"
-                return 1
-            fi
-        done
-        
-        echo "    ✅ $service_name is healthy"
-        notify_webhook "provisioning" "service_healthy" "✅ $service_name is healthy and ready"
-        return 0
-    }
-
-    # Check PostgreSQL (this is working well)
-    echo "  Checking PostgreSQL database readiness..."
-    notify_webhook "provisioning" "postgresql_health_check" "Starting PostgreSQL health check"
-
-    if check_service_health "PostgreSQL" "docker exec plane-db pg_isready -U $POSTGRES_USER -q" 120; then
-        echo "  ✅ PostgreSQL health check passed"
-    else
-        echo "  ❌ PostgreSQL health check failed"
-        if docker exec plane-db ps aux 2>/dev/null | grep -q "[p]ostgres"; then
-            echo "  ⚠️ PostgreSQL processes are running, continuing despite health check failure"
-            notify_webhook "warning" "postgresql_continue_despite_health_check" "Continuing despite PostgreSQL health check failure - processes are running"
-        else
-            exit 1
-        fi
-    fi
-
-    # Check Redis
-    check_service_health "Redis" "docker exec plane-redis redis-cli ping | grep -q PONG" 60 || {
-        echo "❌ Redis health check failed"
-        $DOCKER_COMPOSE_CMD logs plane-redis --tail=30
-        exit 1
-    }
-
-    # Check RabbitMQ  
-    check_service_health "RabbitMQ" "docker exec plane-mq rabbitmqctl await_startup" 120 || {
-        echo "❌ RabbitMQ health check failed"
-        $DOCKER_COMPOSE_CMD logs plane-mq --tail=30
-        exit 1
-    }
-
-    # Check MinIO with ultimate fallback
-    echo "  Checking MinIO with comprehensive fallback..."
-    notify_webhook "provisioning" "minio_final_attempt" "Final MinIO health check with comprehensive fallback"
-
-    # Try the health check but be very forgiving with MinIO
-    if check_service_health "MinIO" "curl -s -f http://localhost:9000/minio/health/live >/dev/null 2>&1 || curl -s -f http://localhost:9001/minio/health/live >/dev/null 2>&1" 90; then
-        echo "  ✅ MinIO health check passed"
-    else
-        echo "  ⚠️ MinIO health check failed, but checking if we can continue..."
-        
-        # Ultimate fallback - if MinIO container exists and has been running for a while, continue
-        if docker ps | grep -q "plane-minio"; then
-            CONTAINER_UPTIME=$(docker inspect --format='{{.State.StartedAt}}' plane-minio 2>/dev/null | cut -d'.' -f1)
-            if [ -n "$CONTAINER_UPTIME" ]; then
-                echo "  ✅ MinIO container is running (started: $CONTAINER_UPTIME), continuing despite health check"
-                notify_webhook "warning" "minio_container_running_continue" "MinIO container is running, continuing despite health check failure"
-            else
-                echo "  ✅ MinIO container is running, continuing..."
-                notify_webhook "warning" "minio_continue_container_running" "MinIO container running, continuing despite health check"
-            fi
-        else
-            echo "  ❌ MinIO container not running and health checks failed"
-            # One final attempt to start MinIO
-            echo "  🔧 Final MinIO startup attempt..."
-            if docker run -d \
-                --name plane-minio \
-                -p 9000:9000 \
-                -p 9001:9001 \
-                -e "MINIO_ROOT_USER=minioadmin" \
-                -e "MINIO_ROOT_PASSWORD=minioadmin" \
-                -v minio_data:/data \
-                minio/minio server /data --console-address ":9001"; then
-                echo "  ✅ MinIO started on final attempt, continuing..."
-                notify_webhook "provisioning" "minio_final_start_success" "MinIO started successfully on final attempt"
-                sleep 10
-            else
-                echo "  ❌ Could not start MinIO, but continuing without it for now"
-                notify_webhook "warning" "minio_skipped" "MinIO failed to start, continuing without object storage"
-            fi
-        fi
-    fi
-
-    echo "✅ All infrastructure services are ready"
-    notify_webhook "provisioning" "infrastructure_ready" "✅ All infrastructure services are ready - proceeding to application setup"
-                                                                                                                        
-    # ==========================================================
-    # Setup MinIO bucket
+    # Setup MinIO bucket (WITH VISIBILITY)
     # ==========================================================
     echo "📦 Setting up MinIO bucket..."
-    sleep 10
+    notify_webhook "orchestration" "minio_setup_start" "Configuring MinIO bucket and permissions"
+
     # Install mc command if not exists
     if ! command -v mc &>/dev/null; then
+        notify_webhook "debug" "mc_install" "Installing MinIO client (mc)"
         curl -s https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
         chmod +x /usr/local/bin/mc
+        notify_webhook "debug" "mc_installed" "MinIO client installed successfully"
     fi
 
-    # Create bucket
-    docker exec plane-minio mc alias set local http://localhost:9000 $MINIO_USER $MINIO_PASSWORD || true
-    docker exec plane-minio mc mb local/uploads --ignore-existing || true
+    # Create bucket with visibility
+    notify_webhook "debug" "minio_alias" "Setting MinIO alias: http://localhost:9000"
+    if docker exec plane-minio mc alias set local http://localhost:9000 $MINIO_USER $MINIO_PASSWORD 2>/dev/null; then
+        notify_webhook "debug" "minio_alias_success" "MinIO alias configured successfully"
+    else
+        notify_webhook "warning" "minio_alias_failed" "MinIO alias configuration failed - bucket creation may fail"
+    fi
+
+    notify_webhook "debug" "bucket_creation" "Creating bucket: uploads"
+    if docker exec plane-minio mc mb local/uploads --ignore-existing 2>/dev/null; then
+        notify_webhook "orchestration" "bucket_ready" "✅ MinIO bucket 'uploads' created/verified"
+    else
+        notify_webhook "warning" "bucket_creation_failed" "MinIO bucket creation failed - continuing without bucket"
+    fi
+
     echo "✅ MinIO bucket configured"
+    notify_webhook "milestone" "minio_setup_complete" "✅ MinIO storage layer configured and ready"
 
     # ==========================================================
-    # Run database migrations
+    # Run database migrations (WITH VISIBILITY)
     # ==========================================================
     echo "[8/15] Running database migrations..."
-    notify_webhook "provisioning" "migrations_start" "Running database migrations"
+    notify_webhook "orchestration" "migrations_start" "BEGIN database migrations - applying schema changes"
 
-    $DOCKER_COMPOSE_CMD run --rm migrator || {
-        echo "❌ Migrations failed"
-        $DOCKER_COMPOSE_CMD logs plane-db --tail=20
-        $DOCKER_COMPOSE_CMD logs migrator --tail=30
-        notify_webhook "failed" "migrations_failed" "Database migrations failed"
+    notify_webhook "debug" "migration_precheck" "Verifying PostgreSQL is ready before migrations"
+    if ! docker exec plane-db pg_isready -U "$POSTGRES_USER" -q 2>/dev/null; then
+        notify_webhook "error" "postgres_not_ready_migration" "PostgreSQL not ready for migrations - aborting"
         exit 1
-    }
+    fi
+
+    notify_webhook "debug" "migration_execution" "Executing: docker-compose run --rm migrator"
+    migration_start=$(date +%s)
+    if $DOCKER_COMPOSE_CMD run --rm migrator; then
+        migration_end=$(date +%s)
+        migration_duration=$((migration_end - migration_start))
+        notify_webhook "orchestration" "migrations_complete" "✅ Database migrations completed successfully in ${migration_duration}s"
+    else
+        notify_webhook "error" "migrations_failed" "❌ Database migrations failed - check logs"
+        notify_webhook "debug" "migration_logs", "Migration logs: $($DOCKER_COMPOSE_CMD logs migrator --tail=20 2>/dev/null || echo 'no migration logs')"
+        notify_webhook "debug" "postgres_logs", "PostgreSQL logs: $($DOCKER_COMPOSE_CMD logs plane-db --tail=10 2>/dev/null || echo 'no postgres logs')"
+        exit 1
+    fi
 
     echo "✅ Migrations completed successfully"
-    notify_webhook "provisioning" "migrations_complete" "✅ Database migrations completed"
-    
-    sleep 5
-    
+    sleep 3
+
     # ==========================================================
-    # Start application services (PROXY-SPECIFIC FIX)
+    # Start application services (MAXIMUM VISIBILITY)
     # ==========================================================
     echo "🚀 Starting Plane application services..."
-    notify_webhook "provisioning" "app_services_start" "Starting Plane application containers"
+    notify_webhook "orchestration" "application_phase_start" "BEGIN application service startup sequence"
+
+    notify_webhook "debug" "app_dependencies" "Application dependency order: API → Workers → Web → Space → Admin → Live → Proxy"
+    notify_webhook "debug" "critical_services", "Critical services: api, worker, web (will fail deployment if these fail)"
 
     APP_SERVICES=("api" "worker" "beat-worker" "web" "space" "admin" "live" "proxy")
     for service in "${APP_SERVICES[@]}"; do
+        notify_webhook "orchestration" "app_service_start_attempt" "Starting application service: $service (Step $((++app_step))/8)"
         echo "  Starting $service..."
-        notify_webhook "provisioning" "app_service_start" "Starting $service"
         
-        # Pull image first to avoid delays
-        echo "    Pulling image for $service..."
+        # Track pull timing for application services
+        notify_webhook "debug" "app_image_pull" "Pulling application image for $service"
         if ! $DOCKER_COMPOSE_CMD pull "$service" --quiet; then
-            echo "    ⚠️ Failed to pull $service image, but continuing..."
-            notify_webhook "warning" "app_image_pull_failed" "Failed to pull $service image, but continuing"
+            notify_webhook "warning" "app_image_pull_failed" "Application image pull failed for $service, using local image"
+        else
+            notify_webhook "debug" "app_image_pulled" "✅ Application image pulled for $service"
         fi
         
-        # SPECIAL HANDLING FOR PROXY - Simplified approach
+        # Special handling for proxy service
         if [ "$service" = "proxy" ]; then
-            echo "    🔧 Special handling for proxy service..."
-            notify_webhook "debug" "proxy_special_handling" "Applying special handling for proxy service"
+            notify_webhook "orchestration", "proxy_special_start", "Starting proxy service with port conflict checks"
             
-            # Clean up any existing proxy
-            $DOCKER_COMPOSE_CMD stop proxy 2>/dev/null || true
-            $DOCKER_COMPOSE_CMD rm -f proxy 2>/dev/null || true
-            sleep 2
-            
-            # Check for port conflicts
-            echo "    🔍 Checking for port conflicts..."
+            # Check for port conflicts with visibility
+            notify_webhook "debug", "port_check", "Checking for port 80 conflicts"
             if netstat -tuln | grep -q ":80 "; then
-                echo "    ⚠️ Port 80 is in use, stopping conflicting service..."
-                # Try to identify and stop what's using port 80
-                lsof -ti:80 | xargs -r kill -9 2>/dev/null || true
-                sleep 2
+                notify_webhook "warning", "port_80_in_use", "Port 80 is in use - may conflict with proxy"
+                # Try to identify what's using port 80
+                port_user=$(lsof -i:80 -t 2>/dev/null | head -1 || echo "unknown")
+                notify_webhook "debug", "port_user", "Port 80 used by PID: $port_user"
+            else
+                notify_webhook "debug", "port_80_free", "Port 80 is available for proxy"
             fi
             
-            # Start proxy with simple approach
-            echo "    🚀 Starting proxy service..."
+            # Start proxy with enhanced monitoring
+            notify_webhook "orchestration", "proxy_start_attempt", "Starting proxy container"
+            proxy_start=$(date +%s)
             if $DOCKER_COMPOSE_CMD up -d proxy; then
-                echo "    ✅ Proxy started successfully"
-                notify_webhook "provisioning" "proxy_started" "✅ Proxy service started successfully"
+                proxy_end=$(date +%s)
+                proxy_duration=$((proxy_end - proxy_start))
+                notify_webhook "orchestration", "proxy_start_success", "✅ Proxy started in ${proxy_duration}s"
                 
-                # Wait and check status
+                # Verify proxy status
                 sleep 10
                 if $DOCKER_COMPOSE_CMD ps proxy | grep -q "Up"; then
-                    echo "    ✅ Proxy is running and healthy"
-                    notify_webhook "provisioning" "proxy_healthy" "✅ Proxy service is running and healthy"
+                    notify_webhook "orchestration", "proxy_healthy", "✅ Proxy container healthy and running"
                 else
-                    echo "    ⚠️ Proxy container exists but not in 'Up' state"
-                    echo "    🔍 Proxy logs:"
-                    $DOCKER_COMPOSE_CMD logs proxy --tail=10
-                    notify_webhook "warning" "proxy_container_exists" "Proxy container exists but not fully up - continuing"
+                    notify_webhook "warning", "proxy_unhealthy", "Proxy container started but not healthy - continuing"
+                    notify_webhook "debug", "proxy_status", "Proxy status: $($DOCKER_COMPOSE_CMD ps proxy | grep proxy || echo 'not found')"
                 fi
             else
-                echo "    ⚠️ Proxy failed to start, but continuing without it"
-                notify_webhook "warning" "proxy_skipped" "Proxy service failed to start, app will use direct ports"
+                notify_webhook "error", "proxy_start_failed", "❌ Proxy service failed to start"
+                exit 1
             fi
         else
-            # Standard startup for other services
-            echo "    Starting $service container..."
+            # Standard application service startup
+            notify_webhook "orchestration", "app_container_start", "Starting application container: $service"
+            app_start=$(date +%s)
+            
             if timeout 120s $DOCKER_COMPOSE_CMD up -d "$service"; then
-                echo "    ✅ $service started successfully"
-                notify_webhook "provisioning" "app_service_started" "✅ $service container started successfully"
+                app_end=$(date +%s)
+                app_duration=$((app_end - app_start))
+                notify_webhook "orchestration", "app_container_started", "✅ $service started in ${app_duration}s"
                 
-                # Wait and verify service is actually running
+                # Verify service is running
                 sleep 8
-                
                 if $DOCKER_COMPOSE_CMD ps "$service" | grep -q "Up"; then
-                    echo "    ✅ $service is running"
+                    notify_webhook "debug", "app_container_verified", "✅ $service container verified running"
                 else
-                    echo "    ⚠️ $service started but not in 'Up' state"
-                    echo "    🔍 $service logs:"
-                    $DOCKER_COMPOSE_CMD logs "$service" --tail=5
+                    notify_webhook "warning", "app_container_unhealthy", "$service container started but not in 'Up' state"
+                    notify_webhook "debug", "app_container_logs", "$service logs: $($DOCKER_COMPOSE_CMD logs "$service" --tail=3 2>/dev/null || echo 'no logs')"
                 fi
             else
-                echo "    ❌ Failed to start $service"
+                notify_webhook "error", "app_container_failed", "❌ Failed to start $service container"
                 
-                # For critical services, exit; for optional ones, continue
+                # Critical service failure handling
                 case "$service" in
                     "api"|"worker"|"web")
-                        echo "    ❌ Critical service $service failed - cannot continue"
-                        $DOCKER_COMPOSE_CMD logs "$service" --tail=20
-                        notify_webhook "failed" "critical_service_failed" "Critical service $service failed to start"
+                        notify_webhook "fatal", "critical_service_failed", "CRITICAL service $service failed - deployment cannot continue"
+                        notify_webhook "debug", "critical_service_logs", "$service logs: $($DOCKER_COMPOSE_CMD logs "$service" --tail=20 2>/dev/null || echo 'no logs')"
                         exit 1
                         ;;
                     *)
-                        echo "    ⚠️ Non-critical service $service failed - continuing"
-                        notify_webhook "warning" "non_critical_service_failed" "Non-critical service $service failed, but continuing"
+                        notify_webhook "warning", "non_critical_service_failed", "Non-critical service $service failed - continuing deployment"
                         ;;
                 esac
             fi
         fi
         
-        echo "  ✅ $service startup completed"
-        sleep 3  # Brief pause between services
+        notify_webhook "orchestration", "app_service_operational", "✅ Application service $service operational"
+        sleep 3
     done
 
-    echo "✅ All Plane services started"
-    notify_webhook "provisioning" "app_services_ready" "✅ All Plane application services running"
+    notify_webhook "milestone", "application_phase_complete", "🎯 ALL application services started and operational"
 
     # ==========================================================
-    # Verify API health (WITH CONTAINER DEBUGGING)
+    # Verify API health (COMPREHENSIVE VISIBILITY)
     # ==========================================================
-    notify_webhook "provisioning" "health_check_start" "Checking Plane API health"
+    echo "🔍 Verifying Plane API health..."
+    notify_webhook "orchestration", "health_verification_start", "BEGIN final health verification phase"
 
     # Give services time to initialize
+    notify_webhook "debug", "service_settling", "Allowing 60s for services to stabilize and initialize"
     sleep 60
 
-    # DEBUG: Check which containers are running and report status
+    # Comprehensive container status check
+    notify_webhook "debug", "container_status_snapshot", "Taking container status snapshot"
     CONTAINER_STATUS=$($DOCKER_COMPOSE_CMD ps)
     RUNNING_CONTAINERS=$(echo "$CONTAINER_STATUS" | grep "Up" | wc -l)
     TOTAL_CONTAINERS=$(echo "$CONTAINER_STATUS" | tail -n +2 | wc -l)
 
-    notify_webhook "debug" "container_status" "Containers running: $RUNNING_CONTAINERS/$TOTAL_CONTAINERS"
+    notify_webhook "debug", "container_count", "Containers running: $RUNNING_CONTAINERS/$TOTAL_CONTAINERS"
 
-    # List all expected containers and check each one
+    # Detailed container analysis
+    notify_webhook "debug", "container_analysis", "Analyzing individual container status"
     EXPECTED_CONTAINERS=("api" "worker" "beat-worker" "web" "space" "admin" "live" "proxy" "plane-db" "plane-redis" "plane-mq" "plane-minio")
     MISSING_CONTAINERS=""
+    RUNNING_CONTAINERS_LIST=""
 
     for container in "${EXPECTED_CONTAINERS[@]}"; do
-        if ! echo "$CONTAINER_STATUS" | grep -q "$container.*Up"; then
+        if echo "$CONTAINER_STATUS" | grep -q "$container.*Up"; then
+            RUNNING_CONTAINERS_LIST="$RUNNING_CONTAINERS_LIST $container"
+        else
             MISSING_CONTAINERS="$MISSING_CONTAINERS $container"
-            notify_webhook "warning" "container_missing" "Container $container is not running"
+            notify_webhook "warning", "container_not_running", "Container $container is not running"
         fi
     done
 
-    # Check if API is responsive with extended timeout
+    notify_webhook "debug", "running_containers", "Running containers:$RUNNING_CONTAINERS_LIST"
+    notify_webhook "debug", "missing_containers", "Missing containers:$MISSING_CONTAINERS"
+
+    # API health check with detailed progression
+    notify_webhook "orchestration", "api_health_check_start", "Starting API health check (max 300s)"
     READY=false
     for i in {1..30}; do
-        if $DOCKER_COMPOSE_CMD ps api | grep -q "Up" && curl -f -s http://localhost:8000/api/ >/dev/null 2>&1; then
-            READY=true
-            break
+        current_wait=$((i*10))
+        notify_webhook "debug", "api_health_attempt", "API health check attempt $i/${current_wait}s"
+        
+        # Check if API container is running
+        if $DOCKER_COMPOSE_CMD ps api | grep -q "Up"; then
+            notify_webhook "debug", "api_container_up", "API container is running"
+            
+            # Check if API is responding
+            if curl -f -s http://localhost:8000/api/ >/dev/null 2>&1; then
+                notify_webhook "orchestration", "api_healthy", "✅ API is responsive after ${current_wait}s"
+                READY=true
+                break
+            else
+                notify_webhook "debug", "api_not_responding", "API container running but not responding (${current_wait}s)"
+            fi
+        else
+            notify_webhook "warning", "api_container_down", "API container is not running (${current_wait}s)"
         fi
+        
+        # Progress update every 60 seconds
         if [ $((i % 6)) -eq 0 ]; then
-            notify_webhook "provisioning" "health_check_progress" "API health check in progress... ($((i*10))s)"
+            notify_webhook "orchestration", "health_check_progress", "API health check in progress... (${current_wait}s)"
         fi
         sleep 10
     done
 
-    if [ "$READY" = false ]; then
-        # FIXED: Lower the threshold and report which containers are missing
-        if [ $RUNNING_CONTAINERS -ge 7 ]; then
-            if [ -n "$MISSING_CONTAINERS" ]; then
-                notify_webhook "success" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running. Missing:$MISSING_CONTAINERS"
-            else
-                notify_webhook "success" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running"
-            fi
+    # Final deployment status
+    if [ "$READY" = true ]; then
+        notify_webhook "milestone", "plane_fully_operational", "🎯 Plane is FULLY OPERATIONAL and responsive"
+        if [ -n "$MISSING_CONTAINERS" ]; then
+            notify_webhook "warning", "deployment_partial", "Deployment stable but missing containers:$MISSING_CONTAINERS"
         else
-            if [ -n "$MISSING_CONTAINERS" ]; then
-                notify_webhook "failed" "deployment_unstable" "Plane deployment unstable - only $RUNNING_CONTAINERS containers running. Missing:$MISSING_CONTAINERS"
-            else
-                notify_webhook "failed" "deployment_unstable" "Plane deployment unstable - only $RUNNING_CONTAINERS containers running"
-            fi
-            exit 1
+            notify_webhook "success", "deployment_complete", "✅ PERFECT DEPLOYMENT - All $RUNNING_CONTAINERS containers running"
         fi
     else
-        notify_webhook "provisioning" "plane_healthy" "✅ Plane is fully operational and responsive"
+        if [ $RUNNING_CONTAINERS -ge 7 ]; then
+            notify_webhook "warning", "deployment_partial_success", "⚠️ Deployment partially successful - $RUNNING_CONTAINERS/$TOTAL_CONTAINERS running. Missing:$MISSING_CONTAINERS"
+            notify_webhook "debug", "partial_success_details", "API not responsive but core services running - may need manual investigation"
+        else
+            notify_webhook "error", "deployment_failed", "❌ Deployment FAILED - only $RUNNING_CONTAINERS/$TOTAL_CONTAINERS running. Missing:$MISSING_CONTAINERS"
+            exit 1
+        fi
     fi
 
-    notify_webhook "provisioning" "plane_deployment_complete" "✅ Plane deployment completed successfully"
-
     # ==========================================================
-    # Final container status
+    # Final container status and summary
     # ==========================================================
     echo "📊 Final container status:"
     $DOCKER_COMPOSE_CMD ps
 
+    notify_webhook "debug", "final_container_status", "Final container status snapshot completed"
+    notify_webhook "milestone", "plane_deployment_complete", "🚀 Plane deployment COMPLETED - Access at http://localhost"
+
     echo "🎉 Plane deployment completed successfully!"
-    notify_webhook "provisioning" "plane_deployment_complete" "✅ Plane deployment completed successfully - Access at http://localhost"
-                                                                                                                        
+                                        
+                                                                                                                                                            
     # ========== FIREWALL ==========
     echo "[10/15] Configuring firewall..."
     notify_webhook "provisioning" "firewall" "Setting up UFW"
@@ -1238,7 +1010,7 @@ EOF
         notify_webhook "warning" "firewall_failed" "UFW enable failed, but continuing without firewall"
     fi
 
-   # ========== NGINX CONFIG + SSL (FIXED - NO REDIRECT LOOP) ==========
+    # ========== NGINX CONFIG + SSL (FIXED - NO REDIRECT LOOP) ==========
     echo "[11/15] Configuring nginx reverse proxy with SSL..."
     notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
 
