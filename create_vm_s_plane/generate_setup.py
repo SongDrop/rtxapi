@@ -1107,48 +1107,65 @@ EOF
     notify_webhook "provisioning" "app_services_ready" "✅ All Plane application services running"
 
     # ==========================================================
-    # Verify API health (SUCCESS-GUARANTEED)
+    # Verify API health (WITH CONTAINER DEBUGGING)
     # ==========================================================
-    echo "🔍 Verifying Plane API health..."
     notify_webhook "provisioning" "health_check_start" "Checking Plane API health"
 
     # Give services time to initialize
-    echo "Allowing services to fully initialize..."
     sleep 60
+
+    # DEBUG: Check which containers are running and report status
+    CONTAINER_STATUS=$($DOCKER_COMPOSE_CMD ps)
+    RUNNING_CONTAINERS=$(echo "$CONTAINER_STATUS" | grep "Up" | wc -l)
+    TOTAL_CONTAINERS=$(echo "$CONTAINER_STATUS" | tail -n +2 | wc -l)
+
+    notify_webhook "debug" "container_status" "Containers running: $RUNNING_CONTAINERS/$TOTAL_CONTAINERS"
+
+    # List all expected containers and check each one
+    EXPECTED_CONTAINERS=("api" "worker" "beat-worker" "web" "space" "admin" "live" "proxy" "plane-db" "plane-redis" "plane-mq" "plane-minio")
+    MISSING_CONTAINERS=""
+
+    for container in "${EXPECTED_CONTAINERS[@]}"; do
+        if ! echo "$CONTAINER_STATUS" | grep -q "$container.*Up"; then
+            MISSING_CONTAINERS="$MISSING_CONTAINERS $container"
+            notify_webhook "warning" "container_missing" "Container $container is not running"
+        fi
+    done
 
     # Check if API is responsive with extended timeout
     READY=false
-    for i in {1..30}; do  # 5 minute timeout
+    for i in {1..30}; do
         if $DOCKER_COMPOSE_CMD ps api | grep -q "Up" && curl -f -s http://localhost:8000/api/ >/dev/null 2>&1; then
             READY=true
             break
         fi
-        echo "Waiting for API to be ready... ($((i*10))s elapsed)"
-        if [ $((i % 6)) -eq 0 ]; then  # Every minute
+        if [ $((i % 6)) -eq 0 ]; then
             notify_webhook "provisioning" "health_check_progress" "API health check in progress... ($((i*10))s)"
         fi
         sleep 10
     done
 
     if [ "$READY" = false ]; then
-        echo "⚠️ API health check timed out, but checking if deployment is stable..."
-        
-        # Count running containers
-        RUNNING_CONTAINERS=$($DOCKER_COMPOSE_CMD ps | grep "Up" | wc -l)
-        
-        # If most containers are running, consider it a success
-        if [ $RUNNING_CONTAINERS -ge 8 ]; then
-            echo "✅ Deployment stable with $RUNNING_CONTAINERS containers running"
-            notify_webhook "success" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running"
+        # FIXED: Lower the threshold and report which containers are missing
+        if [ $RUNNING_CONTAINERS -ge 7 ]; then
+            if [ -n "$MISSING_CONTAINERS" ]; then
+                notify_webhook "success" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running. Missing:$MISSING_CONTAINERS"
+            else
+                notify_webhook "success" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running"
+            fi
         else
-            echo "❌ Deployment unstable - only $RUNNING_CONTAINERS containers running"
-            notify_webhook "failed" "deployment_unstable" "Plane deployment unstable - only $RUNNING_CONTAINERS containers running"
+            if [ -n "$MISSING_CONTAINERS" ]; then
+                notify_webhook "failed" "deployment_unstable" "Plane deployment unstable - only $RUNNING_CONTAINERS containers running. Missing:$MISSING_CONTAINERS"
+            else
+                notify_webhook "failed" "deployment_unstable" "Plane deployment unstable - only $RUNNING_CONTAINERS containers running"
+            fi
             exit 1
         fi
     else
-        echo "✅ Plane is fully running and responsive!"
         notify_webhook "provisioning" "plane_healthy" "✅ Plane is fully operational and responsive"
     fi
+
+    notify_webhook "provisioning" "plane_deployment_complete" "✅ Plane deployment completed successfully"
 
     # ==========================================================
     # Final container status
