@@ -1204,7 +1204,7 @@ EOF
     notify_webhook "provisioning" "firewall_ready" "✅ UFW configured with all required Plane ports"
 
 
-    # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
+   # ========== NGINX CONFIG + SSL (FIXED - NO REDIRECT LOOP) ==========
     echo "[11/15] Configuring nginx reverse proxy with SSL..."
     notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
 
@@ -1216,8 +1216,23 @@ EOF
     curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf
     curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
 
+    # Check if Plane proxy is running and get its port
+    PROXY_PORT="80"
+    if docker ps | grep -q proxy; then
+        # Get the host port that the proxy container's port 80 is mapped to
+        MAPPED_PORT=$(docker port proxy 80 2>/dev/null | cut -d: -f2)
+        if [ -n "$MAPPED_PORT" ] && [ "$MAPPED_PORT" != "80" ]; then
+            PROXY_PORT="$MAPPED_PORT"
+            echo "🔧 Proxy container is using port: $PROXY_PORT"
+        else
+            # If proxy is using port 80, we need to stop it temporarily or use a different approach
+            echo "🔧 Proxy is using port 80, will configure nginx carefully..."
+            # We'll handle this in the nginx config
+        fi
+    fi
+
     # Temporary HTTP server for certbot validation
-    cat > /etc/nginx/sites-available/plane <<'EOF_TEMP'
+    cat > /etc/nginx/sites-available/plane <<EOF_TEMP
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -1226,6 +1241,11 @@ server {
     location / {
         return 200 'Certbot validation ready';
         add_header Content-Type text/plain;
+    }
+    
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+        try_files \$uri =404;
     }
 }
 EOF_TEMP
@@ -1237,12 +1257,9 @@ EOF_TEMP
     mkdir -p /var/www/html
     chown www-data:www-data /var/www/html
 
-    #use --staging if u reach daily limit
-    #certbot --nginx -d "__DOMAIN__" --staging --non-interactive --agree-tos -m "__ADMIN_EMAIL__"
     # Attempt to obtain SSL certificate
     if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
         echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
-        systemctl start nginx || true
         certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__" || true
     fi
 
@@ -1250,11 +1267,43 @@ EOF_TEMP
     if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
         echo "⚠️ SSL certificate not found! Continuing without SSL..."
         notify_webhook "warning" "ssl" "Forgejo Certbot failed, SSL not installed for __DOMAIN__"
+        
+        # HTTP-only configuration - proxy to the Plane services directly
+        cat > /etc/nginx/sites-available/plane <<'EOF_HTTP'
+server {
+    listen 80;
+    server_name __DOMAIN__;
+    client_max_body_size 100M;
+
+    # Proxy to Plane web service (bypass the Plane proxy container)
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    
+    # Proxy API requests directly to the API service
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF_HTTP
     else
         echo "✅ SSL certificate obtained"
         notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
 
-        # Replace nginx config for HTTPS proxy only if SSL exists
+        # HTTPS configuration - proxy to Plane services directly
         cat > /etc/nginx/sites-available/plane <<'EOF_SSL'
 server {
     listen 80;
@@ -1272,8 +1321,9 @@ server {
 
     client_max_body_size 100M;
 
+    # Proxy to Plane web service directly (bypass Plane proxy container)
     location / {
-        proxy_pass http://127.0.0.1:80;
+        proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1284,12 +1334,39 @@ server {
         proxy_buffering off;
         proxy_request_buffering off;
     }
+    
+    # Proxy API requests directly to API service
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # Proxy space requests
+    location /spaces/ {
+        proxy_pass http://127.0.0.1:3002;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # Proxy admin requests
+    location /admin/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }
 EOF_SSL
-
-        ln -sf /etc/nginx/sites-available/plane /etc/nginx/sites-enabled/plane
-        nginx -t && systemctl reload nginx
     fi
+
+    ln -sf /etc/nginx/sites-available/plane /etc/nginx/sites-enabled/plane
+    nginx -t && systemctl reload nginx
 
     echo "[14/15] Setup Cron for renewal..."
     notify_webhook "provisioning" "provisioning" "Setup Cron for renewal..."
