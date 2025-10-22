@@ -1180,29 +1180,63 @@ EOF
     echo "[10/15] Configuring firewall..."
     notify_webhook "provisioning" "firewall" "Setting up UFW"
 
-    # SSH access
-    ufw allow 22/tcp
-    ufw allow 80/tcp
-    ufw allow 443/tcp
-    ufw allow 8080/tcp   # Alternate HTTP (if proxy disabled)
-    ufw allow 8443/tcp   # Alternate HTTPS (if proxy disabled)
-    ufw allow 3000/tcp   # web (frontend)
-    ufw allow 3001/tcp   # admin
-    ufw allow 3002/tcp   # space
-    ufw allow 3100/tcp   # live
-    ufw allow 8000/tcp   # api
-    ufw allow 5432/tcp   # PostgreSQL
-    ufw allow 6379/tcp   # Redis
-    ufw allow 5672/tcp   # RabbitMQ
-    ufw allow 15672/tcp  # RabbitMQ Management UI
-    ufw allow 9000/tcp   # MinIO API
-    ufw allow 9090/tcp   # MinIO Console
-    ufw allow "$PORT"/tcp
-    ufw --force enable
-                                      
-    echo "✅ Firewall configured — all Plane service ports allowed"
-    notify_webhook "provisioning" "firewall_ready" "✅ UFW configured with all required Plane ports"
+    # Ensure UFW is installed
+    if ! command -v ufw >/dev/null 2>&1; then
+        echo "⚠️ UFW not installed, installing now..."
+        apt-get install -y ufw
+    fi
 
+    # Reset UFW to defaults first (non-interactive)
+    echo "    Resetting UFW to defaults..."
+    ufw --force reset
+
+    # Set default policies
+    echo "    Setting default policies..."
+    ufw default deny incoming
+    ufw default allow outgoing
+
+    # SSH access (critical - don't lock yourself out!)
+    echo "    Allowing SSH..."
+    ufw allow 22/tcp comment 'SSH'
+
+    # Web ports
+    echo "    Allowing web ports..."
+    ufw allow 80/tcp comment 'HTTP'
+    ufw allow 443/tcp comment 'HTTPS'
+    ufw allow 8080/tcp comment 'Alternate HTTP'
+    ufw allow 8443/tcp comment 'Alternate HTTPS'
+
+    # Plane application ports
+    echo "    Allowing Plane application ports..."
+    ufw allow 3000/tcp comment 'Plane Web'
+    ufw allow 3001/tcp comment 'Plane Admin'
+    ufw allow 3002/tcp comment 'Plane Space'
+    ufw allow 3100/tcp comment 'Plane Live'
+    ufw allow 8000/tcp comment 'Plane API'
+
+    # Database and service ports
+    echo "    Allowing database and service ports..."
+    ufw allow 5432/tcp comment 'PostgreSQL'
+    ufw allow 6379/tcp comment 'Redis'
+    ufw allow 5672/tcp comment 'RabbitMQ'
+    ufw allow 15672/tcp comment 'RabbitMQ Management'
+    ufw allow 9000/tcp comment 'MinIO API'
+    ufw allow 9090/tcp comment 'MinIO Console'
+
+    # Custom port if specified
+    if [ "$PORT" != "3000" ]; then
+        ufw allow "$PORT"/tcp comment "Custom Plane Port"
+    fi
+
+    # Enable UFW non-interactively
+    echo "    Enabling UFW..."
+    if echo "y" | ufw enable; then
+        echo "✅ Firewall configured — all Plane service ports allowed"
+        notify_webhook "provisioning" "firewall_ready" "✅ UFW configured with all required Plane ports"
+    else
+        echo "⚠️ UFW enable failed, but continuing without firewall..."
+        notify_webhook "warning" "firewall_failed" "UFW enable failed, but continuing without firewall"
+    fi
 
    # ========== NGINX CONFIG + SSL (FIXED - NO REDIRECT LOOP) ==========
     echo "[11/15] Configuring nginx reverse proxy with SSL..."
