@@ -324,6 +324,13 @@ NGINX_PORT=80
 LISTEN_HTTP_PORT=80
 LISTEN_HTTPS_PORT=443
 
+# Frontend Environment Variables
+NEXT_PUBLIC_API_BASE_URL=http://api:8000
+NEXT_PUBLIC_WEB_BASE_URL=http://localhost:80
+NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
+NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
+NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
+                                      
 # Service URLs for proxy
 PROXY_HOST=localhost
 API_BASE_URL=http://api:8000
@@ -348,6 +355,14 @@ services:
     container_name: web
     image: makeplane/plane-frontend:latest
     restart: always
+    working_dir: /app/web
+    command: npm run start
+    environment:
+        - NEXT_PUBLIC_API_BASE_URL=http://api:8000
+        - NEXT_PUBLIC_WEB_BASE_URL=http://localhost:80
+        - NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
+        - NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
+        - NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
     depends_on:
       - api
     networks:
@@ -357,6 +372,14 @@ services:
     container_name: admin
     image: makeplane/plane-admin:latest
     restart: always
+    working_dir: /app/admin
+    command: npm run start
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://api:8000
+      - NEXT_PUBLIC_WEB_BASE_URL=http://localhost:80
+      - NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
+      - NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
+      - NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
     depends_on:
       - api
       - web
@@ -367,6 +390,14 @@ services:
     container_name: space
     image: makeplane/plane-space:latest
     restart: always
+    working_dir: /app/space
+    command: npm run start
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://api:8000
+      - NEXT_PUBLIC_WEB_BASE_URL=http://localhost:80
+      - NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
+      - NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
+      - NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
     depends_on:
       - api
       - web
@@ -451,6 +482,8 @@ services:
     container_name: plane-live
     image: makeplane/plane-live:latest
     restart: always
+    working_dir: /app/live
+    command: npm run start
     networks:
       - plane-network
 
