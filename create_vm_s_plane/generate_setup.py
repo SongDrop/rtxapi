@@ -295,11 +295,11 @@ AWS_REGION=us-east-1
 
 # Application
 SECRET_KEY=$SECRET_KEY
-WEB_URL=https://__DOMAIN__
+WEB_URL=http://localhost:8080
 DEBUG=0
 
 # CORS
-CORS_ALLOWED_ORIGINS=https://__DOMAIN__
+CORS_ALLOWED_ORIGINS=http://localhost:8080
 
 # File upload
 FILE_SIZE_LIMIT=5242880
@@ -326,7 +326,7 @@ LISTEN_HTTPS_PORT=443
 
 # Frontend Environment Variables
 NEXT_PUBLIC_API_BASE_URL=http://api:8000
-NEXT_PUBLIC_WEB_BASE_URL=https://__DOMAIN__
+NEXT_PUBLIC_WEB_BASE_URL=http://localhost:8080
 NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
 NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
 NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
@@ -359,7 +359,7 @@ services:
     command: npm run start
     environment:
         - NEXT_PUBLIC_API_BASE_URL=http://api:8000
-        - NEXT_PUBLIC_WEB_BASE_URL=https://__DOMAIN__
+        - NEXT_PUBLIC_WEB_BASE_URL=http://localhost:8080
         - NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
         - NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
         - NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
@@ -376,7 +376,7 @@ services:
     command: npm run start
     environment:
       - NEXT_PUBLIC_API_BASE_URL=http://api:8000
-      - NEXT_PUBLIC_WEB_BASE_URL=https://__DOMAIN__
+      - NEXT_PUBLIC_WEB_BASE_URL=http://localhost:8080
       - NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
       - NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
       - NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
@@ -394,7 +394,7 @@ services:
     command: npm run start
     environment:
       - NEXT_PUBLIC_API_BASE_URL=http://api:8000
-      - NEXT_PUBLIC_WEB_BASE_URL=https://__DOMAIN__
+      - NEXT_PUBLIC_WEB_BASE_URL=http://localhost:8080
       - NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
       - NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
       - NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
