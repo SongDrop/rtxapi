@@ -514,7 +514,7 @@ services:
 
   plane-mq:
     container_name: plane-mq
-    image: rabbitmq:3.13.6-management-alpine
+    image: rabbitmq:3.13.6-management
     restart: always
     env_file:
       - .env
