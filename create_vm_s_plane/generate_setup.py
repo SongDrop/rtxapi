@@ -295,11 +295,11 @@ AWS_REGION=us-east-1
 
 # Application
 SECRET_KEY=$SECRET_KEY
-WEB_URL=http://localhost:80
+WEB_URL=http://localhost:8080
 DEBUG=0
 
 # CORS
-CORS_ALLOWED_ORIGINS=http://localhost:80
+CORS_ALLOWED_ORIGINS=http://localhost:8080
 
 # File upload
 FILE_SIZE_LIMIT=5242880
@@ -320,13 +320,13 @@ EMAIL_FROM=noreply@plane.so
 MACHINE_SIGNATURE=$MACHINE_SIGNATURE
                                       
 # Proxy Ports
-NGINX_PORT=80
-LISTEN_HTTP_PORT=80
+NGINX_PORT=8080
+LISTEN_HTTP_PORT=8080
 LISTEN_HTTPS_PORT=443
 
 # Frontend Environment Variables
 NEXT_PUBLIC_API_BASE_URL=http://api:8000
-NEXT_PUBLIC_WEB_BASE_URL=http://localhost:80
+NEXT_PUBLIC_WEB_BASE_URL=http://localhost:8080
 NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
 NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
 NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
@@ -1307,7 +1307,7 @@ server {
     client_max_body_size 100M;
 
     location / {
-        proxy_pass http://127.0.0.1:80;
+        proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
