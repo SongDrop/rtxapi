@@ -585,7 +585,7 @@ EOF
     echo "🔍 Running system pre-checks..."
     notify_webhook "provisioning" "system_checks" "Running system pre-checks"
 
-    # Check available disk space
+    # Check available disk space...
     echo "    Checking disk space..."
     DISK_AVAILABLE=$(df /var/lib/docker /opt/plane /tmp . | awk 'NR>1 {print $4}' | sort -n | head -1)
     if [ "$DISK_AVAILABLE" -lt 1048576 ]; then  # Less than 1GB
