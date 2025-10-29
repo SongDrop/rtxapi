@@ -518,6 +518,7 @@ services:
       - api
       - space
       - admin
+      - plane-minio
     networks:
       - plane-network
 
