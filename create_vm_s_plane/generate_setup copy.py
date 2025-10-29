@@ -295,11 +295,11 @@ AWS_REGION=us-east-1
 
 # Application
 SECRET_KEY=$SECRET_KEY
-WEB_URL=https://__DOMAIN__
+WEB_URL=http://localhost:8080
 DEBUG=0
 
 # CORS
-CORS_ALLOWED_ORIGINS=https://__DOMAIN__
+CORS_ALLOWED_ORIGINS=http://localhost:8080
 
 # File upload
 FILE_SIZE_LIMIT=5242880
@@ -324,6 +324,20 @@ NGINX_PORT=8080
 LISTEN_HTTP_PORT=8080
 LISTEN_HTTPS_PORT=443
 
+# Frontend Environment Variables
+NEXT_PUBLIC_API_BASE_URL=http://api:8000
+NEXT_PUBLIC_WEB_BASE_URL=http://localhost:8080
+NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
+NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
+NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
+                                      
+# Service URLs for proxy
+PROXY_HOST=localhost
+API_BASE_URL=http://api:8000
+WEB_BASE_URL=http://web:3000
+SPACE_BASE_URL=http://space:3002
+ADMIN_BASE_URL=http://admin:3001
+LIVE_BASE_URL=http://live:3100
 EOF
 
     echo "✅ .env created with secure credentials"
@@ -339,9 +353,16 @@ version: '3.9'
 services:
   web:
     container_name: web
-    image: makeplane/plane-frontend
+    image: makeplane/plane-frontend:preview
     restart: always
-    command: node web/server.js web
+    working_dir: /app/web
+    command: npm run start
+    environment:
+        - NEXT_PUBLIC_API_BASE_URL=http://api:8000
+        - NEXT_PUBLIC_WEB_BASE_URL=http://localhost:8080
+        - NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
+        - NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
+        - NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
     depends_on:
       - api
     networks:
@@ -349,9 +370,16 @@ services:
 
   admin:
     container_name: admin
-    image: makeplane/plane-admin
+    image: makeplane/plane-admin:preview
     restart: always
-    command: node admin/server.js admin
+    working_dir: /app/admin
+    command: npm run start
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://api:8000
+      - NEXT_PUBLIC_WEB_BASE_URL=http://localhost:8080
+      - NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
+      - NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
+      - NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
     depends_on:
       - api
       - web
@@ -360,9 +388,16 @@ services:
 
   space:
     container_name: space
-    image: makeplane/plane-space
+    image: makeplane/plane-space:preview
     restart: always
-    command: node space/server.js space
+    working_dir: /app/space
+    command: npm run start
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://api:8000
+      - NEXT_PUBLIC_WEB_BASE_URL=http://localhost:8080
+      - NEXT_PUBLIC_SPACE_BASE_URL=http://space:3002
+      - NEXT_PUBLIC_ADMIN_BASE_URL=http://admin:3001
+      - NEXT_PUBLIC_LIVE_BASE_URL=http://live:3100
     depends_on:
       - api
       - web
@@ -371,7 +406,7 @@ services:
 
   api:
     container_name: api
-    image: makeplane/plane-backend
+    image: makeplane/plane-backend:stable
     restart: always
     command: ./bin/docker-entrypoint-api.sh
     env_file:
@@ -389,7 +424,7 @@ services:
 
   worker:
     container_name: bgworker
-    image: makeplane/plane-backend
+    image: makeplane/plane-backend:stable
     restart: always
     command: ./bin/docker-entrypoint-worker.sh
     env_file:
@@ -408,7 +443,7 @@ services:
 
   beat-worker:
     container_name: beatworker
-    image: makeplane/plane-backend
+    image: makeplane/plane-backend:stable
     restart: always
     command: ./bin/docker-entrypoint-beat.sh
     env_file:
@@ -427,7 +462,7 @@ services:
 
   migrator:
     container_name: plane-migrator
-    image: makeplane/plane-backend
+    image: makeplane/plane-backend:stable
     restart: "no"
     command: ./bin/docker-entrypoint-migrator.sh
     env_file:
@@ -445,9 +480,10 @@ services:
 
   live:
     container_name: plane-live
-    image: makeplane/plane-live
+    image: makeplane/plane-live:preview
     restart: always
-    command: node live/dist/server.js
+    working_dir: /app/live
+    command: npm run start
     networks:
       - plane-network
 
@@ -506,7 +542,7 @@ services:
 
   proxy:
     container_name: proxy
-    image: makeplane/plane-proxy
+    image: makeplane/plane-proxy:stable
     restart: always
     ports:
       - "${NGINX_PORT:-80}:80"
