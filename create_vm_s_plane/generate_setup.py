@@ -339,7 +339,7 @@ version: '3.9'
 services:
   web:
     container_name: web
-    image: makeplane/plane-frontend
+    image: artifacts.plane.so/makeplane/plane-frontend:stable
     restart: always
     command: node web/server.js web
     depends_on:
@@ -349,7 +349,7 @@ services:
 
   admin:
     container_name: admin
-    image: makeplane/plane-admin
+    image: artifacts.plane.so/makeplane/plane-admin:stable
     restart: always
     command: node admin/server.js admin
     depends_on:
@@ -360,7 +360,7 @@ services:
 
   space:
     container_name: space
-    image: makeplane/plane-space
+    image: artifacts.plane.so/makeplane/plane-space:stable
     restart: always
     command: node space/server.js space
     depends_on:
@@ -371,7 +371,7 @@ services:
 
   api:
     container_name: api
-    image: makeplane/plane-backend
+    image: artifacts.plane.so/makeplane/plane-backend:stable
     restart: always
     command: ./bin/docker-entrypoint-api.sh
     env_file:
@@ -389,7 +389,7 @@ services:
 
   worker:
     container_name: bgworker
-    image: makeplane/plane-backend
+    image: artifacts.plane.so/makeplane/plane-backend:stable
     restart: always
     command: ./bin/docker-entrypoint-worker.sh
     env_file:
@@ -408,7 +408,7 @@ services:
 
   beat-worker:
     container_name: beatworker
-    image: makeplane/plane-backend
+    image: artifacts.plane.so/makeplane/plane-backend:stable
     restart: always
     command: ./bin/docker-entrypoint-beat.sh
     env_file:
@@ -427,7 +427,7 @@ services:
 
   migrator:
     container_name: plane-migrator
-    image: makeplane/plane-backend
+    image: artifacts.plane.so/makeplane/plane-backend:stable
     restart: "no"
     command: ./bin/docker-entrypoint-migrator.sh
     env_file:
@@ -445,7 +445,7 @@ services:
 
   live:
     container_name: plane-live
-    image: makeplane/plane-live
+    image: artifacts.plane.so/makeplane/plane-live:stable
     restart: always
     command: node live/dist/server.js
     networks:
@@ -506,7 +506,7 @@ services:
 
   proxy:
     container_name: proxy
-    image: makeplane/plane-proxy
+    image: artifacts.plane.so/makeplane/plane-proxy:stable
     restart: always
     ports:
       - "${NGINX_PORT:-80}:80"
