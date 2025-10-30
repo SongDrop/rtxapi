@@ -1248,7 +1248,7 @@ EOF_TEMP
     # Fail-safe check
     if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
         echo "⚠️ SSL certificate not found! Continuing without SSL..."
-        notify_webhook "warning" "ssl" "Forgejo Certbot failed, SSL not installed for __DOMAIN__"
+        notify_webhook "warning" "ssl" "Plane Certbot failed, SSL not installed for __DOMAIN__"
     else
         echo "✅ SSL certificate obtained"
         notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
@@ -1285,7 +1285,7 @@ server {
     }
     
     location /minio/ {
-        proxy_pass http://plane-minio:9000/;
+        proxy_pass http://127.0.0.1:9000/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1294,6 +1294,13 @@ server {
         # Important for MinIO
         proxy_buffering off;
         proxy_request_buffering off;
+        client_max_body_size 200M;
+        
+        # CORS headers for MinIO
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept, Origin, X-Requested-With" always;
+        add_header Access-Control-Allow-Credentials "true" always;
     }
 }
 EOF_SSL
