@@ -316,7 +316,7 @@ EMAIL_PORT=587
 EMAIL_USE_TLS=1
 EMAIL_FROM=noreply@plane.so
 
-# Machine Signature
+# Machine Signature.
 MACHINE_SIGNATURE=$MACHINE_SIGNATURE
                                       
 # Proxy Ports
