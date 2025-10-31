@@ -248,7 +248,7 @@ server:
 
 ui:
   default_locale: 'en'
-  default_theme: 'auto'
+  default_theme: 'simple'
 
 valkey:
   url: valkey://searxng-valkey:6379/0
