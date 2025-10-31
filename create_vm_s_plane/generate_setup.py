@@ -292,7 +292,8 @@ AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
 AWS_S3_BUCKET_NAME=uploads
 AWS_S3_ENDPOINT_URL=http://plane-minio:9000
 AWS_REGION=us-east-1
-
+AWS_S3_FORCE_PATH_STYLE=true
+                                      
 # Application
 SECRET_KEY=$SECRET_KEY
 WEB_URL=https://__DOMAIN__
@@ -381,6 +382,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB}
       REDIS_URL: redis://plane-redis:6379/
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@plane-mq:5672/${RABBITMQ_VHOST}
+      # CRITICAL: Add MinIO configuration explicitly
+      AWS_S3_ENDPOINT_URL: http://plane-minio:9000
+      AWS_S3_FORCE_PATH_STYLE: "true"
     depends_on:
       - plane-db
       - plane-redis
@@ -399,6 +403,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB}
       REDIS_URL: redis://plane-redis:6379/
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@plane-mq:5672/${RABBITMQ_VHOST}
+      # CRITICAL: Add MinIO configuration explicitly
+      AWS_S3_ENDPOINT_URL: http://plane-minio:9000
+      AWS_S3_FORCE_PATH_STYLE: "true"
     depends_on:
       - api
       - plane-db
@@ -418,6 +425,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB}
       REDIS_URL: redis://plane-redis:6379/
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@plane-mq:5672/${RABBITMQ_VHOST}
+      # CRITICAL: Add MinIO configuration explicitly
+      AWS_S3_ENDPOINT_URL: http://plane-minio:9000
+      AWS_S3_FORCE_PATH_STYLE: "true"
     depends_on:
       - api
       - plane-db
@@ -1445,6 +1455,9 @@ server {
     }
     
     location /minio/ {
+        # Remove the /minio prefix when proxying to MinIO
+        rewrite ^/minio/(.*)$ /$1 break;
+                                      
         proxy_pass http://127.0.0.1:9000/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -1461,6 +1474,10 @@ server {
         add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
         add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept, Origin, X-Requested-With" always;
         add_header Access-Control-Allow-Credentials "true" always;
+        # Handle preflight requests
+        if ($request_method = 'OPTIONS') {
+            return 204;
+        }
     }
 }
 EOF_SSL

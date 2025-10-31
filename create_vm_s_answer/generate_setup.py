@@ -4,20 +4,20 @@ def generate_answer_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
+    PORT=9080,
+    WEBHOOK_URL="",
+    location="",
+    resource_group="",
     ADMIN_NAME="admin",
     SITE_NAME="Apache Answer",
-    PORT=9080,
+    DB_FILE="/data/answer.db",
+    DATA_DIR="/opt/answer",
+    DOCKER_COMPOSE_VERSION="v2.27.0",
     DB_TYPE="sqlite3",
     DB_HOST="",
     DB_USERNAME="",
     DB_PASSWORD="",
     DB_NAME="",
-    DB_FILE="/data/answer.db",
-    DATA_DIR="/opt/answer",
-    WEBHOOK_URL="",
-    location="",
-    resource_group="",
-    DOCKER_COMPOSE_VERSION="v2.27.0"
 ):
     """
     Returns a full bash provisioning script for Apache Answer, in Forgejo style.
@@ -203,6 +203,52 @@ def generate_answer_setup(
     
     sleep 5
 
+    # ==========================================================
+    # 🔐 Generate SIMPLIFIED Secure Credentials
+    # ==========================================================
+    echo "🔐 Generating secure credentials..."
+    notify_webhook "provisioning" "credentials_generation" "Creating secure passwords and keys"
+
+    generate_secure_random() {
+        local type="$1"
+        local length="$2"
+        local result=""
+
+        # Try openssl first
+        if command -v openssl &>/dev/null; then
+            if [ "$type" = "hex" ]; then
+                result=$(openssl rand -hex "$length" 2>/dev/null || true)
+            else
+                # Use simpler base64 without special characters for PostgreSQL
+                result=$(openssl rand -base64 "$length" 2>/dev/null | tr -d '\n+/=' | head -c "$length" || true)
+            fi
+        fi
+
+        # Fallback to /dev/urandom
+        if [ -z "$result" ]; then
+            if [ "$type" = "hex" ]; then
+                result=$(head -c "$length" /dev/urandom | xxd -p -c "$length" 2>/dev/null || true)
+            else
+                # Simple alphanumeric for PostgreSQL compatibility
+                result=$(head -c "$length" /dev/urandom | base64 | tr -d '\n+/=' | head -c "$length" 2>/dev/null || true)
+            fi
+        fi
+
+        # Final check
+        if [ -z "$result" ]; then
+            echo "❌ ERROR: Unable to generate random $type string"
+            exit 1
+        fi
+
+        echo "$result"
+    }
+
+    # Generate SIMPLIFIED credentials (sqlite can be picky about passwords)
+    DB_USER="answer"
+    DB_HOST="answer"
+    DB_PASSWORD="answer_$(generate_secure_random hex 16)"  # Simple prefix + hex only
+    DB_NAME="answer"
+                                                  
     # ========== DOCKER COMPOSE SETUP ==========
     echo "[6/12] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose_setup" "Setting up Docker Compose for Answer"
