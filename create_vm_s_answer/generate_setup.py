@@ -269,7 +269,7 @@ def generate_setup(
     notify_webhook "provisioning" "docker_compose_setup" "Setting up Docker Compose for Answer"
 
     # Create docker-compose.yml
-    cat > "docker-compose.yml" <<'EOF'
+    cat > "docker-compose.yml" <<EOF
 version: '3.8'
 
 services:
