@@ -264,71 +264,103 @@ def generate_setup(
         DB_FILE="/data/answer.db"
     fi          
                                                                            
+        # ========== BUILD CUSTOM ANSWER WITH PLUGINS ==========
+    echo "[6/12] Building custom Answer image with plugins..."
+    notify_webhook "provisioning" "plugin_build" "Building custom Answer image with plugins"
+
+    # Create Dockerfile for Answer with essential plugins
+    cat > "Dockerfile" <<'DOCKERFILE'
+FROM apache/answer as answer-builder
+
+FROM golang:1.22-alpine AS golang-builder
+
+COPY --from=answer-builder /usr/bin/answer /usr/bin/answer
+
+RUN apk --no-cache add \
+    build-base git bash nodejs npm go && \
+    npm install -g pnpm@10.7.0
+
+# Build Answer with essential plugins
+RUN answer build \
+    --with github.com/apache/answer-plugins/connector-basic \
+    --with github.com/apache/answer-plugins/connector-github \
+    --with github.com/apache/answer-plugins/connector-google \
+    --with github.com/apache/answer-plugins/captcha-basic \
+    --with github.com/apache/answer-plugins/storage-s3 \
+    --output /usr/bin/new_answer
+
+FROM alpine
+LABEL maintainer="answer-setup-script"
+
+ARG TIMEZONE
+ENV TIMEZONE=${TIMEZONE:-"UTC"}
+
+RUN apk update \
+    && apk --no-cache add \
+        bash \
+        ca-certificates \
+        curl \
+        dumb-init \
+        sqlite \
+        tzdata \
+    && ln -sf /usr/share/zoneinfo/${TIMEZONE} /etc/localtime \
+    && echo "${TIMEZONE}" > /etc/timezone
+
+COPY --from=golang-builder /usr/bin/new_answer /usr/bin/answer
+COPY --from=answer-builder /data /data
+COPY --from=answer-builder /entrypoint.sh /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
+
+VOLUME /data
+EXPOSE 80
+ENTRYPOINT ["/entrypoint.sh"]
+DOCKERFILE
+
+    # Build the custom image
+    echo "    Building custom Answer image with plugins..."
+    notify_webhook "provisioning" "building_image" "Building custom Answer image with plugins"
+    
+    if docker build -t answer-with-plugins .; then
+        echo "    ✅ Custom Answer image with plugins built successfully"
+        notify_webhook "provisioning" "custom_image_built" "✅ Custom Answer image with plugins built successfully"
+        CUSTOM_IMAGE="answer-with-plugins"
+    else
+        echo "    ⚠️ Failed to build custom image, using standard image without plugins"
+        notify_webhook "warning" "custom_build_failed" "Failed to build custom image, using standard Answer image"
+        CUSTOM_IMAGE="apache/answer:latest"
+        rm -f Dockerfile
+    fi
+
     # ========== DOCKER COMPOSE SETUP ==========
-    echo "[6/12] Creating Docker Compose configuration..."
+    echo "[7/12] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose_setup" "Setting up Docker Compose for Answer"
 
-    # Create docker-compose.yml
-    cat > "docker-compose.yml" <<EOF
+    # Create docker-compose.yml with custom image
+    cat > "docker-compose.yml" <<DOCKERCOMPOSE
 version: '3.8'
 
 services:
   answer:
-    image: apache/answer:latest
+    image: ${CUSTOM_IMAGE}
     container_name: answer
     restart: unless-stopped
     ports:
-      - "${PORT}:80"
+      - "9080:80"
     volumes:
       - answer_data:/data
     environment:
       - ANSWER_DATA_PATH=/data
-      - AUTO_INSTALL=true
-      - DB_TYPE=${DB_TYPE}
-      - LANGUAGE=en-US
-      - SITE_NAME=${SITE_NAME}
-      - SITE_URL=https://${DOMAIN}
-      - CONTACT_EMAIL=${ADMIN_EMAIL}
-      - ADMIN_NAME=${ADMIN_NAME}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-      - ADMIN_EMAIL=${ADMIN_EMAIL}
-      - EXTERNAL_CONTENT_DISPLAY=always_display
-EOF
-
-    # Add database-specific environment variables
-    if [[ "$DB_TYPE" == "mysql" || "$DB_TYPE" == "postgres" ]]; then
-        cat >> "docker-compose.yml" <<EOF
-      - DB_USERNAME=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_HOST=${DB_HOST}
-      - DB_NAME=${DB_NAME}
-EOF
-    else
-        # SQLite3
-        cat >> "docker-compose.yml" <<EOF
-      - DB_FILE=${DB_FILE}
-EOF
-    fi
-
-    # Add healthcheck and volumes
-    cat >> "docker-compose.yml" <<EOF
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/healthz" || exit 1]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
 volumes:
   answer_data:
     driver: local
-EOF
+DOCKERCOMPOSE
 
     echo "✅ Docker Compose configuration created"
     notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration ready"
 
     # ========== PRE-STARTUP CHECKS ==========
-    echo "[7/12] Running system pre-checks..."
+    echo "[8/12] Running system pre-checks..."
     notify_webhook "provisioning" "system_checks" "Running system pre-checks"
 
     # Check available disk space
@@ -362,17 +394,22 @@ EOF
     notify_webhook "provisioning" "system_checks_passed" "✅ All system pre-checks passed"
 
     # ========== START ANSWER CONTAINER ==========
-    echo "[8/12] Starting Apache Answer container..."
+    echo "[9/12] Starting Apache Answer container..."
     notify_webhook "provisioning" "answer_start" "Starting Apache Answer container"
 
-    # Pull the latest image
-    echo "    Pulling Apache Answer image..."
-    if docker pull apache/answer:latest; then
-        echo "    ✅ Image pulled successfully"
-        notify_webhook "provisioning" "image_pulled" "✅ Apache Answer image pulled successfully"
+    # Skip pull if using custom image
+    if [ "$CUSTOM_IMAGE" = "apache/answer:latest" ]; then
+        echo "    Pulling Apache Answer image..."
+        if docker pull apache/answer:latest; then
+            echo "    ✅ Image pulled successfully"
+            notify_webhook "provisioning" "image_pulled" "✅ Apache Answer image pulled successfully"
+        else
+            echo "    ⚠️ Failed to pull image, but continuing..."
+            notify_webhook "warning" "image_pull_failed" "Failed to pull Apache Answer image, but continuing"
+        fi
     else
-        echo "    ⚠️ Failed to pull image, but continuing..."
-        notify_webhook "warning" "image_pull_failed" "Failed to pull Apache Answer image, but continuing"
+        echo "    Using custom built image with plugins"
+        notify_webhook "provisioning" "using_custom_image" "Using custom built image with plugins"
     fi
 
     # Start the container
@@ -380,12 +417,25 @@ EOF
     if docker-compose up -d; then
         echo "    ✅ Answer container started successfully"
         notify_webhook "provisioning" "container_started" "✅ Apache Answer container started successfully"
+        
+        # Verify plugins if custom image was built
+        if [ "$CUSTOM_IMAGE" = "answer-with-plugins" ]; then
+            echo "    🔧 Verifying plugins..."
+            sleep 10
+            if docker exec answer answer plugin 2>/dev/null; then
+                echo "    ✅ Plugins verified successfully"
+                notify_webhook "provisioning" "plugins_verified" "✅ Plugins verified successfully"
+            else
+                echo "    ⚠️ Could not verify plugins, but container is running"
+                notify_webhook "warning" "plugins_verification_failed" "Could not verify plugins, but container is running"
+            fi
+        fi
     else
         echo "    ❌ Failed to start Answer container"
         notify_webhook "failed" "container_start_failed" "Failed to start Apache Answer container"
         exit 1
     fi
-
+                                      
     # ========== WAIT FOR ANSWER INITIALIZATION ==========
     echo "[9/12] Waiting for Answer to initialize..."
     notify_webhook "provisioning" "initialization" "Waiting for Apache Answer to initialize"
