@@ -290,7 +290,7 @@ RABBITMQ_VHOST=$RABBITMQ_VHOST
 AWS_ACCESS_KEY_ID=$MINIO_USER
 AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
 AWS_S3_BUCKET_NAME=uploads
-AWS_S3_ENDPOINT_URL=https://__DOMAIN__/minio
+AWS_S3_ENDPOINT_URL=http://plane-minio:9000
 AWS_REGION=us-east-1
 
 # Application
@@ -496,6 +496,9 @@ services:
     image: minio/minio
     restart: always
     command: server /export --console-address ":9090"
+    ports:
+        - "9000:9000"   # Add this line - MinIO API
+        - "9090:9090"   # Add this line - MinIO Console
     volumes:
       - uploads:/export
     environment:
@@ -970,21 +973,52 @@ EOF
     notify_webhook "provisioning" "infrastructure_ready" "✅ All infrastructure services are ready - proceeding to application setup"
                                                                                                                         
     # ==========================================================
-    # Setup MinIO bucket
+    # Setup MinIO bucket (COMPREHENSIVE FIX)
     # ==========================================================
     echo "📦 Setting up MinIO bucket..."
     sleep 10
+
     # Install mc command if not exists
     if ! command -v mc &>/dev/null; then
         curl -s https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
         chmod +x /usr/local/bin/mc
     fi
 
-    # Create bucket
-    docker exec plane-minio mc alias set local http://localhost:9000 $MINIO_USER $MINIO_PASSWORD || true
-    docker exec plane-minio mc mb local/uploads --ignore-existing || true
-    echo "✅ MinIO bucket configured"
+    # Wait for MinIO to be fully ready
+    echo "Waiting for MinIO to be ready..."
+    for i in {1..30}; do
+        if curl -s http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+            echo "✅ MinIO is ready"
+            break
+        fi
+        if [ $i -eq 30 ]; then
+            echo "⚠️ MinIO not fully ready but continuing..."
+        fi
+        sleep 2
+    done
 
+    # Setup MinIO alias and create bucket with proper permissions
+    echo "Configuring MinIO bucket..."
+    docker exec plane-minio mc alias set local http://localhost:9000 $MINIO_USER $MINIO_PASSWORD || {
+        echo "⚠️ Failed to set MinIO alias, retrying..."
+        sleep 5
+        docker exec plane-minio mc alias set local http://localhost:9000 $MINIO_USER $MINIO_PASSWORD
+    }
+
+    docker exec plane-minio mc mb local/uploads --ignore-existing || {
+        echo "⚠️ Failed to create bucket, it might already exist"
+    }
+
+    # Set public read policy for the bucket (required for Plane)
+    docker exec plane-minio mc anonymous set public local/uploads || {
+        echo "⚠️ Failed to set public policy, but continuing..."
+    }
+
+    echo "✅ MinIO bucket configured"
+    notify_webhook "provisioning" "minio_configured" "✅ MinIO bucket configured"
+    
+    sleep 5
+    
     # ==========================================================
     # Run database migrations
     # ==========================================================
