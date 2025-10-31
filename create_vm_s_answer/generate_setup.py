@@ -1,6 +1,6 @@
 import textwrap
 
-def generate_answer_setup(
+def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
@@ -270,10 +270,10 @@ services:
       - ANSWER_DATA_PATH=/data
       - AUTO_INSTALL=true
       - DB_TYPE=__DB_TYPE__
-      - DB_USERNAME=__DB_USERNAME__
-      - DB_PASSWORD=__DB_PASSWORD__
-      - DB_HOST=__DB_HOST__
-      - DB_NAME=__DB_NAME__
+      - DB_USERNAME=$DB_USER
+      - DB_PASSWORD=$DB_PASSWORD
+      - DB_HOST=$DB_HOST
+      - DB_NAME=$DB_NAME
       - DB_FILE=__DB_FILE__
       - LANGUAGE=en-US
       - SITE_NAME=__SITE_NAME__
