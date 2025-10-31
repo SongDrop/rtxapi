@@ -365,7 +365,7 @@ async def provision_vm_background(
         # Generate and upload setup script
         print_info("Generating installation setup script...")
         sh_script = generate_setup.generate_setup(
-            fqdn, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT
+            fqdn, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, hook_url,location, resource_group
         )
         record_name = subdomain.rstrip('.') if subdomain else '@'
         a_records = [record_name]

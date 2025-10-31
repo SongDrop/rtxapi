@@ -44,7 +44,8 @@ image_reference = {
     'exactVersion': '24.04.202409120'
 }
 
-PORTS_TO_OPEN = [22, 80, 443, 8000, 3000, 8889, 8890, 7088, 8088]
+
+PORTS_TO_OPEN = [22, 80, 443, 8080, 8443, 3000, 3001, 3002, 3100, 8000]
 
 class bcolors:
     HEADER = '\033[95m'
@@ -1112,7 +1113,7 @@ async def provision_vm_background(
             recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
             
             html_content = html_email.HTMLEmail(
-                logo_url="https://i.postimg.cc/2SYvMpP2/searxng.png",
+                logo_url="https://i.postimg.cc/mDDwPxww/plane.png",
                 ip_address=public_ip,
                 created_at=datetime.utcnow().isoformat(),
                 link1=f"https://{fqdn}",
