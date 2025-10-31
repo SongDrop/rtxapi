@@ -264,7 +264,7 @@ def generate_setup(
         DB_FILE="/data/answer.db"
     fi          
                                                                            
-        # ========== BUILD CUSTOM ANSWER WITH PLUGINS ==========
+    # ========== BUILD CUSTOM ANSWER WITH PLUGINS ==========
     echo "[6/12] Building custom Answer image with plugins..."
     notify_webhook "provisioning" "plugin_build" "Building custom Answer image with plugins"
 
@@ -316,19 +316,51 @@ EXPOSE 80
 ENTRYPOINT ["/entrypoint.sh"]
 DOCKERFILE
 
-    # Build the custom image
+    # Build the custom image with timeout and retry logic
     echo "    Building custom Answer image with plugins..."
     notify_webhook "provisioning" "building_image" "Building custom Answer image with plugins"
     
-    if docker build -t answer-with-plugins .; then
-        echo "    ✅ Custom Answer image with plugins built successfully"
-        notify_webhook "provisioning" "custom_image_built" "✅ Custom Answer image with plugins built successfully"
-        CUSTOM_IMAGE="answer-with-plugins"
-    else
-        echo "    ⚠️ Failed to build custom image, using standard image without plugins"
-        notify_webhook "warning" "custom_build_failed" "Failed to build custom image, using standard Answer image"
-        CUSTOM_IMAGE="apache/answer:latest"
-        rm -f Dockerfile
+    MAX_BUILD_RETRIES=2
+    BUILD_SUCCESS=false
+    
+    for attempt in $(seq 1 $MAX_BUILD_RETRIES); do
+        echo "    Build attempt $attempt of $MAX_BUILD_RETRIES..."
+        
+        # Build with timeout to prevent hanging
+        if timeout 600 docker build -t answer-with-plugins .; then
+            echo "    ✅ Custom Answer image with plugins built successfully (attempt $attempt)"
+            notify_webhook "provisioning" "custom_image_built" "✅ Custom Answer image with plugins built successfully"
+            CUSTOM_IMAGE="answer-with-plugins"
+            BUILD_SUCCESS=true
+            break
+        else
+            echo "    ⚠️ Build attempt $attempt failed or timed out"
+            
+            # Clean up any failed build artifacts
+            docker system prune -f >/dev/null 2>&1 || true
+            
+            if [ $attempt -eq $MAX_BUILD_RETRIES ]; then
+                echo "    ❌ All build attempts failed, using standard image without plugins"
+                notify_webhook "warning" "custom_build_failed" "All build attempts failed, using standard Answer image"
+                CUSTOM_IMAGE="apache/answer:latest"
+            else
+                echo "    🔄 Retrying build in 10 seconds..."
+                sleep 10
+            fi
+        fi
+    done
+
+    # Clean up Dockerfile regardless of build outcome
+    rm -f Dockerfile
+
+    # Verify the custom image actually exists if we think we built it
+    if [ "$BUILD_SUCCESS" = true ]; then
+        if ! docker image inspect answer-with-plugins >/dev/null 2>&1; then
+            echo "    ⚠️ Custom image verification failed, using standard image"
+            notify_webhook "warning" "image_verification_failed" "Custom image verification failed, using standard image"
+            CUSTOM_IMAGE="apache/answer:latest"
+            BUILD_SUCCESS=false
+        fi
     fi
 
     # ========== DOCKER COMPOSE SETUP ==========
@@ -357,8 +389,14 @@ volumes:
 DOCKERCOMPOSE
 
     echo "✅ Docker Compose configuration created"
-    notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration ready"
-
+    if [ "$BUILD_SUCCESS" = true ]; then
+        echo "    🎯 Using custom Answer image with plugins"
+        notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration ready (with plugins)"
+    else
+        echo "    ℹ️  Using standard Answer image (plugins not available)"
+        notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration ready (standard image)"
+    fi
+                                      
     # ========== PRE-STARTUP CHECKS ==========
     echo "[8/12] Running system pre-checks..."
     notify_webhook "provisioning" "system_checks" "Running system pre-checks"
