@@ -244,11 +244,26 @@ def generate_setup(
     }
 
     # Generate SIMPLIFIED credentials (sqlite can be picky about passwords)
-    DB_USER="answer"
-    DB_HOST="answer"
-    DB_PASSWORD="answer_$(generate_secure_random hex 16)"  # Simple prefix + hex only
-    DB_NAME="answer"
-                                                  
+    # Set database configuration based on type
+    if [[ "$DB_TYPE" == "mysql" ]]; then
+        DB_USER="answer"
+        DB_PASSWORD="answer_$(generate_secure_random hex 16)"
+        DB_NAME="answer"
+        DB_FILE=""
+    elif [[ "$DB_TYPE" == "postgres" ]]; then
+        DB_USER="answer"
+        DB_PASSWORD="answer_$(generate_secure_random hex 16)"
+        DB_NAME="answer"
+        DB_FILE=""
+    else
+        # SQLite3 (default) - no credentials needed
+        DB_USER=""
+        DB_PASSWORD=""
+        DB_HOST=""
+        DB_NAME=""
+        DB_FILE="/data/answer.db"
+    fi          
+                                                                           
     # ========== DOCKER COMPOSE SETUP ==========
     echo "[6/12] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "docker_compose_setup" "Setting up Docker Compose for Answer"
@@ -269,12 +284,12 @@ services:
     environment:
       - ANSWER_DATA_PATH=/data
       - AUTO_INSTALL=true
-      - DB_TYPE=__DB_TYPE__
+      - DB_TYPE=$DB_TYPE
       - DB_USERNAME=$DB_USER
       - DB_PASSWORD=$DB_PASSWORD
       - DB_HOST=$DB_HOST
       - DB_NAME=$DB_NAME
-      - DB_FILE=__DB_FILE__
+      - DB_FILE=$DB_FILE
       - LANGUAGE=en-US
       - SITE_NAME=__SITE_NAME__
       - SITE_URL=https://__DOMAIN__

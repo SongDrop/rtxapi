@@ -286,12 +286,17 @@ RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD
 RABBITMQ_VHOST=$RABBITMQ_VHOST
 # CELERY_BROKER_URL will be auto-constructed
 
-# MinIO/S3
+# MinIO/S3 Configuration (FIXED)
 AWS_ACCESS_KEY_ID=$MINIO_USER
 AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
 AWS_S3_BUCKET_NAME=uploads
-AWS_S3_ENDPOINT_URL=https://__DOMAIN__/minio
+AWS_S3_ENDPOINT_URL=http://plane-minio:9000
 AWS_REGION=us-east-1
+AWS_S3_FORCE_PATH_STYLE=true
+
+# CRITICAL: Add these lines from the GitHub discussion
+USE_MINIO=1
+AWS_S3_BUCKET_AUTH=False
 
 # Application
 SECRET_KEY=$SECRET_KEY
@@ -339,7 +344,7 @@ version: '3.9'
 services:
   web:
     container_name: web
-    image: makeplane/plane-frontend
+    image: artifacts.plane.so/makeplane/plane-frontend
     restart: always
     command: node web/server.js web
     depends_on:
@@ -349,7 +354,7 @@ services:
 
   admin:
     container_name: admin
-    image: makeplane/plane-admin
+    image: artifacts.plane.so/makeplane/plane-admin
     restart: always
     command: node admin/server.js admin
     depends_on:
@@ -360,7 +365,7 @@ services:
 
   space:
     container_name: space
-    image: makeplane/plane-space
+    image: artifacts.plane.so/makeplane/plane-space
     restart: always
     command: node space/server.js space
     depends_on:
@@ -371,7 +376,7 @@ services:
 
   api:
     container_name: api
-    image: makeplane/plane-backend
+    image: artifacts.plane.so/makeplane/plane-backend
     restart: always
     command: ./bin/docker-entrypoint-api.sh
     env_file:
@@ -389,7 +394,7 @@ services:
 
   worker:
     container_name: bgworker
-    image: makeplane/plane-backend
+    image: artifacts.plane.so/makeplane/plane-backend
     restart: always
     command: ./bin/docker-entrypoint-worker.sh
     env_file:
@@ -408,7 +413,7 @@ services:
 
   beat-worker:
     container_name: beatworker
-    image: makeplane/plane-backend
+    image: artifacts.plane.so/makeplane/plane-backend
     restart: always
     command: ./bin/docker-entrypoint-beat.sh
     env_file:
@@ -427,7 +432,7 @@ services:
 
   migrator:
     container_name: plane-migrator
-    image: makeplane/plane-backend
+    image: artifacts.plane.so/makeplane/plane-backend
     restart: "no"
     command: ./bin/docker-entrypoint-migrator.sh
     env_file:
@@ -445,7 +450,7 @@ services:
 
   live:
     container_name: plane-live
-    image: makeplane/plane-live
+    image: artifacts.plane.so/makeplane/plane-live
     restart: always
     command: node live/dist/server.js
     networks:
@@ -496,6 +501,9 @@ services:
     image: minio/minio
     restart: always
     command: server /export --console-address ":9090"
+    ports:
+        - "9000:9000"   # Add this line - MinIO API
+        - "9090:9090"   # Add this line - MinIO Console
     volumes:
       - uploads:/export
     environment:
@@ -506,7 +514,7 @@ services:
 
   proxy:
     container_name: proxy
-    image: makeplane/plane-proxy
+    image: artifacts.plane.so/makeplane/plane-proxy
     restart: always
     ports:
       - "${NGINX_PORT:-80}:80"
@@ -970,21 +978,178 @@ EOF
     notify_webhook "provisioning" "infrastructure_ready" "✅ All infrastructure services are ready - proceeding to application setup"
                                                                                                                         
     # ==========================================================
-    # Setup MinIO bucket
+    # Setup MinIO bucket (ROBUST FIX WITH COMPREHENSIVE ERROR HANDLING)
     # ==========================================================
     echo "📦 Setting up MinIO bucket..."
+    notify_webhook "provisioning" "minio_setup" "Starting MinIO bucket configuration"
     sleep 10
-    # Install mc command if not exists
+
+    # Install mc command with better error handling
     if ! command -v mc &>/dev/null; then
-        curl -s https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
-        chmod +x /usr/local/bin/mc
+        echo "Installing mc (MinIO client)..."
+        if curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc; then
+            chmod +x /usr/local/bin/mc
+            echo "✅ mc installed successfully"
+        else
+            echo "⚠️ Failed to install mc, but continuing..."
+            notify_webhook "warning" "mc_install_failed" "Failed to install MinIO client"
+        fi
     fi
 
-    # Create bucket
-    docker exec plane-minio mc alias set local http://localhost:9000 $MINIO_USER $MINIO_PASSWORD || true
-    docker exec plane-minio mc mb local/uploads --ignore-existing || true
-    echo "✅ MinIO bucket configured"
+    # Wait for MinIO to be fully ready with better checks
+    echo "Waiting for MinIO to be ready..."
+    MINIO_READY=false
+    for i in {1..60}; do  # Increased to 60 attempts (2 minutes)
+        # Check multiple ways MinIO might be ready
+        if docker ps | grep -q "plane-minio" && \
+        docker exec plane-minio ps aux 2>/dev/null | grep -q "[m]inio" && \
+        (curl -s http://localhost:9000/minio/health/live >/dev/null 2>&1 || \
+            curl -s http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1); then
+            echo "✅ MinIO is ready and responsive (attempt $i)"
+            MINIO_READY=true
+            break
+        fi
+        
+        echo "    Still waiting for MinIO... (attempt $i/60)"
+        
+        # Every 10 attempts, show more debug info
+        if [ $((i % 10)) -eq 0 ]; then
+            echo "    🔍 MinIO status check:"
+            echo "      Container running: $(docker ps | grep -q "plane-minio" && echo "✅" || echo "❌")"
+            echo "      Process inside: $(docker exec plane-minio ps aux 2>/dev/null | grep -q "[m]inio" && echo "✅" || echo "❌")"
+            echo "      Port 9000 listening: $(netstat -tuln | grep -q ":9000 " && echo "✅" || echo "❌")"
+            
+            # Show MinIO logs if container exists
+            if docker ps | grep -q "plane-minio"; then
+                echo "      Recent MinIO logs:"
+                docker logs plane-minio --tail=3 2>/dev/null | while read line; do echo "        $line"; done || true
+            fi
+        fi
+        
+        sleep 2
+    done
 
+    if [ "$MINIO_READY" = false ]; then
+        echo "⚠️ MinIO not fully ready after 2 minutes, but attempting configuration anyway..."
+        notify_webhook "warning" "minio_slow_start" "MinIO taking longer than expected to start"
+    fi
+
+    # Setup MinIO alias with comprehensive error handling
+    echo "Configuring MinIO bucket..."
+    MAX_RETRIES=3
+    BUCKET_CREATED=false
+
+    for attempt in $(seq 1 $MAX_RETRIES); do
+        echo "  MinIO configuration attempt $attempt of $MAX_RETRIES..."
+        
+        # Wait a bit before each attempt
+        sleep 5
+        
+        # Check if MinIO container is responsive
+        if ! docker ps | grep -q "plane-minio"; then
+            echo "    ❌ MinIO container not running"
+            if [ $attempt -eq $MAX_RETRIES ]; then
+                echo "    ⚠️ Giving up on MinIO configuration after $MAX_RETRIES attempts"
+                notify_webhook "warning" "minio_container_missing" "MinIO container not running, skipping bucket setup"
+                break
+            fi
+            continue
+        fi
+        
+        # Test basic container accessibility
+        if ! docker exec plane-minio echo "Container test" >/dev/null 2>&1; then
+            echo "    ❌ MinIO container not accessible"
+            if [ $attempt -eq $MAX_RETRIES ]; then
+                echo "    ⚠️ MinIO container not responsive, skipping bucket setup"
+                break
+            fi
+            continue
+        fi
+        
+        # Set MinIO alias
+        echo "    Setting MinIO alias..."
+        if docker exec plane-minio mc alias set local http://localhost:9000 "$MINIO_USER" "$MINIO_PASSWORD" 2>/dev/null; then
+            echo "    ✅ MinIO alias set successfully"
+        else
+            echo "    ⚠️ Failed to set MinIO alias (attempt $attempt)"
+            if [ $attempt -eq $MAX_RETRIES ]; then
+                echo "    ⚠️ Continuing without MinIO alias..."
+            fi
+            continue
+        fi
+        
+        # Create bucket
+        echo "    Creating uploads bucket..."
+        if docker exec plane-minio mc mb local/uploads --ignore-existing 2>/dev/null; then
+            echo "    ✅ Bucket created or already exists"
+            BUCKET_CREATED=true
+        else
+            echo "    ⚠️ Failed to create bucket (attempt $attempt)"
+            if [ $attempt -eq $MAX_RETRIES ]; then
+                echo "    ⚠️ Bucket creation failed, but continuing..."
+            fi
+            continue
+        fi
+        
+        # Set public policy (non-critical, but helpful)
+        echo "    Setting bucket policy..."
+        if docker exec plane-minio mc anonymous set public local/uploads 2>/dev/null; then
+            echo "    ✅ Public policy set"
+        else
+            echo "    ⚠️ Failed to set public policy (not critical)"
+        fi
+        
+        # Verify the setup
+        echo "    Verifying MinIO setup..."
+        if docker exec plane-minio mc ls local/ 2>/dev/null | grep -q "uploads"; then
+            echo "    ✅ MinIO setup verified successfully"
+            notify_webhook "provisioning" "minio_setup_complete" "✅ MinIO bucket configured successfully"
+            break
+        else
+            echo "    ⚠️ MinIO setup verification failed (attempt $attempt)"
+            if [ $attempt -eq $MAX_RETRIES ]; then
+                echo "    ⚠️ MinIO setup incomplete, but continuing..."
+                notify_webhook "warning" "minio_setup_incomplete" "MinIO setup incomplete but continuing"
+            fi
+        fi
+    done
+
+    # Final fallback: if all else fails, use a simple Docker exec approach
+    if [ "$BUCKET_CREATED" = false ]; then
+        echo "🔧 Attempting fallback MinIO setup..."
+        if docker ps | grep -q "plane-minio"; then
+            echo "  Using direct Docker commands..."
+            # Try to create bucket using direct MinIO commands inside container
+            if docker exec plane-minio sh -c "
+                /opt/bin/mc alias set local http://localhost:9000 '$MINIO_USER' '$MINIO_PASSWORD' &&
+                /opt/bin/mc mb local/uploads --ignore-existing &&
+                /opt/bin/mc anonymous set public local/uploads
+            " 2>/dev/null; then
+                echo "    ✅ Fallback MinIO setup successful"
+                BUCKET_CREATED=true
+            else
+                echo "    ⚠️ Fallback setup also failed"
+            fi
+        fi
+    fi
+
+    if [ "$BUCKET_CREATED" = true ]; then
+        echo "✅ MinIO bucket configured successfully"
+        notify_webhook "provisioning" "minio_success" "✅ MinIO fully configured and ready"
+    else
+        echo "⚠️ MinIO bucket configuration had issues, but continuing deployment..."
+        echo "⚠️ File uploads may not work until MinIO is manually configured"
+        notify_webhook "warning" "minio_partial_setup" "MinIO configuration had issues - file uploads may not work"
+        
+        # Provide debugging information
+        echo "🔍 MinIO Debug Information:"
+        echo "  Container status: $(docker ps | grep -q "plane-minio" && echo "Running" || echo "Not running")"
+        echo "  MinIO logs (last 5 lines):"
+        docker logs plane-minio --tail=5 2>/dev/null | while read line; do echo "    $line"; done || echo "    No logs available"
+        echo "  Port 9000 status: $(netstat -tuln | grep -q ":9000 " && echo "Listening" || echo "Not listening")"
+    fi
+    sleep 5
+    
     # ==========================================================
     # Run database migrations
     # ==========================================================
@@ -1248,7 +1413,7 @@ EOF_TEMP
     # Fail-safe check
     if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
         echo "⚠️ SSL certificate not found! Continuing without SSL..."
-        notify_webhook "warning" "ssl" "Forgejo Certbot failed, SSL not installed for __DOMAIN__"
+        notify_webhook "warning" "ssl" "Plane Certbot failed, SSL not installed for __DOMAIN__"
     else
         echo "✅ SSL certificate obtained"
         notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
@@ -1285,7 +1450,10 @@ server {
     }
     
     location /minio/ {
-        proxy_pass http://plane-minio:9000/;
+        # Remove /minio prefix and proxy to MinIO
+        rewrite ^/minio/(.*)$ /$1 break;
+                                      
+        proxy_pass http://127.0.0.1:9000/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1294,6 +1462,13 @@ server {
         # Important for MinIO
         proxy_buffering off;
         proxy_request_buffering off;
+        client_max_body_size 200M;
+        
+        # CORS headers for MinIO
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept, Origin, X-Requested-With" always;
+        add_header Access-Control-Allow-Credentials "true" always;
     }
 }
 EOF_SSL
@@ -1418,5 +1593,3 @@ JSON_EOF
     final = final.replace("__PORT__", tokens["__PORT__"])
 
     return final
-
-
