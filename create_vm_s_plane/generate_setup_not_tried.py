@@ -297,7 +297,9 @@ AWS_S3_FORCE_PATH_STYLE=true
 # CRITICAL: Add these lines from the GitHub discussion
 USE_MINIO=1
 AWS_S3_BUCKET_AUTH=False
-
+# NEW: Force HTTPS for uploads
+MINIO_ENDPOINT_SSL=true
+                                      
 # Application
 SECRET_KEY=$SECRET_KEY
 WEB_URL=https://__DOMAIN__
@@ -386,6 +388,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@plane-db:5432/${POSTGRES_DB}
       REDIS_URL: redis://plane-redis:6379/
       CELERY_BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@plane-mq:5672/${RABBITMQ_VHOST}
+      MINIO_ENDPOINT_SSL: "true"
     depends_on:
       - plane-db
       - plane-redis
@@ -1449,10 +1452,7 @@ server {
         proxy_request_buffering off;
     }
     
-    location /minio/ {
-        # Remove /minio prefix and proxy to MinIO
-        rewrite ^/minio/(.*)$ /$1 break;
-                                      
+    location /minio/ {                                      
         proxy_pass http://127.0.0.1:9000/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -1469,6 +1469,11 @@ server {
         add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
         add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept, Origin, X-Requested-With" always;
         add_header Access-Control-Allow-Credentials "true" always;
+                                      
+        # Required headers from the GitHub issue
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
     }
 }
 EOF_SSL

@@ -278,26 +278,40 @@ services:
     container_name: answer
     restart: unless-stopped
     ports:
-      - "__PORT__:80"
+      - "${PORT}:80"
     volumes:
       - answer_data:/data
     environment:
       - ANSWER_DATA_PATH=/data
       - AUTO_INSTALL=true
-      - DB_TYPE=$DB_TYPE
-      - DB_USERNAME=$DB_USER
-      - DB_PASSWORD=$DB_PASSWORD
-      - DB_HOST=$DB_HOST
-      - DB_NAME=$DB_NAME
-      - DB_FILE=$DB_FILE
+      - DB_TYPE=${DB_TYPE}
       - LANGUAGE=en-US
-      - SITE_NAME=__SITE_NAME__
-      - SITE_URL=https://__DOMAIN__
-      - CONTACT_EMAIL=__ADMIN_EMAIL__
-      - ADMIN_NAME=__ADMIN_NAME__
-      - ADMIN_PASSWORD=__ADMIN_PASSWORD__
-      - ADMIN_EMAIL=__ADMIN_EMAIL__
+      - SITE_NAME=${SITE_NAME}
+      - SITE_URL=https://${DOMAIN}
+      - CONTACT_EMAIL=${ADMIN_EMAIL}
+      - ADMIN_NAME=${ADMIN_NAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
       - EXTERNAL_CONTENT_DISPLAY=always_display
+EOF
+
+    # Add database-specific environment variables
+    if [[ "$DB_TYPE" == "mysql" || "$DB_TYPE" == "postgres" ]]; then
+        cat >> "docker-compose.yml" <<EOF
+      - DB_USERNAME=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_NAME=${DB_NAME}
+EOF
+    else
+        # SQLite3
+        cat >> "docker-compose.yml" <<EOF
+      - DB_FILE=${DB_FILE}
+EOF
+    fi
+
+    # Add healthcheck and volumes
+    cat >> "docker-compose.yml" <<EOF
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/healthz" || exit 1]
       interval: 30s
@@ -308,7 +322,6 @@ services:
 volumes:
   answer_data:
     driver: local
-
 EOF
 
     echo "✅ Docker Compose configuration created"
