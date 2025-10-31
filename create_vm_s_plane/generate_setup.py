@@ -286,12 +286,17 @@ RABBITMQ_PASSWORD=$RABBITMQ_PASSWORD
 RABBITMQ_VHOST=$RABBITMQ_VHOST
 # CELERY_BROKER_URL will be auto-constructed
 
-# MinIO/S3
+# MinIO/S3 Configuration (FIXED)
 AWS_ACCESS_KEY_ID=$MINIO_USER
 AWS_SECRET_ACCESS_KEY=$MINIO_PASSWORD
 AWS_S3_BUCKET_NAME=uploads
 AWS_S3_ENDPOINT_URL=http://plane-minio:9000
 AWS_REGION=us-east-1
+AWS_S3_FORCE_PATH_STYLE=true
+
+# CRITICAL: Add these lines from the GitHub discussion
+USE_MINIO=1
+AWS_S3_BUCKET_AUTH=False
 
 # Application
 SECRET_KEY=$SECRET_KEY
@@ -1445,6 +1450,9 @@ server {
     }
     
     location /minio/ {
+        # Remove /minio prefix and proxy to MinIO
+        rewrite ^/minio/(.*)$ /$1 break;
+                                      
         proxy_pass http://127.0.0.1:9000/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
