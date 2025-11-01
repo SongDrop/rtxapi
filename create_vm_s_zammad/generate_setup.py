@@ -226,7 +226,13 @@ POSTGRES_DB=zammad
 REDIS_PASSWORD=redis_$(openssl rand -hex 16)
 MEMCACHED_PORT=11211
 ELASTICSEARCH_MEMORY=512m
-                                      
+
+# CSRF FIX: Critical environment variables for proxy setups
+NGINX_SERVER_SCHEME=https
+NGINX_SERVER_NAME=__DOMAIN__
+NGINX_EXPOSE_PORT=8080
+NGINX_PORT=8080
+                                                                     
 # Elasticsearch Configuration
 ELASTICSEARCH_ENABLED=true
 ELASTICSEARCH_HOST=zammad-elasticsearch
