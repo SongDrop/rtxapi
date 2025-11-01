@@ -1,6 +1,6 @@
 import textwrap
 
-def generate_zammad_setup(
+def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
