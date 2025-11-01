@@ -665,7 +665,7 @@ EOF_SSL
     $DOCKER_COMPOSE_CMD ps
 
     echo "🎉 Dagu deployment completed successfully!"
-    notify_webhook "success" "deployment_complete" "✅ Dagu deployment completed successfully"
+    notify_webhook "provisioning" "deployment_complete" "✅ Dagu deployment completed successfully"
 
     cat <<EOF_SUMMARY
 =============================================
