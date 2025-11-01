@@ -412,7 +412,7 @@ EOF
 
     # Check available disk space
     echo "    Checking disk space..."
-    DISK_AVAILABLE=$(df /var/lib/docker /opt/dagu /tmp . | awk 'NR>1 {print $4}' | sort -n | head -1)
+    DISK_AVAILABLE=$(df / /var/lib /tmp | awk 'NR>1 {print $4}' | sort -n | head -1)
     if [ "$DISK_AVAILABLE" -lt 1048576 ]; then  # Less than 1GB
         echo "    ❌ Insufficient disk space: ${DISK_AVAILABLE}KB available"
         df -h
