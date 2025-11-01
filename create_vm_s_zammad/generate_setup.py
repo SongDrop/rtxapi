@@ -504,7 +504,7 @@ EOF_SSL
     $DOCKER_COMPOSE_CMD ps
 
     echo "🎉 Zammad deployment completed successfully!"
-    notify_webhook "success" "deployment_complete" "✅ Zammad deployment completed successfully"
+    notify_webhook "provisioning" "deployment_complete" "✅ Zammad deployment completed successfully"
 
     cat <<EOF_SUMMARY
 =============================================

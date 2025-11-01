@@ -592,7 +592,7 @@ EOF_SSL
     $DOCKER_COMPOSE_CMD ps
 
     echo "🎉 Paperless-ngx deployment completed successfully!"
-    notify_webhook "success" "deployment_complete" "✅ Paperless-ngx deployment completed successfully"
+    notify_webhook "provisioning" "deployment_complete" "✅ Paperless-ngx deployment completed successfully"
 
     cat <<EOF_SUMMARY
 =============================================

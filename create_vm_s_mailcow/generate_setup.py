@@ -552,7 +552,7 @@ EOF_SSL
     notify_webhook "provisioning" "dns_config" "Displaying DNS configuration instructions"
 
     echo "🎉 Mailcow deployment completed successfully!"
-    notify_webhook "success" "deployment_complete" "✅ Mailcow deployment completed successfully"
+    notify_webhook "provisioning" "deployment_complete" "✅ Mailcow deployment completed successfully"
 
     cat <<EOF_SUMMARY
 =============================================
