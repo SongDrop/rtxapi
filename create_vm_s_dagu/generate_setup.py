@@ -176,13 +176,11 @@ def generate_setup(
     
     sleep 5
 
-    # ========== CREATE DOCKER COMPOSE FILE ==========
+        # ========== CREATE DOCKER COMPOSE FILE ==========
     echo "[6/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "compose_setup" "Creating Docker Compose configuration"
 
     cat > "docker-compose.yml" <<'EOF'
-version: '3.8'
-
 services:
   dagu:
     image: ghcr.io/dagu-org/dagu:latest
@@ -246,7 +244,7 @@ services:
     container_name: dagu-grafana
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3001:3000"  # Changed from 3000 to 3001 to avoid conflict
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=grafana
@@ -682,7 +680,7 @@ EOF_SSL
 📊 Monitoring Stack:
 ------------------------------------------------------------
 📈 Prometheus: http://localhost:9090
-📊 Grafana: http://localhost:3000 (admin/grafana)
+📊 Grafana: http://localhost:3001 (admin/grafana)  # PORT CHANGED TO 3001
 ------------------------------------------------------------
 
 📁 Directory Structure:
