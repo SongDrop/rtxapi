@@ -44,7 +44,7 @@ image_reference = {
     'exactVersion': '24.04.202409120'
 }
 
-PORTS_TO_OPEN = [22, 80, 443, 8000, 3000, 8889, 8890, 7088, 8088]
+PORTS_TO_OPEN = [22, 80, 443, 8000, 3000, 8889, 8890, 7088, 8088, 8080]
 
 class bcolors:
     HEADER = '\033[95m'
@@ -170,7 +170,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         # App constants
         ADMIN_EMAIL = f"admin@{domain}"
         ADMIN_PASSWORD = "MyPass1234!"
-        FRONTEND_PORT = 3000
+        FRONTEND_PORT = 8080
         BACKEND_PORT = 8000
         storage_account_base = vm_name
 
