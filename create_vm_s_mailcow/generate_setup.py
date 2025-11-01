@@ -3,7 +3,7 @@ import textwrap
 def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
-    MAILCOW_ADMIN_PASSWORD,
+    ADMIN_PASSWORD,
     PORT=80,
     WEBHOOK_URL="",
     location="",
@@ -37,7 +37,7 @@ def generate_setup(
         "__DOMAIN__": DOMAIN_NAME,
         "__BASE_DOMAIN__": base_domain,
         "__ADMIN_EMAIL__": ADMIN_EMAIL,
-        "__ADMIN_PASSWORD__": MAILCOW_ADMIN_PASSWORD,
+        "__ADMIN_PASSWORD__": ADMIN_PASSWORD,
         "__PORT__": str(PORT),
         "__DATA_DIR__": DATA_DIR,
         "__WEBHOOK_URL__": WEBHOOK_URL,
