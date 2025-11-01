@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "create_vm_s_searngx",
+      "route": "create_vm_s_searxng",
       "methods": ["get", "post"]
     },
     {
