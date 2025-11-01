@@ -1284,6 +1284,7 @@ def upload_blob_and_generate_sas(blob_service_client, container_name, blob_name,
 def get_compatible_vm_sizes():
     """Return list of compatible VM sizes"""
     return [
+        "Standard_B1s",
         'Standard_B2s', 'Standard_B4ms', 'Standard_D2s_v3', 'Standard_D4s_v3',
         'Standard_D8s_v3', 'Standard_D16s_v3', 'Standard_DS1_v2', 'Standard_DS2_v2',
         'Standard_DS3_v2', 'Standard_DS4_v2', 'Standard_F2s_v2', 'Standard_F4s_v2',
