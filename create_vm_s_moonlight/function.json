@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "create_vm_s_zammad",
+      "route": "create_vm_s_moonlight",
       "methods": ["get", "post"]
     },
     {
