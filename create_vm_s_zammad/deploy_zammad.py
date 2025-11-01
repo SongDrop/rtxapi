@@ -226,6 +226,34 @@ POSTGRES_DB=zammad
 REDIS_PASSWORD=redis_$(openssl rand -hex 16)
 MEMCACHED_PORT=11211
 ELASTICSEARCH_MEMORY=512m
+
+# CSRF FIX: Critical environment variables for proxy setups
+NGINX_SERVER_SCHEME=https
+NGINX_SERVER_NAME=__DOMAIN__
+NGINX_EXPOSE_PORT=8080
+NGINX_PORT=8080
+                                                                     
+# Elasticsearch Configuration
+ELASTICSEARCH_ENABLED=true
+ELASTICSEARCH_HOST=zammad-elasticsearch
+ELASTICSEARCH_PORT=9200
+ELASTICSEARCH_SCHEMA=http
+ELASTICSEARCH_NAMESPACE=zammad
+
+# PostgreSQL Configuration  
+POSTGRESQL_HOST=zammad-postgresql
+POSTGRESQL_PORT=5432
+POSTGRESQL_USER=zammad
+POSTGRESQL_PASS=zammad
+POSTGRESQL_DB=zammad
+POSTGRESQL_OPTIONS=?pool=50
+POSTGRESQL_DB_CREATE=true
+
+# Rails Server Configuration
+ZAMMAD_RAILSSERVER_HOST=zammad-railsserver
+ZAMMAD_RAILSSERVER_PORT=3000
+ZAMMAD_WEBSOCKET_HOST=zammad-websocket
+ZAMMAD_WEBSOCKET_PORT=6042
 EOF
 
     echo "✅ Environment file created"
@@ -475,9 +503,16 @@ EOF_SSL
     ufw allow 22/tcp
     ufw allow 80/tcp
     ufw allow 443/tcp
+    # Docker container internal ports (for inter-container communication)
+    ufw allow 5432/tcp  # PostgreSQL
+    ufw allow 9200/tcp  # Elasticsearch  
+    ufw allow 3000/tcp  # Rails Server
+    ufw allow 6042/tcp  # WebSocket
+    ufw allow 11211/tcp # Memcached
+    ufw allow 6379/tcp  # Redis
+    # Zammad external access port
     ufw allow "$PORT"/tcp
     ufw --force enable
-
     echo "✅ Firewall configured"
     notify_webhook "provisioning" "firewall_ready" "✅ UFW configured with required ports"
 
