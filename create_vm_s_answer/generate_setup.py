@@ -680,7 +680,7 @@ EOF_SSL
     fi
 
     echo "✅ Apache Answer setup complete!"
-    notify_webhook "success" "setup_complete" "✅ Apache Answer deployment completed successfully"
+    notify_webhook "provisioning" "setup_complete" "✅ Apache Answer deployment completed successfully"
 
     cat <<EOF_SUMMARY
 =============================================
@@ -711,7 +711,7 @@ EOF_SUMMARY
     echo "📊 Final container status:"
     cd "$DATA_DIR" && docker-compose ps
 
-    notify_webhook "success" "deployment_complete" "🎉 Apache Answer deployment fully completed - Ready for use!"
+    notify_webhook "provisioning" "deployment_complete" "🎉 Apache Answer deployment fully completed - Ready for use!"
     """)
 
     # ========== WEBHOOK FUNCTION HANDLING ==========

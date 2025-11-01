@@ -1316,9 +1316,9 @@ EOF
         # FIXED: Lower the threshold and report which containers are missing
         if [ $RUNNING_CONTAINERS -ge 7 ]; then
             if [ -n "$MISSING_CONTAINERS" ]; then
-                notify_webhook "success" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running. Missing:$MISSING_CONTAINERS"
+                notify_webhook "provisioning" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running. Missing:$MISSING_CONTAINERS"
             else
-                notify_webhook "success" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running"
+                notify_webhook "provisioning" "deployment_stable" "✅ Plane deployment stable with $RUNNING_CONTAINERS containers running"
             fi
         else
             if [ -n "$MISSING_CONTAINERS" ]; then

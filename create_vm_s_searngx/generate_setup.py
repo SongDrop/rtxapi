@@ -809,7 +809,7 @@ EOF
 
     if [ "$HEALTHY" = true ]; then
         echo "✅ SearXNG is fully operational and accessible"
-        notify_webhook "success" "deployment_complete" "✅ SearXNG deployment completed successfully and is accessible"
+        notify_webhook "provisioning" "deployment_complete" "✅ SearXNG deployment completed successfully and is accessible"
     fi
 
     # Display final summary

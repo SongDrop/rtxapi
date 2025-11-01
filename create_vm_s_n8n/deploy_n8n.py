@@ -515,7 +515,7 @@ EOF_SSL
     $DOCKER_COMPOSE_CMD ps
 
     echo "🎉 n8n deployment completed successfully!"
-    notify_webhook "success" "deployment_complete" "✅ n8n deployment completed successfully"
+    notify_webhook "provisioning" "deployment_complete" "✅ n8n deployment completed successfully"
 
     cat <<EOF_SUMMARY
 =============================================

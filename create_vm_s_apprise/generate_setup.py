@@ -1,338 +1,561 @@
-def generate_setup(DOMAIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, BACKEND_PORT, VM_IP, PIN_URL, VOLUME_DIR="/opt/moonlight-embed", WEBHOOK_URL=""):
-    github_url = "https://github.com/moonlight-stream/moonlight-embedded.git"
-    
-    # Define the Moonlight Embedded directory path
-    MOONLIGHT_EMBEDDED_DIR = f"{VOLUME_DIR}/moonlight-embedded"
+import textwrap
 
-    libnice_git_url = "https://gitlab.freedesktop.org/libnice/libnice"
-    libsrtp_tar_url = "https://github.com/cisco/libsrtp/archive/v2.2.0.tar.gz"
-    usrsctp_git_url = "https://github.com/sctplab/usrsctp"
-    libwebsockets_git_url = "https://github.com/warmcat/libwebsockets.git"
-    janus_git_url = "https://github.com/meetecho/janus-gateway.git"
-    letsencrypt_options_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf"
-    ssl_dhparams_url = "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem"
+def generate_apprise_setup(
+    DOMAIN_NAME,
+    ADMIN_EMAIL,
+    PORT=8000,
+    DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh",
+    WEBHOOK_URL="",
+    ALLOW_EMBED_WEBSITE="",
+    location="",
+    resource_group="",
+    UPLOAD_SIZE_MB=100  # Apprise doesn't need large uploads
+):
+    """
+    Returns a full bash provisioning script for Apprise API using template method.
+    Usage: script = generate_apprise_setup("apprise.example.com", "admin@example.com", "8000", ...)
+    """
+    # ========== TOKEN DEFINITIONS ==========
+    tokens = {
+        "__DOMAIN__": DOMAIN_NAME,
+        "__ADMIN_EMAIL__": ADMIN_EMAIL,
+        "__PORT__": str(PORT),
+        "__DNS_HOOK_SCRIPT__": DNS_HOOK_SCRIPT,
+        "__WEBHOOK_URL__": WEBHOOK_URL,
+        "__ALLOW_EMBED_WEBSITE__": ALLOW_EMBED_WEBSITE,
+        "__LOCATION__": location,
+        "__RESOURCE_GROUP__": resource_group,
+        "__APPRISE_DIR__": "/opt/apprise",
+        "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
+        "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
+        "__MAX_UPLOAD_SIZE_MB__": f"{UPLOAD_SIZE_MB}M",
+    }
 
-    # Webhook notification function with proper JSON structure
-    webhook_notification = ""
-    if WEBHOOK_URL:
-        webhook_notification = f'''
-notify_webhook() {{
-  local status=$1
-  local step=$2
-  local message=$3
-  
-  if [ -z "${{WEBHOOK_URL}}" ]; then
-    return 0
-  fi
-  
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Notifying webhook: status=$status step=$step"
-  
-  # Prepare the JSON payload matching Azure Function expectations
-  JSON_PAYLOAD=$(cat <<EOF
-{{
-  "vm_name": "$(hostname)",
-  "status": "$status",
-  "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
-  "details": {{
-    "step": "$step",
-    "message": "$message"
-  }}
-}}
-EOF
-  )
+    # ========== BASE TEMPLATE ==========
+    script_template = textwrap.dedent(r"""
+    #!/bin/bash
+    set -euo pipefail
 
-  curl -X POST \\
-    "${{WEBHOOK_URL}}" \\
-    -H "Content-Type: application/json" \\
-    -d "$JSON_PAYLOAD" \\
-    --connect-timeout 10 \\
-    --max-time 30 \\
-    --retry 2 \\
-    --retry-delay 5 \\
-    --silent \\
-    --output /dev/null \\
-    --write-out "Webhook notification result: %{{http_code}}"
+    # ----------------------------------------------------------------------
+    # Apprise API Provisioning Script (generated)
+    # ----------------------------------------------------------------------
 
-  return $?
-}}
-'''
-    else:
-        webhook_notification = '''
-notify_webhook() {
-  # No webhook URL configured
-  return 0
-}
-'''
+    # --- Webhook Notification System ---
+    __WEBHOOK_FUNCTION__
 
-    script_template = f'''#!/bin/bash
+    # Error handling with webhook notifications
+    trap 'notify_webhook "failed" "unexpected_error" "Script exited on line $LINENO with code $?"' ERR
 
-set -e
+    # --- Logging Setup ---
+    LOG_FILE="/var/log/apprise_setup.log"
+    exec > >(tee -a "$LOG_FILE") 2>&1
 
-export DEBIAN_FRONTEND=noninteractive
+    # --- Environment Variables ---
+    DOMAIN="__DOMAIN__"
+    ADMIN_EMAIL="__ADMIN_EMAIL__"
+    PORT="__PORT__"
+    APPRISE_DIR="__APPRISE_DIR__"
+    DNS_HOOK_SCRIPT="__DNS_HOOK_SCRIPT__"
+    WEBHOOK_URL="__WEBHOOK_URL__"
+    ALLOW_EMBED_WEBSITE="__ALLOW_EMBED_WEBSITE__"
+    MAX_UPLOAD_SIZE_MB="__MAX_UPLOAD_SIZE_MB__"
 
-# === User config ===
-DOMAIN_NAME="{DOMAIN_NAME}"
-ADMIN_EMAIL="{ADMIN_EMAIL}"
-FRONTEND_PORT={FRONTEND_PORT}
-BACKEND_PORT={BACKEND_PORT}
-VM_IP="{VM_IP}"
-PIN_URL="{PIN_URL}"
-INSTALL_DIR="{VOLUME_DIR}"
-LOG_DIR="${{INSTALL_DIR}}/logs"
-DOCKER_IMAGE_NAME="moonlight-embed-app"
-DOCKER_CONTAINER_NAME="moonlight-embed-container"
-JANUS_INSTALL_DIR="/opt/janus"
-MOONLIGHT_EMBEDDED_DIR="{MOONLIGHT_EMBEDDED_DIR}"
-WEBHOOK_URL="{WEBHOOK_URL}"
+    echo "[1/12] Starting Apprise API provisioning..."
+    notify_webhook "provisioning" "starting" "Beginning Apprise API setup"
 
-{webhook_notification}
+    # ========== INPUT VALIDATION ==========
+    echo "[2/12] Validating inputs..."
+    notify_webhook "provisioning" "validation" "Validating domain and inputs"
 
-# === Validate domain format ===
-if ! [[ "${{DOMAIN_NAME}}" =~ ^[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}$ ]]; then
-    echo "ERROR: Invalid domain format"
-    notify_webhook "failed" "validation" "Invalid domain format"
-    exit 1
-fi
+    if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        echo "ERROR: Invalid domain format: $DOMAIN"
+        notify_webhook "failed" "validation" "Invalid domain format: $DOMAIN"
+        exit 1
+    fi
 
-notify_webhook "provisioning" "starting" "Beginning system setup"
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
+        echo "ERROR: Invalid port number: $PORT (must be 1024-65535)"
+        notify_webhook "failed" "validation" "Invalid port: $PORT"
+        exit 1
+    fi
 
-echo "[1/10] Updating system and installing base dependencies..."
-notify_webhook "provisioning" "system_update" "Updating system packages"
-apt-get update
-apt-get install -y --no-install-recommends \\
-    curl git nginx certbot python3-certbot-nginx \\
-    docker.io ufw build-essential cmake autoconf automake libtool pkg-config \\
-    libmicrohttpd-dev libjansson-dev libssl-dev libsofia-sip-ua-dev \\
-    libglib2.0-dev libopus-dev libogg-dev libcurl4-openssl-dev libconfig-dev \\
-    libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+    # ========== SYSTEM DEPENDENCIES ==========
+    echo "[3/12] Installing system dependencies..."
+    notify_webhook "provisioning" "system_dependencies" "Installing base packages"
 
-echo "[2/10] Installing libsrtp..."
-notify_webhook "provisioning" "install_libsrtp" "Installing libsrtp"
-cd /tmp
-wget {libsrtp_tar_url} -O libsrtp.tar.gz
-tar xzf libsrtp.tar.gz
-cd libsrtp-2.2.0
-./configure --prefix=/usr --enable-openssl
-make shared_library && make install
-ldconfig
-cd -
+    export DEBIAN_FRONTEND=noninteractive
 
-echo "[3/10] Installing usrsctp..."
-notify_webhook "provisioning" "install_usrsctp" "Installing usrsctp"
-cd /tmp
-git clone {usrsctp_git_url}
-cd usrsctp
-./bootstrap
-./configure --prefix=/usr
-make && make install
-ldconfig
-cd -
+    notify_webhook "provisioning" "apt_update" "Running apt-get update"
+    apt-get update -q || { notify_webhook "failed" "apt_update" "apt-get update failed"; exit 1; }
 
-echo "[4/10] Installing libwebsockets..."
-notify_webhook "provisioning" "install_libwebsockets" "Installing libwebsockets"
-cd /tmp
-git clone {libwebsockets_git_url}
-cd libwebsockets
-git checkout v4.3-stable
-mkdir build
-cd build
-cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS="-fpic" ..
-make && make install
-ldconfig
-cd -
+    notify_webhook "provisioning" "apt_upgrade" "Running apt-get upgrade"
+    apt-get upgrade -y -q || { notify_webhook "failed" "apt_upgrade" "apt-get upgrade failed"; exit 1; }
 
-echo "[5/10] Installing libnice..."
-notify_webhook "provisioning" "install_libnice" "Installing libnice"
-cd /tmp
-git clone {libnice_git_url}
-cd libnice
-./autogen.sh
-./configure --prefix=/usr
-make && make install
-ldconfig
-cd -
+    notify_webhook "provisioning" "apt_install" "Installing required packages"
+    apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq \
+        make net-tools python3-certbot-nginx openssl ufw || { notify_webhook "failed" "apt_install" "apt-get install failed"; exit 1; }
 
-echo "[6/10] Setting up installation directory..."
-notify_webhook "provisioning" "setup_directories" "Creating installation directories"
-mkdir -p "${{INSTALL_DIR}}"
-mkdir -p "${{LOG_DIR}}"
-cd "${{INSTALL_DIR}}"
+    # ========== DOCKER INSTALLATION ==========
+    echo "[4/12] Installing Docker..."
+    notify_webhook "provisioning" "docker_install" "Installing Docker engine"
+    sleep 5
 
-echo "[7/10] Installing Moonlight Embedded..."
-notify_webhook "provisioning" "install_moonlight" "Installing Moonlight Embedded"
-mkdir -p "${{MOONLIGHT_EMBEDDED_DIR}}"
-if [ ! -d "${{MOONLIGHT_EMBEDDED_DIR}}/.git" ]; then
-    git clone {github_url} "${{MOONLIGHT_EMBEDDED_DIR}}"
-fi
+    # Ensure prerequisites exist
+    apt-get install -y -q ca-certificates curl gnupg lsb-release || {
+        notify_webhook "failed" "docker_prereq" "Failed to install Docker prerequisites"
+        exit 1
+    }
 
-cd "${{MOONLIGHT_EMBEDDED_DIR}}"
-git pull
-mkdir -p build
-cd build
-cmake .. && make -j$(nproc) && make install
+    # Remove old versions (ignore errors)
+    apt-get remove -y docker docker-engine docker.io containerd runc >/dev/null 2>&1 || true
 
-echo "[8/10] Installing Janus Gateway..."
-notify_webhook "provisioning" "install_janus" "Installing Janus Gateway"
-if [ ! -d "${{JANUS_INSTALL_DIR}}" ]; then
-    git clone {janus_git_url} /tmp/janus-gateway
-    cd /tmp/janus-gateway
-    sh autogen.sh
-    ./configure --prefix="${{JANUS_INSTALL_DIR}}" --enable-post-processing \\
-        --enable-data-channels --enable-websockets --enable-rest \\
-        --enable-plugin-streaming
-    make
-    make install
-    make configs
-    
-    # Configure Janus for Moonlight streaming
-    cat > ${{JANUS_INSTALL_DIR}}/etc/janus/janus.plugin.streaming.jcfg <<EOF
-streaming: {{
-    enabled: true,
-    type: "rtp",
-    audio: true,
-    video: true,
-    videoport: 5004,
-    videopt: 96,
-    videortpmap: "H264/90000",
-    audiopt: 111,
-    audiortpmap: "opus/48000/2",
-    secret: "moonlightstream",
-    permanent: true
-}}
-EOF
-fi
+    # Setup Docker's official GPG key
+    mkdir -p /etc/apt/keyrings
+    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
+        echo "❌ Failed to download Docker GPG key"
+        notify_webhook "failed" "docker_gpg" "Failed to download Docker GPG key"
+        exit 1
+    fi
+    chmod a+r /etc/apt/keyrings/docker.gpg
 
-echo "[9/10] Setting up systemd services..."
-notify_webhook "provisioning" "setup_services" "Configuring system services"
+    ARCH=$(dpkg --print-architecture)
+    CODENAME=$(lsb_release -cs)
+    echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list
 
-# Janus service
-cat > /etc/systemd/system/janus.service <<EOF
-[Unit]
-Description=Janus WebRTC Server
-After=network.target
+    # Update and install Docker with retries
+    for i in {1..3}; do
+        if apt-get update -q && apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+            break
+        fi
+        echo "⚠️ Docker install attempt $i failed; retrying..."
+        sleep 5
+        [ $i -eq 3 ] && {
+            echo "❌ Docker installation failed after 3 attempts"
+            notify_webhook "failed" "docker_install" "Docker install failed after 3 attempts"
+            exit 1
+        }
+    done
 
-[Service]
-Type=simple
-User=root
-ExecStart=${{JANUS_INSTALL_DIR}}/bin/janus
-Restart=on-failure
-RestartSec=5
+    # Enable and start Docker
+    systemctl enable docker
+    systemctl start docker
 
-[Install]
-WantedBy=multi-user.target
+    # Verify Docker works
+    if ! docker info >/dev/null 2>&1; then
+        echo "❌ Docker daemon did not start correctly"
+        notify_webhook "failed" "docker_daemon" "Docker daemon failed to start"
+        journalctl -u docker --no-pager | tail -n 50 || true
+        exit 1
+    fi
+
+    echo "✅ Docker installed and running"
+    notify_webhook "provisioning" "docker_ready" "Docker installed successfully"
+    sleep 5
+
+    # ========== APPRISE DIRECTORY SETUP ==========
+    echo "[5/12] Setting up Apprise directories..."
+    notify_webhook "provisioning" "directory_setup" "Creating Apprise directory structure"
+    sleep 5
+
+    mkdir -p "$APPRISE_DIR"/{config,ssl} || {
+        echo "ERROR: Failed to create Apprise directories"
+        notify_webhook "failed" "directory_creation" "Failed to create Apprise directories"
+        exit 1
+    }
+
+    # Set proper permissions for config directory
+    chown -R 33:33 "$APPRISE_DIR"/config || {
+        echo "WARNING: Could not change ownership of config directory"
+    }
+    sleep 5
+
+    # ========== DOCKER COMPOSE CONFIGURATION ==========
+    echo "[6/12] Creating Docker Compose configuration..."
+    notify_webhook "provisioning" "docker_compose" "Configuring Docker Compose"
+    sleep 5
+
+    cat > "$APPRISE_DIR/docker-compose.yml" <<EOF
+version: "3.8"
+services:
+  apprise:
+    image: caronc/apprise:latest
+    container_name: apprise-api
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config:/config
+    environment:
+      - APPRISE_DENY_SERVICES=windows,dbus,gnome,macos,syslog
+      - ALLOWED_HOSTS=*
+      - LOG_LEVEL=INFO
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/details"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 EOF
 
-# Moonlight streaming service
-cat > /etc/systemd/system/moonlight-stream.service <<EOF
-[Unit]
-Description=Moonlight to Janus Streaming Service
-After=network.target janus.service
+    sleep 5
+    notify_webhook "provisioning" "docker_compose_ready" "Docker Compose configuration created"
 
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/moonlight stream ${{VM_IP}} -app Steam -codec h264 -bitrate 20000 -fps 60 -unsupported -remote -rtp 127.0.0.1 5004 5005
-Restart=on-failure
-RestartSec=5
+    sleep 5
+    echo "[7/12] Starting Apprise API..."
+    notify_webhook "provisioning" "apprise_start" "Starting Apprise API container"
 
-[Install]
-WantedBy=multi-user.target
-EOF
+    cd "$APPRISE_DIR"
+    docker compose up -d || {
+        echo "ERROR: Failed to start Apprise container"
+        notify_webhook "failed" "container_start" "Failed to start Apprise container"
+        exit 1
+    }
 
-systemctl daemon-reload
-systemctl enable janus.service moonlight-stream.service
-systemctl start janus.service moonlight-stream.service
+    sleep 10
 
-echo "[10/10] Configuring firewall and SSL..."
-notify_webhook "provisioning" "security_setup" "Configuring firewall and SSL"
-ufw allow 22/tcp
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 5004:5005/udp
-ufw allow 7088/tcp
-ufw allow 8088/tcp
-ufw allow 10000-10200/udp
-ufw --force enable
+    # Wait for Apprise to become ready
+    echo "[8/12] Waiting for Apprise API to become ready..."
+    notify_webhook "provisioning" "apprise_readiness" "Waiting for Apprise API to become ready..."
 
-mkdir -p /etc/letsencrypt
-curl -s {letsencrypt_options_url} > /etc/letsencrypt/options-ssl-nginx.conf
-curl -s {ssl_dhparams_url} > /etc/letsencrypt/ssl-dhparams.pem
+    READY_TIMEOUT=300   # 5 minutes
+    SLEEP_INTERVAL=5
+    elapsed=0
+    READY=false
 
-notify_webhook "provisioning" "ssl_setup" "Requesting SSL certificates"
-certbot --nginx -d "${{DOMAIN_NAME}}" --staging --agree-tos --email "${{ADMIN_EMAIL}}" --redirect --no-eff-email
+    # Ensure container exists
+    echo "⏳ Waiting for container 'apprise-api' to appear..."
+    while ! docker ps -a --format '{{.Names}}' | grep -wq apprise-api; do
+        sleep $SLEEP_INTERVAL
+        elapsed=$((elapsed + SLEEP_INTERVAL))
+        [ $elapsed -ge $READY_TIMEOUT ] && {
+            echo "❌ Timeout waiting for container 'apprise-api' to appear"
+            notify_webhook "failed" "service_start" "Timeout waiting for apprise container"
+            docker ps -a
+            docker compose logs --tail=200
+            exit 1
+        }
+    done
 
-rm -f /etc/nginx/sites-enabled/default
+    # Reset timer
+    elapsed=0
 
-cat > /etc/nginx/sites-available/moonlightembed <<EOF
-server {{
+    echo "🔎 Checking Apprise API container health..."
+    while [ $elapsed -lt $READY_TIMEOUT ]; do
+        # Check container state first
+        state=$(docker inspect -f '{{.State.Status}}' apprise-api 2>/dev/null || echo "unknown")
+        echo "   -> state=$state (elapsed ${elapsed}s)"
+
+        # Health check via API endpoint
+        if curl -fsS "http://127.0.0.1:8000/details" >/dev/null 2>&1; then
+            READY=true
+            break
+        fi
+
+        # If container exited, bail early
+        if [ "$state" = "exited" ] || [ "$state" = "dead" ]; then
+            echo "❌ Container 'apprise-api' is $state. Dumping logs:"
+            docker logs --tail=200 apprise-api || true
+            notify_webhook "failed" "service_start" "Apprise container is $state"
+            exit 1
+        fi
+
+        sleep $SLEEP_INTERVAL
+        elapsed=$((elapsed + $SLEEP_INTERVAL))
+    done
+
+    if [ "$READY" = false ]; then
+        echo "❌ Apprise API failed to become ready in $READY_TIMEOUT seconds"
+        docker ps -a
+        docker compose logs --tail=500
+        notify_webhook "failed" "service_start" "Apprise API readiness timeout"
+        exit 1
+    fi
+
+    echo "✅ Apprise API is running and healthy"
+    notify_webhook "provisioning" "service_start" "✅ Apprise API is running and healthy"
+    sleep 5
+
+    # ========== FIREWALL CONFIGURATION ==========
+    echo "[9/12] Configuring firewall..."
+    notify_webhook "provisioning" "firewall" "Setting up UFW firewall"
+
+    if ! ufw status | grep -q inactive; then
+        echo "UFW already active; adding rules"
+    fi
+
+    ufw allow 22/tcp 
+    ufw allow 80/tcp 
+    ufw allow 443/tcp
+    ufw allow "$PORT"/tcp
+    ufw --force enable
+
+    # ========== NGINX CONFIG + SSL ==========
+    echo "[10/12] Configuring nginx reverse proxy with SSL..."
+    notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
+
+    rm -f /etc/nginx/sites-enabled/default
+    rm -f /etc/nginx/sites-available/apprise
+
+    # Download Let's Encrypt recommended configs
+    mkdir -p /etc/letsencrypt
+    curl -s "__LET_OPTIONS_URL__" -o /etc/letsencrypt/options-ssl-nginx.conf
+    curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
+
+    # Temporary HTTP server for certbot validation
+    cat > /etc/nginx/sites-available/apprise <<'EOF_TEMP'
+server {
     listen 80;
-    server_name {DOMAIN_NAME};
+    server_name __DOMAIN__;
+    root /var/www/html;
+
+    location / {
+        return 200 'Certbot validation ready';
+        add_header Content-Type text/plain;
+    }
+}
+EOF_TEMP
+
+    ln -sf /etc/nginx/sites-available/apprise /etc/nginx/sites-enabled/apprise
+    nginx -t && systemctl restart nginx
+
+    # Create webroot for certbot
+    mkdir -p /var/www/html
+    chown www-data:www-data /var/www/html
+
+    # Attempt to obtain SSL certificate
+    if ! certbot --nginx -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__"; then
+        echo "⚠️ Certbot nginx plugin failed; trying webroot fallback"
+        systemctl start nginx || true
+        certbot certonly --webroot -w /var/www/html -d "__DOMAIN__" --non-interactive --agree-tos -m "__ADMIN_EMAIL__" || true
+    fi
+
+    # Fail-safe check
+    if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+        echo "⚠️ SSL certificate not found! Continuing without SSL..."
+        notify_webhook "warning" "ssl" "Apprise Certbot failed, SSL not installed for __DOMAIN__"
+        
+        # HTTP-only configuration
+        cat > /etc/nginx/sites-available/apprise <<'EOF_HTTP'
+server {
+    listen 80;
+    server_name __DOMAIN__;
+
+    client_max_body_size __MAX_UPLOAD_SIZE_MB__;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300;
+        proxy_connect_timeout 300;
+        proxy_send_timeout 300;
+    }
+}
+EOF_HTTP
+    else
+        echo "✅ SSL certificate obtained"
+        notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
+
+        # Replace nginx config for HTTPS proxy only if SSL exists
+        cat > /etc/nginx/sites-available/apprise <<'EOF_SSL'
+server {
+    listen 80;
+    server_name __DOMAIN__;
     return 301 https://$host$request_uri;
-}}
-
-server {{
+}
+server {
     listen 443 ssl http2;
-    server_name {DOMAIN_NAME};
+    server_name __DOMAIN__;
 
-    ssl_certificate /etc/letsencrypt/live/{DOMAIN_NAME}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{DOMAIN_NAME}/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    location / {{
-        proxy_pass http://localhost:8088;
-        proxy_set_header Host \$host;
-    }}
+    client_max_body_size __MAX_UPLOAD_SIZE_MB__;
 
-    location /janus-ws {{
-        proxy_pass http://localhost:7088;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }}
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300;
+        proxy_connect_timeout 300;
+        proxy_send_timeout 300;
+    }
+}
+EOF_SSL
+    fi
 
-    client_max_body_size 1024M;
-}}
-EOF
+    ln -sf /etc/nginx/sites-available/apprise /etc/nginx/sites-enabled/apprise
+    nginx -t && systemctl reload nginx
 
-ln -sf /etc/nginx/sites-available/moonlightembed /etc/nginx/sites-enabled/
-nginx -t && systemctl restart nginx
+    # ========== SSL RENEWAL SETUP ==========
+    echo "[11/12] Setting up SSL certificate renewal..."
+    notify_webhook "provisioning" "ssl_renewal" "Setting up Certbot renewal cron"
 
-notify_webhook "completed" "finished" "Setup completed successfully"
+    # Setup cron for renewal (runs daily and reloads nginx on change)
+    (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
 
-echo "============================================================"
-echo "✅ Moonlight to Browser Streaming Setup Complete!"
-echo "============================================================"
-echo ""
-echo "🌐 Connection Information:"
-echo "------------------------------------------------------------"
-echo "🔗 Moonlight PIN Service: https://pin.{DOMAIN_NAME}"
-echo "🔑 PIN: {ADMIN_PASSWORD}"
-echo "------------------------------------------------------------"
-echo ""
-echo "🎥 Streaming Access:"
-echo "------------------------------------------------------------"
-echo "1. Open https://{DOMAIN_NAME}/janus/streaming/test.html"
-echo "2. Use these settings:"
-echo "   - Video: H.264"
-echo "   - Audio: Opus"
-echo "   - Port: 5004"
-echo "   - Secret: moonlightstream"
-echo "------------------------------------------------------------"
-echo ""
-echo "⚙️ Service Status Commands:"
-echo "------------------------------------------------------------"
-echo "Janus Gateway: systemctl status janus.service"
-echo "Moonlight Stream: systemctl status moonlight-stream.service"
-echo "Nginx: systemctl status nginx"
-echo "------------------------------------------------------------"
-echo ""
-echo "🔧 IMPORTANT Setup Notes:"
-echo "------------------------------------------------------------"
-echo "1. On your Windows 10 machine:"
-echo "   - Install Sunshine from https://github.com/LizardByte/Sunshine"
-echo "   - Use PIN: {ADMIN_PASSWORD} when pairing"
-echo "2. The stream will be available at the Janus test page"
-echo "============================================================"
-'''
-    return script_template
+    # ========== FINAL CHECKS ==========
+    echo "[12/12] Final verification..."
+    notify_webhook "provisioning" "verification" "Performing verification checks"
+
+    if ! nginx -t; then
+        echo "ERROR: nginx config test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
+        exit 1
+    fi
+
+    # Test API connectivity
+    echo "Testing Apprise API connectivity..."
+    if curl -fsS "http://127.0.0.1:8000/details" >/dev/null 2>&1; then
+        echo "✅ Apprise API is responding internally"
+        notify_webhook "provisioning" "verification" "Apprise API internal check passed"
+    else
+        echo "❌ Apprise API internal check failed"
+        notify_webhook "warning" "verification" "Apprise API internal check failed"
+    fi
+
+    # Test external access if SSL is configured
+    if [ -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
+        HTTPS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" https://__DOMAIN__/details || echo "000")
+        echo "HTTPS API check returned: $HTTPS_RESPONSE"
+        if [ "$HTTPS_RESPONSE" = "200" ]; then
+            notify_webhook "provisioning" "verification" "HTTPS API access working"
+        else
+            notify_webhook "warning" "verification" "HTTPS API check returned $HTTPS_RESPONSE"
+        fi
+    else
+        HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://__DOMAIN__/details || echo "000")
+        echo "HTTP API check returned: $HTTP_RESPONSE"
+        if [ "$HTTP_RESPONSE" = "200" ]; then
+            notify_webhook "provisioning" "verification" "HTTP API access working"
+        else
+            notify_webhook "warning" "verification" "HTTP API check returned $HTTP_RESPONSE"
+        fi
+    fi
+
+    # Final nginx reload
+    if nginx -t; then
+        systemctl reload nginx
+        echo "✅ Nginx configuration test passed"
+        notify_webhook "provisioning" "verification" "✅ Nginx configuration test passed"
+    else
+        echo "❌ Nginx configuration test failed"
+        notify_webhook "failed" "verification" "Nginx config test failed"
+        exit 1
+    fi
+                                      
+    notify_webhook "provisioning" "verification" "✅ Apprise API installed"
+
+
+    sleep 10
+
+    cat <<EOF_FINAL
+=============================================
+✅ Apprise API Setup Complete!
+---------------------------------------------
+🔗 Access URL: https://__DOMAIN__
+📊 API Status: https://__DOMAIN__/details
+🔧 Web Interface: https://__DOMAIN__/
+---------------------------------------------
+⚙️ Useful commands:
+- Check status: cd $APPRISE_DIR && docker compose ps
+- View logs: cd $APPRISE_DIR && docker compose logs -f
+- Restart: cd $APPRISE_DIR && docker compose restart
+- Update: cd $APPRISE_DIR && docker compose pull && docker compose up -d
+---------------------------------------------
+📝 API Usage Examples:
+
+# Stateless notification
+curl -X POST https://__DOMAIN__/notify \\
+  -d "urls=mailto://user:pass@gmail.com&body=Test Message"
+
+# Add configuration
+curl -X POST https://__DOMAIN__/add/myconfig \\
+  -d "urls=mailto://user:pass@gmail.com,discord://webhook_id/webhook_token"
+
+# Send to saved config
+curl -X POST https://__DOMAIN__/notify/myconfig \\
+  -d "body=Notification via saved config&title=Alert"
+
+---------------------------------------------
+Enjoy your new Apprise API instance!
+=============================================
+EOF_FINAL
+    """)
+
+    # ========== WEBHOOK FUNCTION HANDLING ==========
+    if tokens["__WEBHOOK_URL__"]:
+        webhook_fn = textwrap.dedent(r"""
+        notify_webhook() {
+            local status="$1"
+            local step="$2"
+            local message="$3"
+
+            # Build JSON payload
+            JSON_PAYLOAD=$(cat <<JSON_EOF
+        {
+            "vm_name": "$(hostname)",
+            "status": "$status",
+            "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+            "location": "__LOCATION__",
+            "resource_group": "__RESOURCE_GROUP__",
+            "details": {
+                "step": "$step",
+                "message": "$message"
+            }
+        }
+        JSON_EOF
+            )
+
+            # Send webhook with retry logic
+            curl -s -X POST "__WEBHOOK_URL__" \
+                -H "Content-Type: application/json" \
+                -d "$JSON_PAYLOAD" \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --retry 2 \
+                --retry-delay 5 \
+                --write-out "Webhook HTTP status: %{http_code}\n" \
+                --output /dev/null || true
+        }
+        """)
+    else:
+        webhook_fn = textwrap.dedent(r"""
+        notify_webhook() {
+            # Webhook disabled - stub function
+            return 0
+        }
+        """)
+
+    # ========== TOKEN REPLACEMENT ==========
+    # Replace webhook function first
+    final = script_template.replace("__WEBHOOK_FUNCTION__", webhook_fn)
+
+    # Replace all other tokens
+    for token, value in tokens.items():
+        final = final.replace(token, value)
+
+    # Replace webhook-specific tokens in the webhook function
+    final = final.replace("__LOCATION__", tokens["__LOCATION__"])
+    final = final.replace("__RESOURCE_GROUP__", tokens["__RESOURCE_GROUP__"])
+    final = final.replace("__WEBHOOK_URL__", tokens["__WEBHOOK_URL__"])
+    # Replace SSL configuration URLs
+    final = final.replace("__LET_OPTIONS_URL__", tokens["__LET_OPTIONS_URL__"])
+    final = final.replace("__SSL_DHPARAMS_URL__", tokens["__SSL_DHPARAMS_URL__"])
+
+    # Replace CERTBOT_CRON token
+    certbot_cron = "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'"
+    final = final.replace("__CERTBOT_CRON__", certbot_cron)
+
+    # Replace remaining tokens for admin email, domain, port
+    final = final.replace("__ADMIN_EMAIL__", tokens["__ADMIN_EMAIL__"])
+    final = final.replace("__DOMAIN__", tokens["__DOMAIN__"])
+    final = final.replace("__PORT__", tokens["__PORT__"])
+
+    return final

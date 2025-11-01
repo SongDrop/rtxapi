@@ -472,7 +472,7 @@ EOF_SSL
     if nginx -t; then
         systemctl reload nginx
         echo "✅ Nginx configuration test passed"
-        notify_webhook "success" "verification" "✅ Nginx configuration test passed"
+        notify_webhook "provisioning" "verification" "✅ Nginx configuration test passed"
     else
         echo "❌ Nginx configuration test failed"
         notify_webhook "failed" "verification" "Nginx config test failed"
@@ -512,7 +512,7 @@ EOF_SSL
 
     # 4️⃣ Final webhook summary
     if [[ "$GIT_LFS_STATUS" == "ok" ]]; then
-        notify_webhook "success" "git_lfs_check" "✅ Git LFS is installed, initialized, and configured properly"
+        notify_webhook "provisioning" "git_lfs_check" "✅ Git LFS is installed, initialized, and configured properly"
     else
         notify_webhook "failed" "git_lfs_check" "❌ Git LFS check failed: $GIT_LFS_STATUS"
     fi
