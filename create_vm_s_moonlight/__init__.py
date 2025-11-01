@@ -44,18 +44,7 @@ image_reference = {
     'exactVersion': '24.04.202409120'
 }
 
-# Ports to open for application [without this app can't run on domain]
-PORTS_TO_OPEN = [
-    22,     # SSH
-    80,     # HTTP
-    443,    # HTTPS
-    8000,   # Optional app port (if used)
-    3000,   # Optional app port (if used)
-    8889,
-    8890,
-    7088,
-    8088
-]
+PORTS_TO_OPEN = [22, 80, 443, 8000, 3000, 8889, 8890, 7088, 8088, 8080]
 
 class bcolors:
     HEADER = '\033[95m'
@@ -180,8 +169,8 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
 
         # App constants
         ADMIN_EMAIL = f"admin@{domain}"
-        ADMIN_PASSWORD = "password_on_install"
-        FRONTEND_PORT = 3000
+        ADMIN_PASSWORD = "MyPass1234!"
+        FRONTEND_PORT = 8080
         BACKEND_PORT = 8000
         storage_account_base = vm_name
 
@@ -376,8 +365,7 @@ async def provision_vm_background(
         # Generate and upload setup script
         print_info("Generating installation setup script...")
         sh_script = generate_setup.generate_setup(
-            fqdn, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT,
-            "/usr/local/bin/dns-hook-script.sh",hook_url,"*",location, resource_group
+            fqdn, ADMIN_EMAIL, ADMIN_PASSWORD, FRONTEND_PORT, hook_url,location, resource_group
         )
         record_name = subdomain.rstrip('.') if subdomain else '@'
         a_records = [record_name]
@@ -1124,7 +1112,7 @@ async def provision_vm_background(
             recipient_emails = [e.strip() for e in RECIPIENT_EMAILS.split(',')]
             
             html_content = html_email.HTMLEmail(
-                logo_url="https://i.postimg.cc/YCd8MqN3/forgejo.png",
+                logo_url="https://i.postimg.cc/NMdrr5M4/zammad.png",
                 ip_address=public_ip,
                 created_at=datetime.utcnow().isoformat(),
                 link1=f"https://{fqdn}",
@@ -1175,9 +1163,6 @@ async def provision_vm_background(
                     }
                 }
             )
-
-        # Wait for cleanup finishing
-        await asyncio.sleep(10)
 
         # Final success update
         await post_status_update(

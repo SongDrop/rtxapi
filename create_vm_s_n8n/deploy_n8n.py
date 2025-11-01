@@ -3,43 +3,28 @@ import textwrap
 def generate_setup(
     DOMAIN_NAME,
     ADMIN_EMAIL,
-    MAILCOW_ADMIN_PASSWORD,
-    PORT=80,
+    ADMIN_PASSWORD,
+    PORT=5678,
     WEBHOOK_URL="",
     location="",
     resource_group="",
-    DATA_DIR="/opt/mailcow-dockerized",
-    DOCKER_COMPOSE_VERSION="v2.24.5",
+    DATA_DIR="/opt/n8n",
+    TIMEZONE="UTC",
+    DOCKER_COMPOSE_VERSION="v2.27.0",
     DNS_HOOK_SCRIPT="/usr/local/bin/dns-hook-script.sh"
 ):
     """
-    Returns a full bash provisioning script for Mailcow, in Forgejo/Plane style.
+    Returns a full bash provisioning script for n8n, in Forgejo/Plane style.
     """
-
-    import re
-
-    def get_base_domain(domain):
-        domain = domain.strip('.')
-        parts = domain.split('.')
-        if len(parts) < 2:
-            raise ValueError(f"'{domain}' is not a valid FQDN to derive base domain")
-        return '.'.join(parts[-2:])
-
-    # Validate domain
-    fqdn_pattern = re.compile(r'^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
-    if not fqdn_pattern.match(DOMAIN_NAME):
-        raise ValueError(f"{DOMAIN_NAME} is not a valid FQDN (e.g., mail.example.com)")
-
-    base_domain = get_base_domain(DOMAIN_NAME)
 
     # ========== TOKEN DEFINITIONS ==========
     tokens = {
         "__DOMAIN__": DOMAIN_NAME,
-        "__BASE_DOMAIN__": base_domain,
         "__ADMIN_EMAIL__": ADMIN_EMAIL,
-        "__ADMIN_PASSWORD__": MAILCOW_ADMIN_PASSWORD,
+        "__ADMIN_PASSWORD__": ADMIN_PASSWORD,
         "__PORT__": str(PORT),
         "__DATA_DIR__": DATA_DIR,
+        "__TIMEZONE__": TIMEZONE,
         "__WEBHOOK_URL__": WEBHOOK_URL,
         "__LOCATION__": location,
         "__RESOURCE_GROUP__": resource_group,
@@ -47,7 +32,6 @@ def generate_setup(
         "__DNS_HOOK_SCRIPT__": DNS_HOOK_SCRIPT,
         "__LET_OPTIONS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot-nginx/certbot_nginx/_internal/tls_configs/options-ssl-nginx.conf",
         "__SSL_DHPARAMS_URL__": "https://raw.githubusercontent.com/certbot/certbot/master/certbot/certbot/ssl-dhparams.pem",
-        "__MAILCOW_REPO__": "https://github.com/mailcow/mailcow-dockerized.git",
     }
 
     # ========== BASE TEMPLATE ==========
@@ -56,7 +40,7 @@ def generate_setup(
     set -euo pipefail
 
     # ----------------------------------------------------------------------
-    # Mailcow Provisioning Script (Forgejo/Plane style)
+    # n8n Provisioning Script (Forgejo/Plane style)
     # ----------------------------------------------------------------------
 
     # --- Webhook Notification System ---
@@ -65,27 +49,26 @@ def generate_setup(
     trap 'notify_webhook "failed" "unexpected_error" "Script exited on line $LINENO with code $?"' ERR
 
     # --- Logging ---
-    LOG_FILE="/var/log/mailcow_setup.log"
+    LOG_FILE="/var/log/n8n_setup.log"
     exec > >(tee -a "$LOG_FILE") 2>&1
 
     # --- Environment Variables ---
     DOMAIN="__DOMAIN__"
-    BASE_DOMAIN="__BASE_DOMAIN__"
     ADMIN_EMAIL="__ADMIN_EMAIL__"
     ADMIN_PASSWORD="__ADMIN_PASSWORD__"
     PORT="__PORT__"
     DATA_DIR="__DATA_DIR__"
+    TIMEZONE="__TIMEZONE__"
     WEBHOOK_URL="__WEBHOOK_URL__"
     LOCATION="__LOCATION__"
     RESOURCE_GROUP="__RESOURCE_GROUP__"
     DNS_HOOK_SCRIPT="__DNS_HOOK_SCRIPT__"
-    MAILCOW_REPO="__MAILCOW_REPO__"
 
-    echo "[1/16] Starting Mailcow provisioning..."
-    notify_webhook "provisioning" "starting" "Beginning Mailcow email server setup"
+    echo "[1/15] Starting n8n provisioning..."
+    notify_webhook "provisioning" "starting" "Beginning n8n setup"
 
     # ========== INPUT VALIDATION ==========
-    echo "[2/16] Validating inputs..."
+    echo "[2/15] Validating inputs..."
     notify_webhook "provisioning" "validation" "Validating domain and configuration"
 
     if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
@@ -101,20 +84,17 @@ def generate_setup(
     fi
 
     # ========== SYSTEM DEPENDENCIES ==========
-    echo "[3/16] Installing system dependencies..."
+    echo "[3/15] Installing system dependencies..."
     notify_webhook "provisioning" "system_dependencies" "Installing base packages"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -q
     apt-get upgrade -y -q
-    apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq make net-tools python3-certbot-nginx openssl ufw netcat-openbsd software-properties-common apt-transport-https ca-certificates gnupg lsb-release
+    apt-get install -y -q curl git nginx certbot python3-pip python3-venv jq make net-tools python3-certbot-nginx openssl ufw
 
     # ========== DOCKER INSTALLATION ==========
-    echo "[4/16] Installing Docker..."
+    echo "[4/15] Installing Docker..."
     notify_webhook "provisioning" "docker_install" "Installing Docker engine"
     sleep 5
-
-    # Remove old docker.io package if exists
-    apt-get remove -y docker.io >/dev/null 2>&1 || true
 
     # Ensure prerequisites exist
     apt-get install -y -q ca-certificates curl gnupg lsb-release || {
@@ -180,104 +160,123 @@ def generate_setup(
     notify_webhook "provisioning" "docker_ready" "✅ Docker installed successfully"
     sleep 5
 
-    # ========== MAILCOW DIRECTORY SETUP ==========
-    echo "[5/16] Setting up Mailcow directory..."
-    notify_webhook "provisioning" "directory_setup" "Creating Mailcow directory structure"
+    # ========== N8N DIRECTORY SETUP ==========
+    echo "[5/15] Setting up n8n directory..."
+    notify_webhook "provisioning" "directory_setup" "Creating n8n directory structure"
     sleep 5
 
     mkdir -p "$DATA_DIR" || {
-        echo "ERROR: Failed to create Mailcow data directory"
-        notify_webhook "failed" "directory_creation" "Failed to create Mailcow directory"
+        echo "ERROR: Failed to create n8n data directory"
+        notify_webhook "failed" "directory_creation" "Failed to create n8n directory"
         exit 1
     }
+    chown -R 1000:1000 "$DATA_DIR"
     cd "$DATA_DIR"
-    echo "✅ Mailcow directory ready"
-    notify_webhook "provisioning" "directory_ready" "✅ Mailcow directory created successfully"
+    echo "✅ n8n directory ready"
+    notify_webhook "provisioning" "directory_ready" "✅ n8n directory created successfully"
     
     sleep 5
 
-    # ========== CLONE MAILCOW REPOSITORY ==========
-    echo "[6/16] Cloning Mailcow repository..."
-    notify_webhook "provisioning" "clone_repo" "Cloning Mailcow Dockerized repository"
+    # ========== LOCAL FILES DIRECTORY ==========
+    echo "[6/15] Creating local files directory..."
+    notify_webhook "provisioning" "local_files_setup" "Creating shared local files directory"
+    
+    LOCAL_FILES_DIR="$DATA_DIR/local-files"
+    mkdir -p "$LOCAL_FILES_DIR"
+    chown -R 1000:1000 "$LOCAL_FILES_DIR"
+    chmod 755 "$LOCAL_FILES_DIR"
+    
+    echo "✅ Local files directory created"
+    notify_webhook "provisioning" "local_files_ready" "✅ Local files directory created"
 
-    if [ -d ".git" ]; then
-        echo "⚠️ Repository exists, pulling latest changes..."
-        git pull origin master
-        notify_webhook "provisioning" "repo_updated" "✅ Mailcow repository updated"
-    else
-        git clone "$MAILCOW_REPO" .
-        echo "✅ Mailcow repository cloned"
-        notify_webhook "provisioning" "repo_cloned" "✅ Mailcow repository cloned successfully"
-    fi
+    # ========== CREATE ENVIRONMENT FILE ==========
+    echo "[7/15] Creating environment configuration..."
+    notify_webhook "provisioning" "environment_setup" "Creating n8n environment configuration"
 
-    # ========== PORT AVAILABILITY CHECK ==========
-    echo "[7/16] Checking port availability..."
-    notify_webhook "provisioning" "port_check" "Checking required ports"
+    cat > ".env" <<EOF
+# Domain Configuration
+DOMAIN_NAME=__DOMAIN__
+SSL_EMAIL=__ADMIN_EMAIL__
+GENERIC_TIMEZONE=__TIMEZONE__
 
-    CRITICAL_PORTS=(25 80 443 465 587 993 995)
-    CONFLICTS_FOUND=false
+# n8n Configuration
+N8N_HOST=\${DOMAIN_NAME}
+N8N_PORT=__PORT__
+N8N_PROTOCOL=https
+N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+N8N_RUNNERS_ENABLED=true
+WEBHOOK_URL=https://\${DOMAIN_NAME}/
+NODE_ENV=production
+TZ=__TIMEZONE__
+GENERIC_TIMEZONE=__TIMEZONE__
+EOF
 
-    for port in "${CRITICAL_PORTS[@]}"; do
-        if ss -tuln | grep -q ":$port "; then
-            echo "    ⚠️ Port $port is in use"
-            CONFLICTS_FOUND=true
-            # Try to stop common services that might use these ports
-            systemctl stop nginx 2>/dev/null || true
-            systemctl stop apache2 2>/dev/null || true
-            systemctl stop postfix 2>/dev/null || true
-            systemctl stop dovecot 2>/dev/null || true
-            fuser -k "$port/tcp" 2>/dev/null || true
-        else
-            echo "    ✅ Port $port is available"
-        fi
-    done
+    echo "✅ Environment file created"
+    notify_webhook "provisioning" "environment_ready" "✅ Environment configuration created"
 
-    if [ "$CONFLICTS_FOUND" = true ]; then
-        echo "    ⚠️ Some ports had conflicts but cleanup was attempted"
-        notify_webhook "warning" "port_conflicts" "Some ports had conflicts but cleanup attempted"
-        sleep 5
-    else
-        echo "    ✅ All required ports are available"
-        notify_webhook "provisioning" "ports_available" "✅ All required ports available"
-    fi
+    # ========== CREATE DOCKER COMPOSE FILE ==========
+    echo "[8/15] Creating Docker Compose configuration..."
+    notify_webhook "provisioning" "compose_setup" "Creating Docker Compose configuration"
 
-    # ========== GENERATE MAILCOW CONFIG ==========
-    echo "[8/16] Generating Mailcow configuration..."
-    notify_webhook "provisioning" "config_generation" "Generating Mailcow configuration"
+    cat > "docker-compose.yml" <<'EOF'
+version: '3.9'
 
-    # Generate config non-interactively
-    printf '%s\nEtc/UTC\n1\n' "$DOMAIN" | ./generate_config.sh
+services:
+  n8n:
+    container_name: n8n
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: always
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    environment:
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_HOST=${DOMAIN_NAME}
+      - N8N_PORT=${N8N_PORT:-5678}
+      - N8N_PROTOCOL=https
+      - N8N_RUNNERS_ENABLED=true
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://${DOMAIN_NAME}/
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - TZ=${GENERIC_TIMEZONE}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./local-files:/files
+    networks:
+      - n8n-network
 
-    if [ -f "mailcow.conf" ]; then
-        echo "✅ Mailcow configuration generated"
-        notify_webhook "provisioning" "config_generated" "✅ Mailcow configuration generated successfully"
-    else
-        echo "❌ Failed to generate Mailcow configuration"
-        notify_webhook "failed" "config_failed" "Failed to generate Mailcow configuration"
-        exit 1
-    fi
+volumes:
+  n8n_data:
+    driver: local
+
+networks:
+  n8n-network:
+    driver: bridge
+EOF
+
+    echo "✅ Docker Compose file created"
+    notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration ready"
 
     # ========== PRE-STARTUP CHECKS ==========
-    echo "[9/16] Running system pre-checks..."
+    echo "[9/15] Running system pre-checks..."
     notify_webhook "provisioning" "system_checks" "Running system pre-checks"
 
-    # Check available disk space (Mailcow needs significant space)
+    # Check available disk space
     echo "    Checking disk space..."
-    DISK_AVAILABLE=$(df /var/lib/docker /opt/mailcow-dockerized /tmp . | awk 'NR>1 {print $4}' | sort -n | head -1)
-    if [ "$DISK_AVAILABLE" -lt 5242880 ]; then  # Less than 5GB
+    DISK_AVAILABLE=$(df /var/lib/docker /opt/n8n /tmp . | awk 'NR>1 {print $4}' | sort -n | head -1)
+    if [ "$DISK_AVAILABLE" -lt 1048576 ]; then  # Less than 1GB
         echo "    ❌ Insufficient disk space: ${DISK_AVAILABLE}KB available"
         df -h
-        notify_webhook "failed" "low_disk_space" "Insufficient disk space for Mailcow - only ${DISK_AVAILABLE}KB available"
+        notify_webhook "failed" "low_disk_space" "Insufficient disk space - only ${DISK_AVAILABLE}KB available"
         exit 1
     fi
     notify_webhook "provisioning" "disk_check" "✅ Disk space sufficient: ${DISK_AVAILABLE}KB available"
     
-    # Check memory (Mailcow is memory intensive)
+    # Check memory
     echo "    Checking memory..."
     MEM_AVAILABLE=$(free -m | awk 'NR==2{print $7}')
-    if [ "$MEM_AVAILABLE" -lt 2048 ]; then  # Less than 2GB available
-        echo "    ⚠️ Low memory available: ${MEM_AVAILABLE}MB (Mailcow needs at least 4GB total)"
-        notify_webhook "warning" "low_memory" "Low memory available: ${MEM_AVAILABLE}MB - Mailcow recommends 4GB+"
+    if [ "$MEM_AVAILABLE" -lt 512 ]; then  # Less than 512MB
+        echo "    ⚠️ Low memory available: ${MEM_AVAILABLE}MB (n8n needs at least 1GB)"
+        notify_webhook "warning" "low_memory" "Low memory available: ${MEM_AVAILABLE}MB"
     else
         notify_webhook "provisioning" "memory_check" "✅ Memory sufficient: ${MEM_AVAILABLE}MB available"
     fi
@@ -291,9 +290,9 @@ def generate_setup(
     echo "✅ System pre-checks passed"
     notify_webhook "provisioning" "system_checks_passed" "✅ All system pre-checks passed"
 
-    # ========== START MAILCOW SERVICES ==========
-    echo "[10/16] Starting Mailcow services..."
-    notify_webhook "provisioning" "services_start" "Starting Mailcow multi-container stack"
+    # ========== START N8N SERVICES ==========
+    echo "[10/15] Starting n8n services..."
+    notify_webhook "provisioning" "services_start" "Starting n8n services"
 
     # Detect Docker Compose command
     DOCKER_COMPOSE_CMD="docker compose"
@@ -303,7 +302,7 @@ def generate_setup(
 
     # Pull images first
     echo "    Pulling Docker images..."
-    notify_webhook "provisioning" "pulling_images" "Pulling Mailcow and dependency images"
+    notify_webhook "provisioning" "pulling_images" "Pulling n8n image"
     
     if ! $DOCKER_COMPOSE_CMD pull --quiet; then
         echo "    ⚠️ Failed to pull some images, but continuing..."
@@ -314,29 +313,28 @@ def generate_setup(
     fi
 
     # Start services
-    echo "    Starting Mailcow stack..."
-    notify_webhook "provisioning" "stack_start" "Starting Mailcow email stack"
+    echo "    Starting n8n..."
+    notify_webhook "provisioning" "stack_start" "Starting n8n"
     
-    if timeout 300s $DOCKER_COMPOSE_CMD up -d; then
-        echo "    ✅ Mailcow stack started successfully"
-        notify_webhook "provisioning" "stack_started" "✅ Mailcow stack started successfully"
+    if timeout 120s $DOCKER_COMPOSE_CMD up -d; then
+        echo "    ✅ n8n started successfully"
+        notify_webhook "provisioning" "stack_started" "✅ n8n started successfully"
     else
-        echo "    ❌ Failed to start Mailcow stack"
+        echo "    ❌ Failed to start n8n"
         echo "    🔍 Docker Compose output:"
         $DOCKER_COMPOSE_CMD up -d
         echo "    🔍 Container status:"
         $DOCKER_COMPOSE_CMD ps
-        notify_webhook "failed" "stack_start_failed" "Failed to start Mailcow stack - check Docker logs"
+        notify_webhook "failed" "stack_start_failed" "Failed to start n8n - check Docker logs"
         exit 1
     fi
 
     # ========== HEALTH CHECKS ==========
-    echo "[11/16] Performing health checks..."
-    notify_webhook "provisioning" "health_checks" "Checking Mailcow services health"
+    echo "[11/15] Performing health checks..."
+    notify_webhook "provisioning" "health_checks" "Checking n8n health"
 
-    # Wait for services to initialize (Mailcow takes time to setup)
-    echo "    Waiting for Mailcow services to initialize..."
-    sleep 60
+    # Wait for services to initialize
+    sleep 30
 
     # Check container status
     echo "    Checking container status..."
@@ -352,36 +350,36 @@ def generate_setup(
         notify_webhook "warning" "containers_partial" "Some containers not running ($RUNNING_CONTAINERS/$TOTAL_CONTAINERS)"
     fi
 
-    # Check Mailcow web interface
-    echo "    Checking Mailcow web interface..."
+    # Check n8n API health
+    echo "    Checking n8n API..."
     READY=false
     for i in {1..30}; do
-        if curl -f -s -k https://localhost >/dev/null 2>&1 || \
-           curl -f -s http://localhost >/dev/null 2>&1; then
+        if curl -f -s http://localhost:$PORT/healthz >/dev/null 2>&1 || \
+           curl -f -s http://localhost:$PORT/rest/healthz >/dev/null 2>&1; then
             READY=true
             break
         fi
         if [ $((i % 6)) -eq 0 ]; then
-            echo "    Still waiting for Mailcow... (${i}s)"
-            notify_webhook "provisioning" "health_check_progress" "Waiting for Mailcow to be ready... (${i}s)"
+            echo "    Still waiting for n8n API... (${i}s)"
+            notify_webhook "provisioning" "health_check_progress" "Waiting for n8n API to be ready... (${i}s)"
         fi
         sleep 5
     done
 
     if [ "$READY" = true ]; then
-        echo "    ✅ Mailcow is responsive"
-        notify_webhook "provisioning" "mailcow_healthy" "✅ Mailcow is healthy and responsive"
+        echo "    ✅ n8n API is responsive"
+        notify_webhook "provisioning" "api_healthy" "✅ n8n API is healthy and responsive"
     else
-        echo "    ⚠️ Mailcow not fully responsive, but continuing..."
-        notify_webhook "warning" "mailcow_slow_start" "Mailcow taking longer to start, but continuing"
+        echo "    ⚠️ n8n API not fully responsive, but continuing..."
+        notify_webhook "warning" "api_slow_start" "n8n API taking longer to start, but continuing"
     fi
 
     # ========== NGINX CONFIG + SSL (Forgejo / fail-safe) ==========
-    echo "[12/16] Configuring nginx reverse proxy with SSL..."
+    echo "[12/15] Configuring nginx reverse proxy with SSL..."
     notify_webhook "provisioning" "nginx_ssl" "Configuring nginx reverse proxy with SSL..."
 
     rm -f /etc/nginx/sites-enabled/default
-    rm -f /etc/nginx/sites-available/mailcow
+    rm -f /etc/nginx/sites-available/n8n
 
     # Download Let's Encrypt recommended configs
     mkdir -p /etc/letsencrypt
@@ -389,7 +387,7 @@ def generate_setup(
     curl -s "__SSL_DHPARAMS_URL__" -o /etc/letsencrypt/ssl-dhparams.pem
 
     # Temporary HTTP server for certbot validation
-    cat > /etc/nginx/sites-available/mailcow <<'EOF_TEMP'
+    cat > /etc/nginx/sites-available/n8n <<'EOF_TEMP'
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -402,7 +400,7 @@ server {
 }
 EOF_TEMP
 
-    ln -sf /etc/nginx/sites-available/mailcow /etc/nginx/sites-enabled/mailcow
+    ln -sf /etc/nginx/sites-available/n8n /etc/nginx/sites-enabled/n8n
     nginx -t && systemctl restart nginx
 
     # Create webroot for certbot
@@ -419,13 +417,13 @@ EOF_TEMP
     # Fail-safe check
     if [ ! -f "/etc/letsencrypt/live/__DOMAIN__/fullchain.pem" ]; then
         echo "⚠️ SSL certificate not found! Continuing without SSL..."
-        notify_webhook "warning" "ssl" "Mailcow Certbot failed, SSL not installed for __DOMAIN__"
+        notify_webhook "warning" "ssl" "n8n Certbot failed, SSL not installed for __DOMAIN__"
     else
         echo "✅ SSL certificate obtained"
         notify_webhook "warning" "ssl" "✅ SSL certificate obtained"
 
         # Replace nginx config for HTTPS proxy only if SSL exists
-        cat > /etc/nginx/sites-available/mailcow <<'EOF_SSL'
+        cat > /etc/nginx/sites-available/n8n <<'EOF_SSL'
 server {
     listen 80;
     server_name __DOMAIN__;
@@ -443,7 +441,7 @@ server {
     client_max_body_size 100M;
 
     location / {
-        proxy_pass https://localhost;
+        proxy_pass http://127.0.0.1:__PORT__;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -453,59 +451,37 @@ server {
         proxy_read_timeout 86400;
         proxy_buffering off;
         proxy_request_buffering off;
-        
-        # Mailcow specific headers
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header X-Forwarded-Server $host;
     }
 }
 EOF_SSL
 
-        ln -sf /etc/nginx/sites-available/mailcow /etc/nginx/sites-enabled/mailcow
+        ln -sf /etc/nginx/sites-available/n8n /etc/nginx/sites-enabled/n8n
         nginx -t && systemctl reload nginx
     fi
 
-    echo "[13/16] Setup Cron for renewal..."
-    notify_webhook "provisioning" "cron_setup" "Setting up SSL certificate renewal"
+    echo "[13/15] Setup Cron for renewal..."
+    notify_webhook "provisioning" "provisioning" "Setup Cron for renewal..."
          
     # Setup cron for renewal (runs daily and reloads nginx on change)
     (crontab -l 2>/dev/null | grep -v -F "__CERTBOT_CRON__" || true; echo "0 3 * * * /usr/bin/certbot renew --quiet --post-hook 'systemctl reload nginx'") | crontab -
 
     # ========== FIREWALL CONFIGURATION ==========
-    echo "[14/16] Configuring firewall..."
-    notify_webhook "provisioning" "firewall" "Setting up UFW for email services"
+    echo "[14/15] Configuring firewall..."
+    notify_webhook "provisioning" "firewall" "Setting up UFW"
 
-    # Email service ports
-    ufw allow 22/tcp    # SSH
-    ufw allow 25/tcp    # SMTP
-    ufw allow 465/tcp   # SMTPS
-    ufw allow 587/tcp   # Submission
-    ufw allow 110/tcp   # POP3
-    ufw allow 995/tcp   # POP3S
-    ufw allow 143/tcp   # IMAP
-    ufw allow 993/tcp   # IMAPS
-    ufw allow 4190/tcp  # ManageSieve
-    ufw allow 80/tcp    # HTTP
-    ufw allow 443/tcp   # HTTPS
-
-    # Allow Docker bridge network traffic
-    ufw allow in on docker0
-    ufw allow out on docker0
-
-    # Outbound email traffic
-    ufw allow out 25/tcp
-    ufw allow out 53
-    ufw allow out 443/tcp
-    ufw allow out 587/tcp
-
+    # SSH access
+    ufw allow 22/tcp
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+    ufw allow "$PORT"/tcp
     ufw --force enable
 
     echo "✅ Firewall configured"
-    notify_webhook "provisioning" "firewall_ready" "✅ UFW configured with email service ports"
+    notify_webhook "provisioning" "firewall_ready" "✅ UFW configured with required ports"
 
     # ========== FINAL VERIFICATION ==========
-    echo "[15/16] Final verification..."
-    notify_webhook "provisioning" "final_verification" "Performing final verification"
+    echo "[15/15] Final verification..."
+    notify_webhook "provisioning" "verification" "Performing verification checks"
 
     if ! nginx -t; then
         echo "ERROR: nginx config test failed"
@@ -538,57 +514,22 @@ EOF_SSL
     echo "📊 Final container status:"
     $DOCKER_COMPOSE_CMD ps
 
-    # Test web interface accessibility
-    echo "🔍 Testing web interface..."
-    if curl -f -s -k "https://$DOMAIN" >/dev/null 2>&1; then
-        echo "    ✅ Mailcow web interface accessible via domain"
-        notify_webhook "provisioning" "web_accessible" "✅ Mailcow web interface accessible via domain"
-    else
-        echo "    ⚠️ Mailcow not immediately accessible via domain (may need DNS propagation)"
-        notify_webhook "warning" "domain_check_delayed" "Mailcow domain access may need DNS propagation"
-    fi
-
-    echo "[16/16] Displaying DNS configuration..."
-    notify_webhook "provisioning" "dns_config" "Displaying DNS configuration instructions"
-
-    echo "🎉 Mailcow deployment completed successfully!"
-    notify_webhook "success" "deployment_complete" "✅ Mailcow deployment completed successfully"
+    echo "🎉 n8n deployment completed successfully!"
+    notify_webhook "success" "deployment_complete" "✅ n8n deployment completed successfully"
 
     cat <<EOF_SUMMARY
 =============================================
-📧 Mailcow Email Server Deployment Complete!
+🚀 n8n Deployment Complete!
 🔗 Access URL: https://$DOMAIN
 📧 Admin email: $ADMIN_EMAIL
-🔐 Admin password: $ADMIN_PASSWORD
+⏰ Timezone: $TIMEZONE
 ⚙️ Useful commands:
 - Status: cd $DATA_DIR && docker compose ps
 - Logs: cd $DATA_DIR && docker compose logs -f
 - Restart: cd $DATA_DIR && docker compose restart
 - Update: cd $DATA_DIR && docker compose pull && docker compose up -d
 - Stop: cd $DATA_DIR && docker compose down
-
-📋 IMPORTANT DNS RECORDS to configure:
-A Record: $DOMAIN -> Your Server IP
-CNAME: autodiscover -> $DOMAIN
-CNAME: autoconfig -> $DOMAIN
-MX Record for $BASE_DOMAIN: $DOMAIN (priority 10)
-SRV Record: _autodiscover._tcp -> 0 5 443 $DOMAIN
-TXT Record (SPF): "v=spf1 mx -all"
-TXT Record (_DMARC): "v=DMARC1; p=quarantine; adkim=s; aspf=s"
-
-🔐 After setup, add these from Mailcow UI:
-- TLSA for _25._tcp.$DOMAIN
-- TXT for dkim._domainkey.$BASE_DOMAIN
-
-📊 Services included:
-  • Postfix (SMTP)
-  • Dovecot (IMAP/POP3)
-  • Redis (Caching)
-  • Nginx (Web)
-  • PHP-FPM
-  • SOGo (Groupware)
-  • Rspamd (Spam filter)
-  • ClamAV (Virus scanner)
+📁 Local files: $LOCAL_FILES_DIR
 =============================================
 EOF_SUMMARY
     """)
