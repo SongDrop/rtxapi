@@ -198,8 +198,7 @@ services:
       DAGU_DAGS_DIR: /etc/dagu/dags
       DAGU_DATA_DIR: /var/lib/dagu/data
       DAGU_LOG_DIR: /var/lib/dagu/logs
-      DAGU_UI_NAVBAR_TITLE: Dagu Workflows
-      DAGU_UI_NAVBAR_COLOR: "royalblue"
+      DAGU_UI_NAVBAR_TITLE: Dagu
       DAGU_SCHEDULER_PORT: 8090
       DAGU_QUEUE_ENABLED: "true"
     volumes:
@@ -316,9 +315,13 @@ EOF
 
     mkdir -p dags
 
+    # Set proper permissions for Dagu data directories
+    chown -R 1000:1000 data logs
+    chmod -R 755 data logs
+    
     # Simple sequential workflow
-    cat > "dags/hello.yaml" <<'EOF'
-name: Hello World
+    cat > "dags/hello-world.yaml" <<'EOF'
+name: hello-world
 description: A simple sequential workflow
 schedule: "0 9 * * *"  # Run daily at 9 AM
 
@@ -337,8 +340,8 @@ steps:
 EOF
 
     # Parallel workflow
-    cat > "dags/parallel.yaml" <<'EOF'
-name: Parallel Processing
+    cat > "dags/parallel-processing.yaml" <<'EOF'
+name: parallel-processing
 description: Execute steps in parallel
 
 steps:
@@ -368,8 +371,8 @@ steps:
 EOF
 
     # HTTP request workflow
-    cat > "dags/http-check.yaml" <<'EOF'
-name: HTTP Status Check
+    cat > "dags/http-status-check.yaml" <<'EOF'
+name: http-status-check
 description: Check website status with HTTP requests
 
 steps:
