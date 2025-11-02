@@ -207,7 +207,7 @@ services:
       
       # UI Configuration
       DAGU_UI_NAVBAR_TITLE: Dagu Workflows
-      DAGU_UI_NAVBAR_COLOR: "#1976d2"
+      DAGU_UI_NAVBAR_COLOR: "\#1976d2"
       
       # Scheduler Configuration
       DAGU_SCHEDULER_PORT: 8090
