@@ -160,6 +160,29 @@ def generate_setup(
     notify_webhook "provisioning" "docker_ready" "✅ Docker installed successfully"
     sleep 5
 
+    # ========== DOCKER COMPOSE COMMAND DETECTION ==========
+    echo "[4.5/15] Detecting Docker Compose command..."
+    notify_webhook "provisioning", "docker_compose_detect", "Detecting Docker Compose command"
+
+    # Detect Docker Compose command early
+    DOCKER_COMPOSE_CMD="docker compose"
+    if ! docker compose version &>/dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+        # Install docker-compose if not available
+        if ! command -v docker-compose &>/dev/null; then
+            echo "Installing docker-compose..."
+            pip3 install docker-compose || {
+                echo "⚠️ Failed to install docker-compose, trying alternative method"
+                curl -L "https://github.com/docker/compose/releases/download/__DOCKER_COMPOSE_VERSION__/docker-compose-$(uname -s)-$(uname -m)" \
+                    -o /usr/local/bin/docker-compose
+                chmod +x /usr/local/bin/docker-compose
+            }
+        fi
+    fi
+
+    echo "✅ Using Docker Compose command: $DOCKER_COMPOSE_CMD"
+    notify_webhook "provisioning", "docker_compose_ready", "✅ Docker Compose command detected: $DOCKER_COMPOSE_CMD"
+                                          
     # ========== DAGU DIRECTORY SETUP ==========
     echo "[5/15] Setting up Dagu directory..."
     notify_webhook "provisioning" "directory_setup" "Creating Dagu directory structure"
@@ -351,18 +374,55 @@ AUTH_EOF
     notify_webhook "provisioning" "config_ready" "✅ Dagu auth configuration created"
                                                          
     sleep 5
+    
+    # ========== RESTART DAGU WITH AUTH CONFIG ==========
+    echo "[7.7/15] Restarting Dagu with authentication..."
+    notify_webhook "provisioning" "restart_auth" "Restarting Dagu to apply authentication"
 
+    # Restart Dagu container to load the new auth config
+    $DOCKER_COMPOSE_CMD restart dagu
+    
+    # Wait for Dagu to restart
+    sleep 10
+    
+    # Test authentication is working
+    echo "Testing authentication..."
+    AUTH_WORKING=false
+    for i in {1..10}; do
+        # Test API with authentication
+        if curl -f -s -u "$ADMIN_USERNAME:$ADMIN_PASSWORD" http://localhost:$PORT/api/v2/dags >/dev/null 2>&1; then
+            AUTH_WORKING=true
+            break
+        fi
+        echo "    Waiting for authentication to be ready... (${i}s)"
+        sleep 5
+    done
+
+    if [ "$AUTH_WORKING" = true ]; then
+        echo "✅ Authentication is working"
+        notify_webhook "provisioning" "auth_working" "✅ Authentication is working correctly"
+    else
+        echo "⚠️ Authentication may not be working - check Dagu logs"
+        notify_webhook "warning" "auth_check" "Authentication check failed - may need manual configuration"
+    fi
+                                                         
+    sleep 5
+                                      
     # ========== CREATE SAMPLE WORKFLOWS ==========
     echo "[8/15] Creating sample workflows..."
     notify_webhook "provisioning" "sample_workflows" "Creating example DAG workflows"
 
     mkdir -p dags
 
-    # Set proper permissions for Dagu data directories
-    chown -R 1000:1000 data logs
+    # Create and set permissions for Dagu data directories (ensure they exist first)
+    mkdir -p data logs
+    chown -R 1000:1000 data logs || {
+        echo "⚠️ Could not change ownership, but continuing..."
+        notify_webhook "warning" "directory_permissions" "Could not change directory ownership"
+    }
     chmod -R 755 data logs
     
-    # Simple sequential workflow
+    # Simple sequential workflow - CORRECT SYNTAX
     cat > "dags/hello-world.yaml" <<'EOF'
 name: hello-world
 description: A simple sequential workflow
@@ -370,70 +430,60 @@ schedule: "0 9 * * *"  # Run daily at 9 AM
 
 steps:
   - name: Step 1
-    command: echo
-    args: ["Hello from Dagu!"]
+    command: echo "Hello from Dagu!"
     
   - name: Step 2
-    command: echo  
-    args: ["This is step 2"]
+    command: echo "This is step 2"
     
   - name: Step 3
-    command: echo
-    args: ["Workflow completed successfully!"]
+    command: echo "Workflow completed successfully!"
 EOF
 
-    # Parallel workflow
+    # Parallel workflow - CORRECT SYNTAX
     cat > "dags/parallel-processing.yaml" <<'EOF'
 name: parallel-processing
 description: Execute steps in parallel
 
 steps:
-  - name: Parallel Group
-    command: ":"
-    depends: []
+  - name: setup
+    command: echo "Setting up parallel execution"
+  
+  - name: task-a
+    command: echo "Running task A"
+    depends: setup
     
-  - name: Task A
-    command: echo
-    args: ["Running task A"]
-    depends: ["Parallel Group"]
+  - name: task-b
+    command: echo "Running task B" 
+    depends: setup
     
-  - name: Task B  
-    command: echo
-    args: ["Running task B"]
-    depends: ["Parallel Group"]
+  - name: task-c
+    command: echo "Running task C"
+    depends: setup
     
-  - name: Task C
-    command: echo
-    args: ["Running task C"]
-    depends: ["Parallel Group"]
-    
-  - name: Final Step
-    command: echo
-    args: ["All parallel tasks completed"]
-    depends: ["Task A", "Task B", "Task C"]
+  - name: final-step
+    command: echo "All parallel tasks completed"
+    depends: [task-a, task-b, task-c]
 EOF
 
-    # HTTP request workflow
+    # HTTP request workflow - CORRECT SYNTAX
     cat > "dags/http-status-check.yaml" <<'EOF'
 name: http-status-check
 description: Check website status with HTTP requests
 
 steps:
-  - name: Check Google
-    command: http
-    args: 
-      - "GET"
-      - "https://www.google.com"
-    script: |
-      exit 0 if [ $1 -eq 200 ]; else exit 1;
-      
-  - name: Check GitHub
-    command: http
-    args:
-      - "GET" 
-      - "https://api.github.com"
-    script: |
-      exit 0 if [ $1 -eq 200 ]; else exit 1;
+  - name: check-google
+    executor:
+      type: http
+      config:
+        url: https://www.google.com
+        method: GET
+    
+  - name: check-github
+    executor:
+      type: http
+      config:
+        url: https://api.github.com
+        method: GET
 EOF
 
     echo "✅ Sample workflows created"
@@ -699,7 +749,7 @@ EOF_SSL
 
     echo "🎉 Dagu deployment completed successfully!"
                                       
-    notify_webhook "credentials" "admin_auth" "Admin: $ADMIN_USERNAME / $ADMIN_PASSWORD / API Token: $API_TOKEN"
+    notify_webhook "credentials" "admin_auth" "🔐 Admin: $ADMIN_USERNAME / $ADMIN_PASSWORD / API Token: $API_TOKEN"
     
     sleep 5
                                       

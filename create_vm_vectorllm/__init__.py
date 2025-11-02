@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import time
+import re
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 load_dotenv()
@@ -128,6 +129,46 @@ SUPPORTED_MODELS = {
     }
 }
 
+# Model availability by region - this should be maintained/updated
+MODEL_AVAILABILITY = {
+    "gpt-4": {
+        "regions": ["eastus", "eastus2", "southcentralus", "westus2", "westeurope", "northeurope", "swedencentral", "global"],
+        "global_only": False
+    },
+    "gpt-4-32k": {
+        "regions": ["eastus", "southcentralus", "westeurope", "swedencentral", "global"],
+        "global_only": False
+    },
+    "gpt-35-turbo": {
+        "regions": ["eastus", "eastus2", "southcentralus", "westus2", "westeurope", "northeurope", "swedencentral", "global"],
+        "global_only": False
+    },
+    "deepseek-coder": {
+        "regions": ["eastus", "southcentralus", "westeurope", "swedencentral", "global"],
+        "global_only": False
+    },
+    "deepseek-chat": {
+        "regions": ["eastus", "southcentralus", "westeurope", "swedencentral", "global"], 
+        "global_only": False
+    },
+    "llama-2-7b": {
+        "regions": ["eastus", "southcentralus", "westus2", "swedencentral", "global"],
+        "global_only": False
+    },
+    "llama-2-70b": {
+        "regions": ["eastus", "southcentralus", "swedencentral", "global"],
+        "global_only": False
+    },
+    "claude-3-sonnet": {
+        "regions": ["global"],
+        "global_only": True
+    },
+    "text-embedding-ada-002": {
+        "regions": ["eastus", "eastus2", "southcentralus", "westus2", "westeurope", "northeurope", "swedencentral", "global"],
+        "global_only": False
+    }
+}
+
 VECTOR_INDEX_CONFIGS = {
     "small": {
         "vector_dimension": 1536,
@@ -181,6 +222,63 @@ def print_warn(msg):
 def print_error(msg):
     logging.info(f"{bcolors.FAIL}[ERROR]{bcolors.ENDC} {msg}")
 
+# ====================== MODEL AVAILABILITY FUNCTIONS ======================
+
+def validate_model_availability(model_type, location):
+    """Check if model is available in the requested region"""
+    if model_type not in MODEL_AVAILABILITY:
+        return False, f"Model {model_type} not found in availability configuration"
+    
+    model_info = MODEL_AVAILABILITY[model_type]
+    
+    # Check if model is global-only
+    if model_info.get("global_only", False):
+        if location.lower() != "global":
+            return False, f"Model {model_type} is only available in global region"
+        return True, "Model available in global region"
+    
+    # Check specific regions
+    available_regions = [region.lower() for region in model_info["regions"]]
+    if location.lower() not in available_regions and "global" not in available_regions:
+        return False, f"Model {model_type} not available in {location}. Available regions: {', '.join(model_info['regions'])}"
+    
+    return True, "Model available in requested region"
+
+def get_available_regions_for_model(model_type):
+    """Get list of available regions for a model"""
+    if model_type not in MODEL_AVAILABILITY:
+        return []
+    return MODEL_AVAILABILITY[model_type]["regions"]
+
+def suggest_alternative_regions(model_type, requested_location):
+    """Suggest alternative regions if requested location is unavailable"""
+    available_regions = get_available_regions_for_model(model_type)
+    if not available_regions:
+        return []
+    
+    # Remove global from suggestions for regional deployments
+    regional_suggestions = [region for region in available_regions if region != "global"]
+    
+    # Suggest regions in the same geography if possible
+    geography_map = {
+        "eastus": ["eastus2", "southcentralus", "westus2"],
+        "westeurope": ["northeurope", "uksouth", "swedencentral"],
+        "southeastasia": ["eastasia", "australiaeast"],
+        "swedencentral": ["northeurope", "westeurope", "uksouth"]
+    }
+    
+    suggested = []
+    for geo, regions in geography_map.items():
+        if requested_location.lower() in regions:
+            suggested = [r for r in regional_suggestions if r in regions]
+            break
+    
+    # If no geography match, return first available regional options
+    if not suggested and regional_suggestions:
+        suggested = regional_suggestions[:3]
+    
+    return suggested
+
 async def run_azure_operation(func, *args, **kwargs):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, func, *args, **kwargs)
@@ -202,6 +300,7 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
         search_service_name = req_body.get('search_service_name') or req.params.get('search_service_name')
         index_size = req_body.get('index_size') or req.params.get('index_size') or 'medium'
         enable_semantic_search = req_body.get('enable_semantic_search', True)
+        auto_fallback_region = req_body.get('auto_fallback_region') or req.params.get('auto_fallback_region') or True
         RECIPIENT_EMAILS = req_body.get('recipient_emails') or req.params.get('recipient_emails')
         hook_url = req_body.get('hook_url') or req.params.get('hook_url') or ''
         
@@ -238,6 +337,34 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
                 mimetype="application/json"
             )
+
+        # Validate model availability in requested region
+        original_location = location
+        is_available, availability_msg = validate_model_availability(model_type, location)
+        if not is_available:
+            suggested_regions = suggest_alternative_regions(model_type, location)
+            
+            # Auto-fallback logic
+            if auto_fallback_region and suggested_regions:
+                fallback_location = suggested_regions[0]
+                print_warn(f"Model {model_type} not available in {location}. Auto-fallback to {fallback_location}")
+                location = fallback_location
+            else:
+                error_response = {
+                    "error": f"Model availability error: {availability_msg}",
+                    "requested_location": original_location,
+                    "model_type": model_type
+                }
+                if suggested_regions:
+                    error_response["suggested_regions"] = suggested_regions
+                    error_response["suggestion"] = f"Try these available regions: {', '.join(suggested_regions)}"
+                
+                return func.HttpResponse(
+                    json.dumps(error_response),
+                    status_code=400,
+                    mimetype="application/json"
+                )
+
         if not storage_account_name:
             return func.HttpResponse(
                 json.dumps({"error": "Missing 'storage_account_name' parameter"}),
@@ -332,7 +459,8 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                     credentials,
                     deployment_name, resource_group, location, model_type,
                     storage_account_name, search_service_name, index_size,
-                    enable_semantic_search, RECIPIENT_EMAILS, hook_url
+                    enable_semantic_search, RECIPIENT_EMAILS, hook_url,
+                    original_location if original_location != location else None
                 )
             )
 
@@ -342,7 +470,9 @@ async def main(req: func.HttpRequest) -> func.HttpResponse:
                     "message": "LLM deployment started",
                     "status_url": status_url,
                     "deployment_name": deployment_name,
-                    "model_type": model_type
+                    "model_type": model_type,
+                    "location": location,
+                    "original_location": original_location if original_location != location else None
                 }),
                 status_code=202,
                 mimetype="application/json"
@@ -384,25 +514,29 @@ async def deploy_llm_background(
     credentials,
     deployment_name, resource_group, location, model_type,
     storage_account_name, search_service_name, index_size,
-    enable_semantic_search, RECIPIENT_EMAILS, hook_url
+    enable_semantic_search, RECIPIENT_EMAILS, hook_url,
+    original_location=None
 ):
     try:
         # Initial status update
-        await post_status_update(
-            hook_url=hook_url,
-            status_data={
-                "deployment_name": deployment_name,
-                "status": "provisioning",
-                "resource_group": resource_group,
-                "location": location,
-                "model_type": model_type,
-                "details": {
-                    "step": "starting_deployment", 
-                    "message": "Beginning LLM deployment process",
-                    "timestamp": datetime.utcnow().isoformat()
-                }
+        status_data = {
+            "deployment_name": deployment_name,
+            "status": "provisioning",
+            "resource_group": resource_group,
+            "location": location,
+            "model_type": model_type,
+            "details": {
+                "step": "starting_deployment", 
+                "message": "Beginning LLM deployment process",
+                "timestamp": datetime.utcnow().isoformat()
             }
-        )
+        }
+        
+        if original_location:
+            status_data["details"]["original_location"] = original_location
+            status_data["details"]["region_fallback"] = True
+            
+        await post_status_update(hook_url=hook_url, status_data=status_data)
 
         subscription_id = os.environ['AZURE_SUBSCRIPTION_ID']
         
@@ -717,31 +851,49 @@ async def deploy_llm_background(
 
         # Get deployment endpoints and keys
         try:
-            # Get Cognitive Services keys
-            cognitive_keys = await run_azure_operation(
-                cognitive_client.accounts.list_keys,
-                resource_group, deployment_name
+            # Get ALL API keys and credentials
+            cognitive_creds = await run_azure_operation(
+                get_cognitive_services_keys,
+                cognitive_client, resource_group, deployment_name
             )
-            cognitive_endpoint = cognitive_account.properties.endpoint
             
+            search_creds = await run_azure_operation(
+                get_search_service_keys, 
+                search_mgmt_client, resource_group, search_service_name
+            )
+            
+            storage_conn_string = await run_azure_operation(
+                get_storage_connection_string,
+                storage_client, resource_group, storage_account_name
+            )
+            
+            # Generate complete environment variables
+            env_config = generate_environment_variables(
+                cognitive_creds, search_creds, storage_conn_string, 
+                deployment_name, main_model_config, embedding_model_config, index_name
+            )
+
             # Prepare deployment information
             deployment_info = {
+                "environment_variables": env_config,
                 "cognitive_services": {
-                    "endpoint": cognitive_endpoint,
-                    "key": cognitive_keys.key1,
+                    "endpoint": cognitive_creds["endpoint"],
+                    "key1": cognitive_creds["key1"],
+                    "key2": cognitive_creds["key2"],
                     "deployments": {
                         "main_model": main_model_config["deployment_name"],
                         "embedding_model": embedding_model_config["deployment_name"]
                     }
                 },
                 "azure_ai_search": {
-                    "endpoint": search_endpoint,
-                    "admin_key": admin_key,
+                    "endpoint": search_creds["endpoint"],
+                    "admin_key": search_creds["admin_key"],
+                    "query_key": search_creds["query_key"],
                     "index_name": index_name
                 },
                 "storage": {
                     "account_name": storage_account_name,
-                    "connection_string": storage_config["connection_string"]
+                    "connection_string": storage_conn_string
                 }
             }
 
@@ -783,6 +935,9 @@ async def deploy_llm_background(
                     }
                 )
 
+            # Final wait
+            await asyncio.sleep(30)
+
             # Send completion email
             try:
                 smtp_host = os.environ.get('SMTP_HOST')
@@ -794,14 +949,15 @@ async def deploy_llm_background(
                 
                 html_content = html_email.HTMLEmail(
                     logo_url="https://i.postimg.cc/vBpLm0mF/llm-deployment.png",
-                    cognitive_endpoint=cognitive_endpoint,
-                    search_endpoint=search_endpoint,
+                    cognitive_endpoint=cognitive_creds["endpoint"],
+                    search_endpoint=search_creds["endpoint"],
                     created_at=datetime.utcnow().isoformat(),
-                    link1=f"{cognitive_endpoint}",
-                    link2=f"{search_endpoint}",
+                    link1=f"{cognitive_creds['endpoint']}",
+                    link2=f"{search_creds['endpoint']}",
                     link3=f"https://portal.azure.com",
                     new_deployment_url=f"https://yourapp.com/deployllm",
-                    dash_url="https://yourapp.com"
+                    dash_url="https://yourapp.com",
+                    environment_variables=env_config
                 )
 
                 await html_email_send.send_html_email_smtp(
@@ -849,27 +1005,38 @@ async def deploy_llm_background(
                 )
 
             # Final success update
-            await post_status_update(
-                hook_url=hook_url,
-                status_data={
-                    "deployment_name": deployment_name,
-                    "status": "completed",
-                    "resource_group": resource_group,
-                    "location": location,
-                    "model_type": model_type,
-                    "details": {
-                        "step": "completed",
-                        "message": "LLM deployment successful",
-                        "cognitive_endpoint": cognitive_endpoint,
-                        "search_endpoint": search_endpoint,
-                        "deployments": {
-                            "main_model": main_model_config["deployment_name"],
-                            "embedding_model": embedding_model_config["deployment_name"]
+            final_status_data = {
+                "deployment_name": deployment_name,
+                "status": "completed",
+                "resource_group": resource_group,
+                "location": location,
+                "model_type": model_type,
+                "details": {
+                    "step": "completed",
+                    "url": f"https://cdn.sdappnet.cloud/rtx/vectorllm?token=",
+                    "message": "LLM deployment successful",
+                    "environment_variables": env_config,
+                    "credentials": {
+                        "cognitive_services": {
+                            "endpoint": cognitive_creds["endpoint"],
+                            "key": cognitive_creds["key1"],
+                            "deployments": deployment_info["cognitive_services"]["deployments"]
                         },
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
+                        "azure_ai_search": {
+                            "endpoint": search_creds["endpoint"],
+                            "admin_key": search_creds["admin_key"],
+                            "index_name": index_name
+                        }
+                    },
+                    "timestamp": datetime.utcnow().isoformat()
                 }
-            )
+            }
+            
+            if original_location:
+                final_status_data["details"]["original_location"] = original_location
+                final_status_data["details"]["region_fallback_applied"] = True
+            
+            await post_status_update(hook_url=hook_url, status_data=final_status_data)
 
             print_success(f"LLM deployment completed successfully! Models: {model_type} + text-embedding-ada-002")
             
@@ -1138,6 +1305,90 @@ def deploy_model(cognitive_client, resource_group, account_name, model_config):
         print_error(f"Failed to deploy model '{model_config['deployment_name']}': {str(e)}")
         raise
 
+def get_cognitive_services_keys(cognitive_client, resource_group, account_name):
+    """Get Cognitive Services API keys"""
+    print_info(f"Fetching API keys for Cognitive Services account '{account_name}'...")
+    try:
+        keys = cognitive_client.accounts.list_keys(resource_group, account_name)
+        account = cognitive_client.accounts.get(resource_group, account_name)
+        
+        return {
+            "key1": keys.key1,
+            "key2": keys.key2,
+            "endpoint": account.properties.endpoint
+        }
+    except Exception as e:
+        print_error(f"Failed to get Cognitive Services keys: {str(e)}")
+        raise
+
+def get_search_service_keys(search_mgmt_client, resource_group, search_service_name):
+    """Get Azure AI Search admin keys"""
+    print_info(f"Fetching admin keys for search service '{search_service_name}'...")
+    try:
+        admin_keys = search_mgmt_client.admin_keys.get(resource_group, search_service_name)
+        query_keys = search_mgmt_client.query_keys.list_by_search_service(resource_group, search_service_name)
+        
+        query_key_list = [key for key in query_keys]
+        query_key = query_key_list[0].key if query_key_list else None
+        
+        return {
+            "admin_key": admin_keys.primary_key,
+            "query_key": query_key,
+            "endpoint": f"https://{search_service_name}.search.windows.net"
+        }
+    except Exception as e:
+        print_error(f"Failed to get search service keys: {str(e)}")
+        raise
+
+def get_storage_connection_string(storage_client, resource_group, storage_account_name):
+    """Get storage account connection string"""
+    print_info(f"Fetching connection string for storage account '{storage_account_name}'...")
+    try:
+        keys = storage_client.storage_accounts.list_keys(resource_group, storage_account_name)
+        connection_string = f"DefaultEndpointsProtocol=https;AccountName={storage_account_name};AccountKey={keys.keys[0].value};EndpointSuffix=core.windows.net"
+        return connection_string
+    except Exception as e:
+        print_error(f"Failed to get storage connection string: {str(e)}")
+        raise
+
+def generate_environment_variables(cognitive_creds, search_creds, storage_conn_string, deployment_name, main_model_config, embedding_model_config, index_name):
+    """Generate complete environment variables for immediate use"""
+    print_info("Generating environment variables configuration...")
+    
+    # Extract storage account name from connection string
+    storage_account_match = re.search(r'AccountName=([^;]+)', storage_conn_string)
+    storage_account_name = storage_account_match.group(1) if storage_account_match else "unknown"
+    
+    env_vars = f"""# OpenAI API Configuration
+OPENAI_API_BASE={cognitive_creds['endpoint']}openai/deployments/{main_model_config['deployment_name']}/chat/completions?api-version=2024-02-01
+OPENAI_API_KEY={cognitive_creds['key1']}
+OPENAI_DEPLOYMENT_NAME={main_model_config['deployment_name']}
+OPENAI_API_VERSION=2024-02-01
+CORS_ORIGINS=http://localhost:3000
+OPENAI_TEMPERATURE=0.7
+OPENAI_MAX_TOKENS=4000
+OPENAI_TOP_P=0.95
+OPENAI_FREQUENCY_PENALTY=0
+OPENAI_PRESENCE_PENALTY=0
+
+# Vector Search Configuration
+VECTOR_SEARCH_ENABLED=true
+VECTOR_SEARCH_ENDPOINT={search_creds['endpoint']}
+VECTOR_SEARCH_KEY={search_creds['admin_key']}
+VECTOR_SEARCH_INDEX={index_name}
+VECTOR_SEARCH_SEMANTIC_CONFIG=azureml-default
+VECTOR_SEARCH_EMBEDDING_DEPLOYMENT={embedding_model_config['deployment_name']}
+VECTOR_SEARCH_EMBEDDING_ENDPOINT={cognitive_creds['endpoint']}openai/deployments/{embedding_model_config['deployment_name']}/embeddings?api-version=2023-05-15
+VECTOR_SEARCH_EMBEDDING_KEY={cognitive_creds['key1']}
+
+# Storage for file upload
+VECTOR_SEARCH_STORAGE_ENDPOINT=https://{storage_account_name}.blob.core.windows.net/
+VECTOR_SEARCH_STORAGE_ACCESS_KEY="{cognitive_creds['key1'] if storage_account_match else 'KEY_NOT_FOUND'}"
+VECTOR_SEARCH_STORAGE_CONNECTION_STRING="{storage_conn_string}"
+"""
+    
+    return env_vars
+
 async def cleanup_temp_storage(resource_group, storage_client, storage_account_name):
     """Cleanup temporary storage on success"""
     try:
@@ -1210,7 +1461,7 @@ async def post_status_update(hook_url: str, status_data: dict) -> dict:
         # Log failure and retry
         if attempt < max_retries:
             print_warn(f"Status update failed (attempt {attempt}/{max_retries}): {error_msg}")
-            await asyncio.sleep(retry_delay * attempt)  # Exponential backoff
+            await asyncio.sleep(retry_delay * attempt)
         else:
             print_error(f"Status update failed after {max_retries} attempts: {error_msg}")
             return {

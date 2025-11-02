@@ -342,7 +342,7 @@ DOCKERFILE
             if [ $attempt -eq $MAX_BUILD_RETRIES ]; then
                 echo "    ❌ All build attempts failed, using standard image without plugins"
                 notify_webhook "warning" "custom_build_failed" "All build attempts failed, using standard Answer image"
-                CUSTOM_IMAGE="apache/answer:latest"
+                CUSTOM_IMAGE="apache/answer"
             else
                 echo "    🔄 Retrying build in 10 seconds..."
                 sleep 10
@@ -358,7 +358,7 @@ DOCKERFILE
         if ! docker image inspect answer-with-plugins >/dev/null 2>&1; then
             echo "    ⚠️ Custom image verification failed, using standard image"
             notify_webhook "warning" "image_verification_failed" "Custom image verification failed, using standard image"
-            CUSTOM_IMAGE="apache/answer:latest"
+            CUSTOM_IMAGE="apache/answer"
             BUILD_SUCCESS=false
         fi
     fi
@@ -436,9 +436,9 @@ DOCKERCOMPOSE
     notify_webhook "provisioning" "answer_start" "Starting Apache Answer container"
 
     # Skip pull if using custom image
-    if [ "$CUSTOM_IMAGE" = "apache/answer:latest" ]; then
+    if [ "$CUSTOM_IMAGE" = "apache/answer" ]; then
         echo "    Pulling Apache Answer image..."
-        if docker pull apache/answer:latest; then
+        if docker pull apache/answer; then
             echo "    ✅ Image pulled successfully"
             notify_webhook "provisioning" "image_pulled" "✅ Apache Answer image pulled successfully"
         else
