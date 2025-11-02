@@ -326,14 +326,9 @@ AUTH_EOF
     notify_webhook "provisioning" "auth_ready" "✅ Authentication credentials generated"
                    
                                       
-        # ========== CREATE ENVIRONMENT FILE ==========
+    # ========== CREATE ENVIRONMENT FILE ==========
     echo "[7/15] Creating environment configuration..."
     notify_webhook "provisioning" "environment_setup" "Creating Dagu environment configuration"
-
-    # Generate credentials FIRST
-    ADMIN_USERNAME="admin"
-    ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '/+' | cut -c1-12)
-    API_TOKEN=$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-32)
 
     cat > ".env" <<EOF
 # Dagu Configuration
@@ -346,26 +341,7 @@ DAGU_AUTH_BASIC_PASSWORD=$ADMIN_PASSWORD
 DAGU_AUTH_TOKEN=$API_TOKEN
 EOF
 
-        # ========== CREATE ENVIRONMENT FILE ==========
-    echo "[7/15] Creating environment configuration..."
-    notify_webhook "provisioning" "environment_setup" "Creating Dagu environment configuration"
-
-    # Generate credentials FIRST
-    ADMIN_USERNAME="admin"
-    ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '/+' | cut -c1-12)
-    API_TOKEN=$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-32)
-
-    cat > ".env" <<EOF
-# Dagu Configuration
-DAGU_PORT=__PORT__
-TIMEZONE=__TIMEZONE__
-
-# Authentication (auto-generated)
-DAGU_AUTH_BASIC_USERNAME=$ADMIN_USERNAME
-DAGU_AUTH_BASIC_PASSWORD=$ADMIN_PASSWORD
-DAGU_AUTH_TOKEN=$API_TOKEN
-EOF
-                                                         
+                       
     sleep 5
 
     echo "✅ Environment file created"
