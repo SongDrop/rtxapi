@@ -160,6 +160,29 @@ def generate_setup(
     notify_webhook "provisioning" "docker_ready" "✅ Docker installed successfully"
     sleep 5
 
+    # ========== DOCKER COMPOSE COMMAND DETECTION ==========
+    echo "[4.5/15] Detecting Docker Compose command..."
+    notify_webhook "provisioning", "docker_compose_detect", "Detecting Docker Compose command"
+
+    # Detect Docker Compose command early
+    DOCKER_COMPOSE_CMD="docker compose"
+    if ! docker compose version &>/dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+        # Install docker-compose if not available
+        if ! command -v docker-compose &>/dev/null; then
+            echo "Installing docker-compose..."
+            pip3 install docker-compose || {
+                echo "⚠️ Failed to install docker-compose, trying alternative method"
+                curl -L "https://github.com/docker/compose/releases/download/__DOCKER_COMPOSE_VERSION__/docker-compose-$(uname -s)-$(uname -m)" \
+                    -o /usr/local/bin/docker-compose
+                chmod +x /usr/local/bin/docker-compose
+            }
+        fi
+    fi
+
+    echo "✅ Using Docker Compose command: $DOCKER_COMPOSE_CMD"
+    notify_webhook "provisioning", "docker_compose_ready", "✅ Docker Compose command detected: $DOCKER_COMPOSE_CMD"
+                                          
     # ========== DAGU DIRECTORY SETUP ==========
     echo "[5/15] Setting up Dagu directory..."
     notify_webhook "provisioning" "directory_setup" "Creating Dagu directory structure"
