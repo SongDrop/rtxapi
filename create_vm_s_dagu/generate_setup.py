@@ -176,11 +176,12 @@ def generate_setup(
     
     sleep 5
 
-        # ========== CREATE DOCKER COMPOSE FILE ==========
+    # ========== CREATE DOCKER COMPOSE FILE ==========
     echo "[6/15] Creating Docker Compose configuration..."
     notify_webhook "provisioning" "compose_setup" "Creating Docker Compose configuration"
 
-    cat > "docker-compose.yml" <<'EOF'
+    # Create docker-compose.yml using echo to avoid heredoc issues
+    cat > "docker-compose.yml" <<'COMPOSE_EOF'
 services:
   dagu:
     image: ghcr.io/dagu-org/dagu:latest
@@ -189,27 +190,16 @@ services:
     ports:
       - "127.0.0.1:${DAGU_PORT:-8080}:8080"
     environment:
-      # Server Configuration
       DAGU_HOST: 0.0.0.0
       DAGU_PORT: 8080
       DAGU_TZ: ${TIMEZONE}
       DAGU_DEBUG: "false"
       DAGU_LOG_FORMAT: text
-      
-      # Path Configuration
       DAGU_DAGS_DIR: /etc/dagu/dags
       DAGU_DATA_DIR: /var/lib/dagu/data
       DAGU_LOG_DIR: /var/lib/dagu/logs
-      
-      # Authentication (optional - enable if needed)
-      # DAGU_AUTH_BASIC_USERNAME: ${ADMIN_USERNAME}
-      # DAGU_AUTH_BASIC_PASSWORD: ${ADMIN_PASSWORD}
-      
-      # UI Configuration
       DAGU_UI_NAVBAR_TITLE: Dagu Workflows
-      DAGU_UI_NAVBAR_COLOR: "\#1976d2"
-      
-      # Scheduler Configuration
+      DAGU_UI_NAVBAR_COLOR: "royalblue"
       DAGU_SCHEDULER_PORT: 8090
       DAGU_QUEUE_ENABLED: "true"
     volumes:
@@ -219,7 +209,6 @@ services:
     networks:
       - dagu-network
 
-  # Optional: Add monitoring stack
   prometheus:
     image: prom/prometheus:latest
     container_name: dagu-prometheus
@@ -244,11 +233,11 @@ services:
     container_name: dagu-grafana
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3001:3000"  # Changed from 3000 to 3001 to avoid conflict
+      - "127.0.0.1:3001:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=grafana
-      - GF_USERS_ALLOW_SIGN_UP=false
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: grafana
+      GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
@@ -265,7 +254,7 @@ volumes:
 networks:
   dagu-network:
     driver: bridge
-EOF
+COMPOSE_EOF
 
     # Create Prometheus configuration
     mkdir -p prometheus
