@@ -205,6 +205,7 @@ services:
       - ./dags:/etc/dagu/dags
       - ./data:/var/lib/dagu/data
       - ./logs:/var/lib/dagu/logs
+      - /root/.config/dagu:/root/.config/dagu
     networks:
       - dagu-network
 
@@ -292,6 +293,39 @@ EOF
     echo "✅ Docker Compose file created"
     notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration ready"
 
+    # ========== GENERATE AUTHENTICATION CREDENTIALS ==========
+    echo "[7.5/15] Generating authentication credentials..."
+    notify_webhook "provisioning" "auth_setup" "Generating secure authentication credentials"
+
+    # Generate random credentials
+    ADMIN_USERNAME="admin"
+    ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '/+' | cut -c1-12)
+    API_TOKEN=$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-32)
+
+    # Create Dagu auth configuration
+    mkdir -p /root/.config/dagu
+    cat > "/root/.config/dagu/config.yaml" <<AUTH_EOF
+# Dagu Authentication Configuration
+auth:
+  basic:
+    username: "$ADMIN_USERNAME"
+    password: "$ADMIN_PASSWORD"
+  token:
+    value: "$API_TOKEN"
+
+# Permissions
+permissions:
+  writeDAGs: true
+  runDAGs: true
+AUTH_EOF
+
+    # Set proper permissions
+    chmod 600 /root/.config/dagu/config.yaml
+
+    echo "✅ Authentication credentials generated"
+    notify_webhook "provisioning" "auth_ready" "✅ Authentication credentials generated"
+                   
+                                      
     # ========== CREATE ENVIRONMENT FILE ==========
     echo "[7/15] Creating environment configuration..."
     notify_webhook "provisioning" "environment_setup" "Creating Dagu environment configuration"
@@ -301,10 +335,14 @@ EOF
 DAGU_PORT=__PORT__
 TIMEZONE=__TIMEZONE__
 
-# Optional Authentication
-# ADMIN_USERNAME=admin
-# ADMIN_PASSWORD=__ADMIN_PASSWORD__
+# Authentication (auto-generated)
+DAGU_AUTH_BASIC_USERNAME=$ADMIN_USERNAME
+DAGU_AUTH_BASIC_PASSWORD=$ADMIN_PASSWORD
+DAGU_AUTH_TOKEN=$API_TOKEN
 EOF
+
+                       
+    sleep 5
 
     echo "✅ Environment file created"
     notify_webhook "provisioning" "environment_ready" "✅ Dagu environment configuration created"
@@ -655,8 +693,13 @@ EOF_SSL
     $DOCKER_COMPOSE_CMD ps
 
     echo "🎉 Dagu deployment completed successfully!"
+                                      
+    notify_webhook "credentials" "admin_auth" "Admin: $ADMIN_USERNAME / $ADMIN_PASSWORD / API Token: $API_TOKEN"
+    
+    sleep 5
+                                      
     notify_webhook "provisioning" "deployment_complete" "✅ Dagu deployment completed successfully"
-
+                                      
     cat <<EOF_SUMMARY
 =============================================
 ⚡ Dagu Workflow Engine Deployment Complete!
@@ -665,10 +708,19 @@ EOF_SSL
 🌐 Access Information:
 ------------------------------------------------------------
 🔗 Web UI: https://$DOMAIN
+🔐 Login: $ADMIN_USERNAME / $ADMIN_PASSWORD
+🔑 API Token: $API_TOKEN
 📧 Admin: $ADMIN_EMAIL
 ⏰ Timezone: $TIMEZONE
 ------------------------------------------------------------
 
+🔐 Authentication Details:
+------------------------------------------------------------
+📝 Web Login: $ADMIN_USERNAME / $ADMIN_PASSWORD
+🔑 API Access: Use Header: "Authorization: Bearer $API_TOKEN"
+🌐 OIDC Ready: Configure Google/GitHub OIDC in config.yaml
+------------------------------------------------------------
+                                      
 📊 Monitoring Stack:
 ------------------------------------------------------------
 📈 Prometheus: http://localhost:9090
@@ -689,8 +741,27 @@ Logs: cd $DATA_DIR && docker compose logs -f dagu
 Restart: cd $DATA_DIR && docker compose restart
 Update: cd $DATA_DIR && docker compose pull && docker compose up -d
 Stop: cd $DATA_DIR && docker compose down
+Update Auth: Edit /root/.config/dagu/config.yaml
 ------------------------------------------------------------
 
+⚠️  SECURITY NOTICE:
+------------------------------------------------------------
+• Change default credentials in production
+• Store API token securely
+• Consider OIDC for team access
+• Rotate tokens regularly
+------------------------------------------------------------
+                          
+🚀 API Usage Examples:
+------------------------------------------------------------
+# List workflows with token:
+curl -H "Authorization: Bearer $API_TOKEN" \\
+  https://$DOMAIN/api/v2/dags
+
+# Execute workflow:
+curl -X POST -H "Authorization: Bearer $API_TOKEN" \\
+  https://$DOMAIN/api/v2/dags/my-workflow/start
+                                      
 📋 Sample Workflows Included:
 ------------------------------------------------------------
 ✅ hello.yaml - Simple sequential workflow
