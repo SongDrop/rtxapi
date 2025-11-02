@@ -358,8 +358,12 @@ AUTH_EOF
 
     mkdir -p dags
 
-    # Set proper permissions for Dagu data directories
-    chown -R 1000:1000 data logs
+    # Create and set permissions for Dagu data directories (ensure they exist first)
+    mkdir -p data logs
+    chown -R 1000:1000 data logs || {
+        echo "⚠️ Could not change ownership, but continuing..."
+        notify_webhook "warning" "directory_permissions" "Could not change directory ownership"
+    }
     chmod -R 755 data logs
     
     # Simple sequential workflow
