@@ -462,6 +462,7 @@ EOF
     ufw allow 22/tcp 
     ufw allow 80/tcp 
     ufw allow 443/tcp
+    ufw allow 9000/tcp
     ufw allow "$PORT"/tcp
     ufw --force enable
 
