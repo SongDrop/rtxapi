@@ -382,6 +382,8 @@ services:
       - answer_data:/data
     environment:
       - ANSWER_DATA_PATH=/data
+      - ANSWER_DB_TYPE=${DB_TYPE}
+      - ANSWER_DB_USERNAME=${DB_USERNAME}
 
 volumes:
   answer_data:

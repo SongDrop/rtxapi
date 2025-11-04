@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Build & Deploy AudioScript™️</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+        }
+
+        code {
+            background: #f4f4f4;
+            padding: 2px 5px;
+            border-radius: 5px;
+        }
+
+        pre {
+            background: #f4f4f4;
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>How to Build & Deploy AudioScript™️</h1>
+
+    <h2>Frontend</h2>
+    <p>AudioScript™️ has two main HTML pages:</p>
+    <ul>
+        <li><strong>index.html</strong> → User-facing frontend.</li>
+        <li><strong>master.html</strong> → Admin panel for managing characters, moods, and recordings.</li>
+    </ul>
+
+    <h2>How AudioScript™️ Works Like Bitbucket for Voice Recording</h2>
+    <h3>1️⃣ Users & Authentication</h3>
+    <p>Users log in via <code>index.html</code> with a username and password.</p>
+    <p>Login verifies credentials via <strong>PostgreSQL</strong> (local or remote).</p>
+    <p>If authenticated, the system loads their assigned project.</p>
+
+    <h3>2️⃣ Voice Line Versioning (Instead of Code Commits)</h3>
+    <p>Users create "commits" by adding/modifying:</p>
+    <ul>
+        <li><code>subtitles_action</code> → What's being said.</li>
+        <li><code>subtitles_reaction</code> → Response to an event.</li>
+        <li><code>a_character</code> → Which character speaks.</li>
+        <li><code>mood</code> → Emotion in the voice line.</li>
+        <li><code>language</code> → Voice line language.</li>
+        <li><code>[takes]</code> → Multiple recorded versions.</li>
+        <li><code>linenumber</code> → Specific script line.</li>
+    </ul>
+    <p>These are stored similarly to <strong>Git commits</strong>, allowing tracking and version control.</p>
+
+    <h3>3️⃣ Master Controls (<code>master.html</code>)</h3>
+    <p>The admin panel allows:</p>
+    <ul>
+        <li>Setting permissions (who can edit/add/remove).</li>
+        <li>Approving/rejecting "pull requests" (submitted voice lines).</li>
+        <li>Managing branches (e.g., different versions of a script).</li>
+    </ul>
+
+    <h3>4️⃣ Git LFS for Audio Storage</h3>
+    <p>Audio files (<code>.wav</code>, <code>.mp3</code>, etc.) are stored using <strong>Git LFS</strong> instead of
+        regular Git tracking.</p>
+    <p>PostgreSQL stores metadata (who recorded it, versioning, timestamps).</p>
+
+    <h2>Backend Setup</h2>
+    <h3>Bitbucket</h3>
+    <p>Store your project and enable <code>Git LFS</code> for audio files:</p>
+    <pre><code>git lfs install
+    git lfs track "*.wav"
+    git add .gitattributes</code></pre>
+
+    <h3>PostgreSQL</h3>
+    <p>Install and configure PostgreSQL:</p>
+    <pre><code>sudo apt update
+    sudo apt install postgresql postgresql-contrib
+    sudo -i -u postgres
+    psql</code></pre>
+    <p>Create a database and user:</p>
+    <pre><code>CREATE DATABASE audioscript;
+    CREATE USER audioscript_user WITH ENCRYPTED PASSWORD 'yourpassword';
+    GRANT ALL PRIVILEGES ON DATABASE audioscript TO audioscript_user;</code></pre>
+
+    <h2>Docker Setup</h2>
+    <p>Create a <code>Dockerfile</code> to containerize your app:</p>
+    <pre><code>FROM ubuntu:latest
+    RUN apt update && apt install -y postgresql git-lfs
+    COPY . /app
+    WORKDIR /app
+    CMD ["./AudioScript™️.exe"]</code></pre>
+
+    <h2>Running Locally or in the Cloud</h2>
+    <h3>Local Setup</h3>
+    <pre><code>docker build -t audioscript .
+    docker run -p 8080:8080 audioscript</code></pre>
+
+    <h3>Cloud Deployment</h3>
+    <p>Use a cloud provider (AWS, GCP, or Azure) and assign a static IP to your instance.</p>
+
+    <h2>Accessing the App</h2>
+    <ul>
+        <li><strong>Local:</strong> <code>http://localhost:8080/index.html</code></li>
+        <li><strong>Admin:</strong> <code>http://localhost:8080/master.html</code></li>
+        <li><strong>Cloud:</strong> <code>http://your-cloud-ip/index.html</code></li>
+    </ul>
+</body>
+
+</html>

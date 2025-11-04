@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AudioScript™️</title>
+    <link rel="image icon" type="png" href="./AudioScriptLogo.png">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            flex-direction: column;
+            padding-bottom: 20px;
+        }
+
+        .selector-container {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+
+        .selector-container label {
+            font-weight: bold;
+        }
+
+        .selector-container select {
+            padding: 5px;
+            font-size: 16px;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 80%;
+            margin-top: 20px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        .toggle:hover {
+            text-decoration: underline;
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .recording:hover {
+            text-decoration: none;
+        }
+
+        #recordingsList {
+            margin-top: 12px;
+        }
+
+        .recording-row {
+            padding: 4px;
+        }
+
+        #filename {
+            padding-bottom: 6px;
+        }
+
+        #characterPopup {
+            display: none;
+            /* Ensure it's hidden by default */
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 20px;
+            width: 400px;
+            max-height: 80%;
+            overflow-y: auto;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            text-align: left;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #characterPopupContent {
+            max-height: 70vh;
+            overflow-y: auto;
+            padding-right: 10px;
+        }
+
+        .popup-header {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+        }
+
+        .popup-close-container {
+            text-align: right;
+        }
+
+        .popup-close {
+            cursor: pointer;
+            color: #000;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+
+        .popup-close:hover {
+            color: red;
+        }
+
+        img {
+            width: 100%;
+            width: 280px;
+
+            height: auto;
+            /* display: block; */
+        }
+
+        select,
+        button {
+            cursor: pointer;
+        }
+
+        .voiceline:hover {
+            text-decoration: underline;
+        }
+
+        .record-progressbar::-moz-progress-bar {
+            background: #00ad00;
+            /* Green color */
+            top: 4px;
+        }
+
+        /* For Chrome, Safari, and newer versions of Edge */
+        .record-progressbar::-webkit-progress-value {
+            background: #00ad00;
+            /* Green color */
+        }
+
+        /* For Internet Explorer 10+ */
+        .record-progressbar {
+            color: #00ad00;
+            /* Green color */
+        }
+
+        .record-progressbar {
+            width: 80%;
+            height: 8px;
+            border-radius: 10px;
+            margin: 6px;
+            /* Optional: rounded corners */
+            background: #e0e0e0;
+            /* Light gray background */
+        }
+
+        form,
+        table {
+            margin: 0px;
+            padding: 0px;
+            min-width: 800px;
+        }
+
+        button {
+            margin: 6px;
+        }
+
+        /* Modal style */
+        .modal {
+            display: none;
+            /* Hidden by default */
+            position: fixed;
+            z-index: 1;
+            /* Sit on top */
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgb(0, 0, 0);
+            /* Fallback color */
+            background-color: rgba(0, 0, 0, 0.4);
+            /* Black w/ opacity */
+            padding-top: 60px;
+        }
+
+        /* Modal Content */
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+        }
+
+        /* Close Button */
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+        }
+
+        .close:hover,
+        .close:focus {
+            color: black;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        /* Style for the username tag */
+        .username-tag {
+            display: inline-block;
+            padding: 5px 5px;
+            border-radius: 5px;
+            /* Rounded corners */
+            font-size: 14px;
+            font-weight: bold;
+            color: white;
+            /* Text color */
+            background-color: #4CAF50;
+            /* Default background color */
+            transition: background-color 0.3s ease;
+            margin-right: 4px;
+            /* Smooth color transition */
+        }
+    </style>
+</head>
+
+<body>
+    <img src="./AudioScript.png" />
+
+    <h1><span class="username-tag" id="usernameTag"></span>New Audio Record Project Name<button
+            id="newBtn">Create</button>
+    </h1>
+    <!-- Modal -->
+    <div id="myModal" class="modal">
+        <div class="modal-content">
+            <span id="closeBtn" class="close">&times;</span>
+            <h2>Enter Project Name</h2>
+            <input type="text" id="projectName" placeholder="Enter project name">
+            <button id="submitBtn">Submit</button>
+            <button id="cancelBtn">Cancel</button>
+        </div>
+    </div>
+    <div class="selector-container">
+        <label for="characterSelector">Record a Character:</label>
+        <select id="characterSelector">
+        </select>
+        <label for="languageSelector">Select a Language:</label>
+        <select id="languageSelector">
+            <option value="EN">EN</option>
+            <option value="GER">GER</option>
+            <option value="ITA">ITA</option>
+            <option value="FRA">FRA</option>
+            <option value="ESP">ESP</option>
+            <option value="RU">RU</option>
+            <option value="JPN">JPN</option>
+        </select>
+        <button id="showDescriptionBtn">Show Character Description</button>
+
+    </div>
+    <p>Creates structured filenames like A_Blake_VO_1_ACTION_EN_1234 </p>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Character</th>
+                <th>Action</th>
+                <th>Reaction</th>
+                <th>NPC State</th>
+            </tr>
+        </thead>
+        <tbody id="dialogues">
+            <!-- Data will be inserted here -->
+        </tbody>
+    </table>
+    <!-- Form to add new voice line -->
+    <p>Add new voice lines</p>
+    <form id="addVoiceLineForm">
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Character</th>
+                    <th>Action</th>
+                    <th>Reaction</th>
+                    <th>NPC State</th>
+                    <th>Upload</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>+1</td>
+                    <td>
+                        <select id="newCharacter" name="newCharacter" required>
+                            <!-- Character options will be populated dynamically -->
+                        </select>
+                    </td>
+                    <td><textarea id="newAction" name="newAction" required></textarea></td>
+                    <td><textarea id="newReaction" name="newReaction" required></textarea></td>
+                    <td>
+                        <select id="newNPCState" name="newNPCState" required>
+                            <!-- Add NPC state options here -->
+                            <option value="Briefing">Briefing</option>
+                            <option value="Losing Sanity">Losing Sanity</option>
+                            <option value="Hostile">Hostile</option>
+                            <!-- Add more NPC states as needed -->
+                        </select>
+                    </td>
+                    <td><button type="submit">Add Voice Line</button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+    </form>
+    <div>
+        <button type="submit">AI Generate</button>
+        <button type="submit">⚙️</button>
+    </div>
+
+    <div id="characterPopup">
+        <div class="popup-close-container">
+            <span id="closePopupBtn" class="popup-close">X</span>
+        </div>
+        <div id="characterName" class="popup-header"></div>
+        <div id="characterDescription" class="popup-content"></div>
+    </div>
+
+    <script src="./thethingcharacters/thething-characters.js"></script>
+    <script src="thething-dialogues.js"></script>
+    <script>
+        var user;
+        var username;
+        //
+        var project_id;
+        //AudioScript™️
+        //
+        //Thanks for using AudioScript™️.
+        //Create audiolines
+        //Record
+        //Save
+        //Share
+        //
+        //Ubuntu
+        //Docker
+        //BitBucket
+        //PostGreSQL
+        //index.html
+        //master.html
+    </script>
+    <!-- New project -->
+    <script>
+        // Get modal and buttons
+        var modal = document.getElementById("myModal");
+        var newBtn = document.getElementById("newBtn");
+        var closeBtn = document.getElementById("closeBtn");
+        var cancelBtn = document.getElementById("cancelBtn");
+        var submitBtn = document.getElementById("submitBtn");
+
+
+        // Show modal when the "Create" button is clicked
+        newBtn.onclick = function () {
+            modal.style.display = "block";
+        }
+
+        // Close modal when the "X" or "Cancel" is clicked
+        closeBtn.onclick = function () {
+            modal.style.display = "none";
+        }
+
+        cancelBtn.onclick = function () {
+            modal.style.display = "none";
+        }
+
+        // Handle submit button click
+        submitBtn.onclick = function () {
+            var projectName = document.getElementById("projectName").value;
+            if (projectName) {
+                alert("Project Created: " + projectName);
+                modal.style.display = "none";
+            } else {
+                alert("Please enter a project name.");
+            }
+        }
+
+        // Close the modal if the user clicks outside of the modal
+        window.onclick = function (event) {
+            if (event.target == modal) {
+                modal.style.display = "none";
+            }
+        }
+    </script>
+
+    <script>
+        // Function to convert a string to a light color
+        function stringToColor(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = Math.imul(31, hash) + str.charCodeAt(i) | 0;
+            }
+
+            // Generate a hue based on the string hash
+            const hue = Math.abs(hash % 360); // Ensure the hue is between 0 and 360
+
+            // Ensure the color is light enough by setting lightness to 80% (lighter colors)
+            const saturation = 70; // Saturation at 70% for vivid colors
+            const lightness = 80; // Lightness at 80% for lighter colors
+
+            return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+        }
+
+        // Function to set the username color and text color
+        function setUserNameColor(username) {
+            const newColor = stringToColor(username);
+            const tag = document.getElementById("usernameTag");
+
+            tag.style.backgroundColor = newColor; // Apply the background color
+            tag.style.color = "black"; // Set the text color to white for contrast
+        }
+
+        setUserNameColor("")
+
+        fetch('https://api.bitbucket.org/2.0/user', {
+            headers: {
+                'Authorization': `Bearer YOUR_ACCESS_TOKEN` // Use OAuth token or Basic Auth
+            }
+        })
+            .then(response => response.json())
+            .then(data => console.log(data))
+            .catch(error => console.error('Error:', error));
+
+    </script>
+    <script>
+        // Function to handle form submission
+        document.getElementById('addVoiceLineForm').addEventListener('submit', async function (event) {
+            event.preventDefault();
+
+            // Get input values
+            const newCharacter = document.getElementById('newCharacter').value;
+            const newAction = document.getElementById('newAction').value;
+            const newReaction = document.getElementById('newReaction').value;
+            const newNPCState = document.getElementById('newNPCState').value;
+
+            // Prepare data to send to the backend
+            const data = {
+                character: newCharacter,
+                action: newAction,
+                reaction: newReaction,
+                npcState: newNPCState,
+            };
+
+            try {
+                // Send POST request to backend API to add the new voice line
+                const response = await fetch('/api/addVoiceLine', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data),
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    alert("Voice line added successfully!");
+                    // Reload the table to show the updated list
+                    loadVoiceLines();
+                    // Reset the form
+                    document.getElementById('addVoiceLineForm').reset();
+                } else {
+                    alert("Failed to add voice line.");
+                }
+            } catch (error) {
+                console.error("Error adding voice line:", error);
+                alert("An error occurred. Please try again.");
+            }
+        });
+
+        // Function to load voice lines from the database
+        async function loadVoiceLines() {
+            try {
+                const response = await fetch('/api/getVoiceLines');
+                const data = await response.json();
+                const tableBody = document.getElementById('dialogues');
+                tableBody.innerHTML = ''; // Clear existing data
+
+                // Populate the table with fetched data
+                data.forEach((line, index) => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                            <td>${index + 1}</td>
+                            <td>${line.character}</td>
+                            <td>${line.action}</td>
+                            <td>${line.reaction}</td>
+                            <td>${line.npcState}</td>
+                        `;
+                    tableBody.appendChild(row);
+                });
+            } catch (error) {
+                console.error("Error loading voice lines:", error);
+            }
+        }
+
+        // Initial load of voice lines
+        loadVoiceLines();
+    </script>
+
+
+    <script>
+        const tableBody = document.getElementById('dialogues');
+        let recordingIndex = 1;
+        let recordings = {}; // Store recordings by character, type, and text
+        let takeNumbers = {}; // Track the take number for each recording
+        let activeRecorders = {}; // To track active media recorders and progress bars
+        let activeAudio = {}; // Track the active audio and progress bars for playback
+
+        function toggleEmbeddedTable(row, type, text, npc_state) {
+            // Remove any existing embedded tables
+            document.querySelectorAll(".embedded").forEach(el => el.remove());
+
+            const selectedCharacter = document.getElementById("characterSelector").value;
+            if (!selectedCharacter) {
+                alert("Please select a character first!");
+                return;
+            }
+
+            const selectedLanguage = document.getElementById("languageSelector").value;
+            if (!selectedLanguage) {
+                alert("Please select a language first!");
+                return;
+            }
+
+            const uniqueKey = `A_${selectedCharacter}_${type}_${text}_${selectedLanguage}`;
+            if (!recordings[uniqueKey]) recordings[uniqueKey] = [];
+            if (!takeNumbers[uniqueKey]) takeNumbers[uniqueKey] = 1; // Start at TAKE_1
+
+            const embeddedRow = document.createElement("tr");
+            embeddedRow.classList.add("embedded");
+
+            const embeddedCell = document.createElement("td");
+            embeddedCell.setAttribute("colspan", "5");
+            embeddedCell.innerHTML = `<!-- Container to center the Recording information -->
+<div style="display: flex; justify-content: center; align-items: center; flex-direction: column; text-align: center;">
+    <div style="width: 400px; text-align: left;">
+        <!-- Recording information -->
+        Recording:  <strong>[${selectedCharacter} - ${type.toUpperCase()} - ${npc_state.toUpperCase()}] -<br>"${text}"</strong>
+    </div>
+</div>
+
+<!-- Buttons to control recording -->
+<div style="margin: 4px;">
+    <button id="startRecordingBtn" onclick="startRecording('${selectedCharacter}', '${type}', '${text}', '${selectedLanguage}')">🎤 Record</button>
+    <button onclick="stopRecording()">⏹ Stop</button>
+    <button onclick="recordAgain('${selectedCharacter}', '${type}', '${text}', '${selectedLanguage}')">🔄 Again</button>
+    <button onclick="deleteRecording('${uniqueKey}')">🗑️ Delete</button>
+</div>
+
+<!-- Progress bar container -->
+<div id="progressContainer-${uniqueKey}" style="margin-top: 10px;"></div> <!-- Container for progress bars -->
+
+<!-- Recordings List -->
+<div id="recordingsList" style="margin-top: 10px;"></div>
+
+
+    `;
+
+            embeddedRow.appendChild(embeddedCell);
+            row.after(embeddedRow);
+
+            updateRecordingsList(uniqueKey);
+        }
+
+
+        async function startRecording(character, type, text, language) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                let mediaRecorder = new MediaRecorder(stream);
+                let audioChunks = [];
+
+                const uniqueKey = `A_${character}_${type}_${text}_${language}`;
+
+                // Remove any existing progress bar before adding a new one
+                const progressContainer = document.getElementById(`progressContainer-${uniqueKey}`);
+                progressContainer.innerHTML = ""; // Clear existing progress bars
+
+                const progressBar = document.createElement("progress");
+                progressBar.setAttribute("id", `progress-${uniqueKey}`);
+                progressBar.setAttribute("value", "0");
+                progressBar.setAttribute("max", "100");
+                progressBar.className = 'record-progressbar'
+                progressBar.style.width = "80%";
+                progressBar.style.transition = "width 0.1s ease-in-out"; // Smooth transition
+                progressContainer.appendChild(progressBar);
+
+                const timeDisplay = document.createElement("div");
+                timeDisplay.setAttribute("id", `time-${uniqueKey}`);
+                timeDisplay.innerHTML = "⏺REC: 0ms"; // Initialize with time in ms
+                progressContainer.appendChild(timeDisplay);
+
+                // Create AudioContext for live audio processing
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256; // Set the FFT size for frequency analysis
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+
+                // Store the media recorder and progress bar for later
+                activeRecorders[uniqueKey] = {
+                    mediaRecorder: mediaRecorder,
+                    audioChunks: audioChunks,
+                    progressBar: progressBar,
+                    timeDisplay: timeDisplay,
+                    startTime: Date.now(), // Track the start time for elapsed time calculation
+                    analyser: analyser,
+                    dataArray: dataArray
+                };
+
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+                    const audioUrl = URL.createObjectURL(audioBlob);
+
+                    // Generate a unique filename for the recording
+                    const takeNumber = takeNumbers[uniqueKey]++;
+                    const filename = `A_${character}_VO_${recordingIndex}_${type.toUpperCase()}_${language}_${takeNumber}`;
+                    recordingIndex++; // Increment the global recording index
+
+                    // Generate a timestamp for the recording
+                    const timestamp = Date.now(); // Timestamp in milliseconds
+
+                    // Store the recording data
+                    const recording = {
+                        timestamp: timestamp,
+                        audioUrl: audioUrl,
+                        filename: filename
+                    };
+
+                    // Ensure the array exists for the uniqueKey and push the recording
+                    if (!recordings[uniqueKey]) recordings[uniqueKey] = [];
+                    recordings[uniqueKey].push(recording);
+
+                    // Sort recordings by timestamp in descending order (newest first)
+                    recordings[uniqueKey].sort((a, b) => b.timestamp - a.timestamp);
+
+                    // Update the recordings list UI
+                    updateRecordingsList(uniqueKey);
+
+                    // Hide progress bar and reset timeDisplay after recording stops
+                    progressBar.style.display = 'none';
+                    timeDisplay.innerHTML = "Recording stopped"; // Reset time display text
+                    timeDisplay.style.display = 'none'; // Optionally hide the time display
+                };
+
+
+                mediaRecorder.start();
+                startRecordingBtn = document.getElementById('startRecordingBtn')
+                startRecordingBtn.style.display = 'none'
+
+                // Start the progress bar and time updates
+                const updateInterval = setInterval(() => {
+                    const recorderData = activeRecorders[uniqueKey];
+
+                    // Ensure recorderData is not undefined and has the necessary properties
+                    if (recorderData) {
+                        const { analyser, dataArray, progressBar, startTime, timeDisplay } = recorderData;
+
+                        // Get the loudness from the analyser node (get the average volume)
+                        analyser.getByteFrequencyData(dataArray);
+                        let sum = dataArray.reduce((acc, value) => acc + value, 0);
+                        let average = sum / dataArray.length;
+
+                        // Update progress bar based on average loudness
+                        const progress = Math.min((average / 255) * 100, 100); // Normalize to 0-100
+                        progressBar.value = progress;
+
+                        // Update the elapsed time display (in milliseconds)
+                        const elapsedTime = Date.now() - startTime;
+                        timeDisplay.innerHTML = `⏺REC: ${elapsedTime}ms`; // Update with elapsed time
+                    } else {
+                        clearInterval(updateInterval); // Stop the interval if recorderData is undefined
+                    }
+                }, 100); // Update every 100ms for smoother progress updates
+
+            } catch (err) {
+                alert("Error accessing microphone: " + err);
+            }
+        }
+
+        function stopRecording() {
+            startRecordingBtn = document.getElementById('startRecordingBtn')
+            startRecordingBtn.style.display = 'inline-block'
+            // Stop the current recording and reset the progress bar
+            Object.keys(activeRecorders).forEach(uniqueKey => {
+                const recorderData = activeRecorders[uniqueKey];
+                recorderData.mediaRecorder.stop();
+                recorderData.progressBar.value = 100;
+
+                // Hide the time display after the recording stops
+                const timeDisplay = recorderData.timeDisplay;
+                if (timeDisplay) {
+                    timeDisplay.innerHTML = "Recording stopped"; // You can change the message if desired
+                    timeDisplay.style.display = "none"; // Hide the time display
+                }
+            });
+            activeRecorders = {}; // Clear the active recorders
+        }
+
+        function recordAgain(character, type, text, language) {
+            stopRecording(); // Stop any ongoing recording
+            startRecording(character, type, text, language); // Start a new recording
+        }
+
+        function updateRecordingsList(uniqueKey) {
+            const listContainer = document.getElementById("recordingsList");
+            if (!listContainer) return;
+
+            listContainer.innerHTML = "";
+            recordings[uniqueKey].forEach((recording, index) => {
+                const row = document.createElement("div");
+                row.className = 'recording-row'
+                row.innerHTML = `
+    <span>${recording.filename}</span>
+    <button onclick="playRecording('${recording.filename}', '${uniqueKey}', ${index})">▶️ Play</button>
+    <button onclick="stopCurrentPlay('${recording.filename}', '${uniqueKey}')">⏹ Stop</button>
+    <button onclick="deleteRecording('${uniqueKey}', ${index})">🗑️ Delete</button>
+    <button onclick="cloneAIRecording('${uniqueKey}', ${index})">🔃 Clone AI</button>
+    <button onclick="nvidiaAudioToFace(${recording.filename}', '${uniqueKey}', ${index})"><img style="width: 12px;" src="./nvidia-audio-2-face.png"/> Nvidia Audio-2-face</button>
+    <button onclick="cloneAIRecording('${uniqueKey}', ${index})">✅ Okay</button>
+    <button onclick="cloneAIRecording('${uniqueKey}', ${index})">🟠 Redo</button>
+    `;
+                listContainer.appendChild(row);
+            });
+        }
+
+        function nvidiaAudioToFace(filename, uniqueKey, index) {
+            window.open("https://build.nvidia.com/nvidia/audio2face-3d", "_blank");
+        }
+
+        function cloneAIRecording() {
+            alert("Clone this voice with AI: Api_Key_Required");
+        }
+
+        function stopCurrentPlay(filename, uniqueKey) {
+            if (activeAudio[filename]) {
+                const { audio, progressBar, progressInterval } = activeAudio[filename];
+
+                audio.pause(); // Stop playback
+                audio.currentTime = 0; // Reset audio to the beginning
+                progressBar.value = 0; // Reset progress bar
+
+                // Hide the progress bar
+                progressBar.style.display = "none";
+
+                // Look for the correct time display ID for playback using both uniqueKey and filename
+                const timeDisplay = document.getElementById(`playback-time-${filename}`);
+                if (timeDisplay) {
+                    timeDisplay.style.display = "none"; // Hide time display after stopping playback
+                }
+
+                clearInterval(progressInterval); // Stop progress updates
+                activeAudio[filename] = null; // Clear tracking
+
+                // Show the Play button again after stopping playback
+                const recordingRow = document.querySelector(`#recordingsList div`);
+                const playButton = recordingRow.querySelector("button");
+                playButton.style.display = "inline-block"; // Show the Play button again
+            }
+        }
+
+
+        function playRecording(filename, uniqueKey, index) {
+            // Stop any currently playing audio before starting a new one
+            stopCurrentPlay(filename, uniqueKey);
+
+            const audioUrl = recordings[uniqueKey][index].audioUrl;
+            const audio = new Audio(audioUrl);
+            const recordingRow = document.querySelector(`#recordingsList div:nth-child(${index + 1})`);
+
+            // Remove existing progress elements to prevent duplicates
+            const existingProgressBar = document.getElementById(`playback-progress-${filename}`);
+            if (existingProgressBar) existingProgressBar.remove();
+
+            const existingTimeDisplay = document.getElementById(`playback-time-${filename}`);
+            if (existingTimeDisplay) existingTimeDisplay.remove();
+
+            // Create playback progress bar
+            const playbackProgressBar = document.createElement("progress");
+            playbackProgressBar.setAttribute("id", `playback-progress-${filename}`);
+            playbackProgressBar.setAttribute("value", "0");
+            playbackProgressBar.setAttribute("max", "100");
+            playbackProgressBar.style.width = "80%";
+
+            // Create time display
+            const timeDisplay = document.createElement("div");
+            timeDisplay.setAttribute("id", `playback-time-${filename}`);
+            timeDisplay.innerHTML = "0 ms / 0 ms"; // Initialize time display
+
+            // Append progress bar and time display inside the recording row
+            recordingRow.appendChild(playbackProgressBar);
+            recordingRow.appendChild(timeDisplay);
+
+            // Find the Play button and hide it during playback
+            const playButton = recordingRow.querySelector("button");
+            playButton.style.display = "none"; // Hide the Play button when playback starts
+
+            // Ensure duration is available before starting updates
+            audio.onloadedmetadata = () => {
+                const duration = audio.duration * 1000; // Convert seconds to milliseconds
+                let currentTime = 0;
+
+                // Store the active audio for later control
+                activeAudio[filename] = {
+                    audio: audio,
+                    progressBar: playbackProgressBar,
+                    progressInterval: null
+                };
+
+                // Update the progress bar and time display while playing
+                activeAudio[filename].progressInterval = setInterval(() => {
+                    currentTime = audio.currentTime * 1000; // Convert seconds to milliseconds
+                    playbackProgressBar.value = (currentTime / duration) * 100; // Update progress bar
+
+                    // Show current time and total time in milliseconds
+                    timeDisplay.innerHTML = `${Math.round(currentTime)} ms / ${Math.round(duration)} ms`;
+
+                    if (currentTime >= duration) {
+                        clearInterval(activeAudio[filename].progressInterval);
+                        playbackProgressBar.value = 100; // Ensure the bar reaches 100% at the end
+                        timeDisplay.innerHTML = `${Math.round(duration)} ms / ${Math.round(duration)} ms`;
+                        activeAudio[filename] = null;
+
+                        // Show the Play button again after playback finishes
+                        playButton.style.display = "inline-block"; // Show the Play button again
+                    }
+                }, 100); // Update every 100ms
+
+                audio.play();
+            };
+
+            audio.onended = () => {
+                clearInterval(activeAudio[filename].progressInterval);
+                playbackProgressBar.value = 100;
+                timeDisplay.innerHTML = `${audio.duration * 1000} ms / ${audio.duration * 1000} ms`;
+
+                // Hide the time display when playback ends
+                timeDisplay.style.display = "none"; // Hide time display after playback finishes
+                activeAudio[filename] = null;
+
+                // Show the Play button again when playback ends
+                playButton.style.display = "inline-block"; // Show the Play button after playback ends
+            };
+        }
+
+
+        function deleteRecording(uniqueKey, index = null) {
+            if (index !== null) {
+                recordings[uniqueKey].splice(index, 1); // Delete specific recording
+            } else {
+                delete recordings[uniqueKey]; // Delete all recordings for this unique key
+            }
+            updateRecordingsList(uniqueKey);
+        }
+
+        function updateProgress(uniqueKey) {
+            let progress = 0;
+            let progressInterval = setInterval(() => {
+                if (progress < 100) { progress += 10; activeRecorders[uniqueKey].progressBar.value = progress; } else {
+                    clearInterval(progressInterval);
+                }
+            }, 500);
+        } // Assuming dialogues is an array defined somewhere globally
+        dialogues.forEach((dialogue, index) => {
+            const row = document.createElement("tr");
+            row.innerHTML = `
+        <td>${index + 1}</td>
+        <td><strong>${dialogue.character}</strong></td>
+<td class="voiceline" onclick="toggleEmbeddedTable(this.parentNode, 'Action', '${dialogue.action.replace(/'/g, '\\\'')}', '${dialogue.npc_state}')">${dialogue.action}</td>
+<td class="voiceline" onclick="toggleEmbeddedTable(this.parentNode, 'Reaction', '${dialogue.reaction.replace(/'/g, '\\\'')}', '${dialogue.npc_state}')">${dialogue.reaction}</td>
+
+        <td>${dialogue.npc_state}</td>
+        `;
+            tableBody.appendChild(row);
+        });
+    </script>
+
+
+    <script>
+        window.addEventListener('DOMContentLoaded', (event) => {
+            // Log the initial state of the popup to debug
+            console.log('Popup initial display state:',
+                window.getComputedStyle(document.getElementById('characterPopup')).display);
+
+            // Ensure the popup is hidden on page load by forcing display: none
+            document.getElementById('characterPopup').style.display = 'none';
+
+            // Function to populate the select dropdown with character options
+            function populateCharacterSelect(selector) {
+                selector.innerHTML = ''; // Clear any existing options
+                characters.forEach(function (character) {
+                    var option = document.createElement('option');
+                    option.value = character.name;
+                    option.text = character.name;
+                    selector.appendChild(option);
+                });
+            }
+
+            // Get both select elements
+            var newCharacterSelector = document.getElementById('newCharacter');
+            var characterSelector = document.getElementById('characterSelector');
+
+            // Populate both selects with the same character options
+            populateCharacterSelect(newCharacterSelector);
+            populateCharacterSelect(characterSelector);
+
+            // Function to display the selected character's details in the popup
+            function displayCharacterDetails(character) {
+                if (character) {
+                    var characterDetails = '<div class="popup-header">' + character.name + '</div>';
+                    var characterContent = '';
+
+                    // Loop through each key-value pair in the character object
+                    for (var key in character) {
+                        if (character.hasOwnProperty(key)) {
+                            var value = character[key];
+
+                            // Capitalize the first letter of the key
+                            var formattedKey = key.charAt(0).toUpperCase() + key.slice(1);
+
+                            // If the key is 'img', display it as an image with max width 200px
+                            if (key === 'img') {
+                                characterContent += '<strong>' + formattedKey + ':</strong><br>';
+                                characterContent += '<img src="' + value + '" style="max-width: 200px;"/><br>';
+                            }
+                            // Handle arrays
+                            else if (Array.isArray(value)) {
+                                characterContent += '<strong>' + formattedKey + ':</strong><br>';
+                                value.forEach(function (item) {
+                                    if (typeof item === 'object') {
+                                        // Handle nested objects inside arrays (like abilities)
+                                        for (var prop in item) {
+                                            if (item.hasOwnProperty(prop)) {
+                                                characterContent += '• ' + prop.charAt(0).toUpperCase() + prop.slice(1) + ': ' + item[prop] + '<br>';
+                                            }
+                                        }
+                                    } else {
+                                        // Handle plain values in arrays
+                                        characterContent += '• ' + item + '<br>';
+                                    }
+                                });
+                            } else if (typeof value === 'object') {
+                                // Handle nested objects (like nested attributes)
+                                characterContent += '<strong>' + formattedKey + ':</strong><br>' + JSON.stringify(value, null, 2).replace(/\n/g, '<br>') + '<br>';
+                            } else {
+                                // Handle simple key-value pairs
+                                characterContent += '<strong>' + formattedKey + ':</strong> ' + value + '<br>';
+                            }
+
+                            // Add a new line after each key-value pair
+                            characterContent += '<br>';
+                        }
+                    }
+
+                    // Display the full character information in the popup
+                    document.getElementById('characterName').innerHTML = characterDetails;
+                    document.getElementById('characterDescription').innerHTML = characterContent;
+                    document.getElementById('characterPopup').style.display = 'block'; // Show the popup
+                }
+            }
+
+
+            // Handle the event for both select dropdowns
+            function handleCharacterChange(event) {
+                var selectedCharacterName = event.target.value;
+                var selectedCharacter = characters.find(function (character) {
+                    return character.name === selectedCharacterName;
+                });
+
+                displayCharacterDetails(selectedCharacter); // Show the details of the selected character
+
+                // Synchronize the other select element to the same character
+                if (event.target === newCharacterSelector) {
+                    characterSelector.value = selectedCharacterName; // Sync characterSelector
+                } else if (event.target === characterSelector) {
+                    newCharacterSelector.value = selectedCharacterName; // Sync newCharacterSelector
+                }
+            }
+
+            // Add change event listener for both dropdowns
+            newCharacterSelector.addEventListener('change', handleCharacterChange);
+            characterSelector.addEventListener('change', handleCharacterChange);
+
+            // Button to show character description in a popup
+            var showDescriptionBtn = document.getElementById('showDescriptionBtn');
+            showDescriptionBtn.addEventListener('click', function () {
+                var selectedCharacterName = characterSelector.value;
+                var selectedCharacter = characters.find(function (character) {
+                    return character.name === selectedCharacterName;
+                });
+
+                displayCharacterDetails(selectedCharacter); // Show the details of the selected character
+            });
+
+            // Close the popup when the close button is clicked
+            var closePopupBtn = document.getElementById('closePopupBtn');
+            closePopupBtn.addEventListener('click', function () {
+                document.getElementById('characterPopup').style.display = 'none'; // Hide the popup when close button clicked
+            });
+
+            // Close the popup if the user clicks outside the popup content
+            window.addEventListener('click', function (event) {
+                if (event.target === document.getElementById('characterPopup')) {
+                    document.getElementById('characterPopup').style.display = 'none'; // Hide the popup when clicked outside
+                }
+            });
+
+            // Close the popup when the user presses the ESC key
+            window.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') {
+                    document.getElementById('characterPopup').style.display = 'none'; // Hide the popup when ESC key is pressed
+                }
+            });
+        });
+
+
+    </script>
+
+
+</body>
+
+</html>
