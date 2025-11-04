@@ -6,7 +6,7 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "route": "create_vm_s_decompileme",
+      "route": "create_vm_s_decompme",
       "methods": ["get", "post"]
     },
     {
