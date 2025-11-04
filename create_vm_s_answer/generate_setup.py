@@ -368,22 +368,42 @@ DOCKERFILE
     notify_webhook "provisioning" "docker_compose_setup" "Setting up Docker Compose for Answer"
 
     # Create docker-compose.yml with custom image
+    # ========== DOCKER COMPOSE SETUP ==========
+    echo "[7/12] Creating Docker Compose configuration..."
+    notify_webhook "provisioning" "docker_compose_setup" "Setting up Docker Compose for Answer"
+
+    # Generate Answer secret key
+    echo "    Generating Answer secret key..."
+    ANSWER_SECRET_KEY="$(generate_secure_random hex 32)"
+    export ANSWER_SECRET_KEY
+                                      
+    # Create docker-compose.yml with proper Answer configuration
     cat > "docker-compose.yml" <<DOCKERCOMPOSE
 version: '3.8'
 
 services:
   answer:
-    image: ${CUSTOM_IMAGE}
+    image: \${CUSTOM_IMAGE}
     container_name: answer
     restart: unless-stopped
     ports:
-      - "9080:80"
+      - "\${PORT}:80"
     volumes:
       - answer_data:/data
     environment:
+      # Required Answer configuration
       - ANSWER_DATA_PATH=/data
-      - ANSWER_DB_TYPE=${DB_TYPE}
-      - ANSWER_DB_USERNAME=${DB_USERNAME}
+      - ANSWER_SITE_NAME=\${SITE_NAME}
+      - ANSWER_SITE_URL=https://\${DOMAIN}
+      - ANSWER_DB_TYPE=\${DB_TYPE}
+      # SQLite specific (default)
+      - ANSWER_SQLITE_PATH=\${DB_FILE}
+      # Admin user setup
+      - ANSWER_SUPER_USER=\${ADMIN_NAME}
+      - ANSWER_SUPER_USER_EMAIL=\${ADMIN_EMAIL}
+      - ANSWER_SUPER_USER_PASSWORD=\${ADMIN_PASSWORD}
+      # Security
+      - ANSWER_SECRET_KEY=\${ANSWER_SECRET_KEY}
 
 volumes:
   answer_data:
@@ -392,10 +412,10 @@ DOCKERCOMPOSE
 
     echo "✅ Docker Compose configuration created"
     if [ "$BUILD_SUCCESS" = true ]; then
-        echo "    🎯 Using custom Answer image with plugins"
+        echo "🎯 Using custom Answer image with plugins"
         notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration ready (with plugins)"
     else
-        echo "    ℹ️  Using standard Answer image (plugins not available)"
+        echo "ℹ️  Using standard Answer image (plugins not available)"
         notify_webhook "provisioning" "compose_ready" "✅ Docker Compose configuration ready (standard image)"
     fi
                                       
