@@ -1,0 +1,44 @@
+# Plane Provisioning Script Overview
+
+This document explains the steps performed by the Plane provisioning script.
+
+- Set strict bash options (`set -euo pipefail`)
+- Define webhook function for notifications or a no-op if URL not provided
+- Redirect all output to `/var/log/plane_setup.log`
+- Set environment variables (domain, admin email/password, ports, directories, etc.)
+- Validate domain format and port number; exit on invalid input
+- Install system dependencies (curl, git, nginx, certbot, python3-pip, jq, net-tools, ufw, openssl, etc.)
+- Install Docker engine and plugins, set up GPG key and repo, retry up to 3 times
+- Enable and start Docker, verify daemon is running
+- Create Plane data directory and set proper permissions
+- Navigate to Plane directory and verify access
+- Clone Plane repository if not present; else pull latest changes
+- Verify git availability and network access, handle errors on clone/pull
+- Check read/write permissions in Plane directory
+- Check OpenSSL availability and system entropy
+- Define secure random generation function with OpenSSL and `/dev/urandom` fallback
+- Generate credentials for PostgreSQL, RabbitMQ, MinIO, and secret key
+- Validate credentials for minimum length and correctness
+- Create `.env` files for root, API server, web, space, and admin components
+- Ensure `.env` directories are writable and permissions correct
+- Download `docker-compose.yml` from repository
+- Verify download URL, network connectivity, and write permissions
+- Backup and modify `docker-compose.yml` to disable proxy service if present
+- Create persistent directories for PostgreSQL, Redis, MinIO with correct ownership and permissions
+- Export environment file for Docker Compose
+- Start infrastructure services: PostgreSQL, Redis, RabbitMQ, MinIO
+- Wait for PostgreSQL and Redis to become ready with timeouts
+- Run database migrations using migrator container, retry once on failure
+- Start application services: API, Web, Admin, Space, Worker, Beat-worker, Live
+- Check service existence in Docker Compose file, log failures without stopping other services
+- Poll API endpoint until it becomes responsive, exit on timeout
+- Configure UFW firewall to allow required ports and enable it
+- Remove default nginx config, create temporary HTTP server for Certbot validation
+- Download Let’s Encrypt SSL recommended configs
+- Attempt SSL certificate issuance with Certbot, fallback to webroot if needed
+- Update nginx configuration to use HTTPS and proxy to Plane backend
+- Reload nginx and verify configuration
+- Create cron job for daily SSL renewal and nginx reload
+- Perform final verification of nginx and HTTPS access
+- Display summary with access URL, admin email, and useful Docker commands
+- Send webhook notifications for all major steps, warnings, and errors
